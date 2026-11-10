@@ -1,8 +1,11 @@
-const { BrowserWindow } = require('electron');
+const { WebContentsView } = require('electron');
 const { CORRLINKS } = require('./config');
 const { buildCorrlinksSubject } = require('./subject');
 
-let corrWindow = null;
+let hostWindow = null;
+let corrView = null;
+let corrAdapter = null;
+let corrBounds = { x: 0, y: 0, width: 0, height: 0 };
 let lastStatus = {
   state: 'idle',
   message: 'Not started',
@@ -10,6 +13,28 @@ let lastStatus = {
   email: null,
   attempt: null,
 };
+
+function setHostWindow(win) {
+  hostWindow = win && !win.isDestroyed() ? win : null;
+}
+
+function setCorrBounds(bounds = {}) {
+  corrBounds = {
+    x: Math.max(0, Math.round(Number(bounds.x) || 0)),
+    y: Math.max(0, Math.round(Number(bounds.y) || 0)),
+    width: Math.max(0, Math.round(Number(bounds.width) || 0)),
+    height: Math.max(0, Math.round(Number(bounds.height) || 0)),
+  };
+  if (corrView && hostWindow && !hostWindow.isDestroyed()) {
+    try {
+      corrView.setBounds(corrBounds);
+      if (typeof corrView.setVisible === 'function') {
+        corrView.setVisible(corrBounds.width >= 8 && corrBounds.height >= 8);
+      }
+    } catch (_) {}
+  }
+  return corrBounds;
+}
 
 function getStatus() {
   return { ...lastStatus };
@@ -21,50 +46,72 @@ function setStatus(partial) {
 }
 
 function forceCloseCorrWindow() {
-  if (corrWindow && !corrWindow.isDestroyed()) {
+  if (corrView && hostWindow && !hostWindow.isDestroyed()) {
     try {
-      corrWindow.destroy();
-    } catch (_) {
-      // ignore
-    }
+      hostWindow.contentView.removeChildView(corrView);
+    } catch (_) {}
   }
-  corrWindow = null;
+  if (corrView?.webContents && !corrView.webContents.isDestroyed()) {
+    try {
+      corrView.webContents.close();
+    } catch (_) {}
+  }
+  corrView = null;
+  corrAdapter = null;
+  setStatus({ state: 'closed', message: 'CorrLinks panel closed' });
 }
 
 function getOrCreateWindow() {
-  if (corrWindow && !corrWindow.isDestroyed()) {
-    return corrWindow;
+  if (!hostWindow || hostWindow.isDestroyed()) {
+    throw new Error('Control window is not ready for CorrLinks panel');
+  }
+  if (corrAdapter && corrView?.webContents && !corrView.webContents.isDestroyed()) {
+    setCorrBounds(corrBounds);
+    return corrAdapter;
   }
 
-  corrWindow = new BrowserWindow({
-    width: 1100,
-    height: 800,
-    title: 'CorrLinks',
+  corrView = new WebContentsView({
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
   });
-
-  corrWindow.webContents.setUserAgent(
+  corrView.webContents.setUserAgent(
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   );
+  hostWindow.contentView.addChildView(corrView);
+  setCorrBounds(corrBounds.width > 0 ? corrBounds : { x: 0, y: 0, width: 800, height: 600 });
 
-  corrWindow.on('closed', () => {
-    corrWindow = null;
-    setStatus({ state: 'closed', message: 'CorrLinks window closed' });
-  });
-
-  corrWindow.webContents.on('did-navigate', (_event, url) => {
+  corrView.webContents.on('did-navigate', (_event, url) => {
     setStatus({ url });
   });
-
-  corrWindow.webContents.on('did-navigate-in-page', (_event, url) => {
+  corrView.webContents.on('did-navigate-in-page', (_event, url) => {
     setStatus({ url });
   });
+  corrView.webContents.on('destroyed', () => {
+    corrView = null;
+    corrAdapter = null;
+  });
 
-  return corrWindow;
+  corrAdapter = {
+    webContents: corrView.webContents,
+    isDestroyed: () => !corrView || !corrView.webContents || corrView.webContents.isDestroyed(),
+    show: () => {
+      if (hostWindow && !hostWindow.isDestroyed()) hostWindow.show();
+      setCorrBounds(corrBounds);
+    },
+    focus: () => {
+      if (hostWindow && !hostWindow.isDestroyed()) hostWindow.focus();
+      try {
+        corrView.webContents.focus();
+      } catch (_) {}
+    },
+    loadURL: (url, options) => corrView.webContents.loadURL(url, options),
+    destroy: () => forceCloseCorrWindow(),
+  };
+
+  return corrAdapter;
 }
 
 async function inspectPage(win) {
@@ -162,14 +209,26 @@ function clickAt(win, x, y) {
   });
 }
 
-/** CDP trusted mouse click (better for Syncfusion than sendInputEvent alone). */
-async function cdpClick(win, x, y) {
+async function withDebugger(win, fn) {
   const wc = win.webContents;
   const attachedHere = !wc.debugger.isAttached();
   try {
     if (attachedHere) {
       wc.debugger.attach('1.3');
     }
+    return await fn(wc);
+  } finally {
+    if (attachedHere) {
+      try {
+        wc.debugger.detach();
+      } catch (_) {}
+    }
+  }
+}
+
+/** CDP trusted mouse click (better for Syncfusion than sendInputEvent alone). */
+async function cdpClick(win, x, y) {
+  await withDebugger(win, async (wc) => {
     const point = { x: Math.round(x), y: Math.round(y) };
     await wc.debugger.sendCommand('Input.dispatchMouseEvent', {
       type: 'mouseMoved',
@@ -193,24 +252,60 @@ async function cdpClick(win, x, y) {
       buttons: 0,
       clickCount: 1,
     });
-  } finally {
-    if (attachedHere) {
-      try {
-        wc.debugger.detach();
-      } catch (_) {}
-    }
-  }
+  });
 }
 
-async function fillAndSubmit(win, email, password) {
-  // 1) Fill fields via Syncfusion + Angular-friendly events
-  const filled = await win.webContents.executeJavaScript(
-    `(() => {
-      const emailSelectors = ${JSON.stringify(CORRLINKS.emailSelectors)};
-      const passwordSelectors = ${JSON.stringify(CORRLINKS.passwordSelectors)};
-      const emailValue = ${JSON.stringify(email)};
-      const passwordValue = ${JSON.stringify(password)};
+async function cdpTypeIntoFocused(win, text) {
+  await withDebugger(win, async (wc) => {
+    // Select-all then replace with trusted CDP text insertion (Angular/Syncfusion sees real input).
+    const modifier = process.platform === 'darwin' ? 4 : 2; // Meta on macOS, Ctrl elsewhere
+    await wc.debugger.sendCommand('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      modifiers: modifier,
+      key: 'a',
+      code: 'KeyA',
+      windowsVirtualKeyCode: 65,
+    });
+    await wc.debugger.sendCommand('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      modifiers: modifier,
+      key: 'a',
+      code: 'KeyA',
+      windowsVirtualKeyCode: 65,
+    });
+    await wc.debugger.sendCommand('Input.insertText', { text: String(text ?? '') });
+  });
+}
 
+function loginFieldScript() {
+  return `(() => {
+    function firstMatch(selectors) {
+      for (const sel of selectors) {
+        try {
+          const el = document.querySelector(sel);
+          if (el) return el;
+        } catch (_) {}
+      }
+      return null;
+    }
+    const emailSelectors = ${JSON.stringify(CORRLINKS.emailSelectors)};
+    const passwordSelectors = ${JSON.stringify(CORRLINKS.passwordSelectors)};
+    const emailInput = firstMatch(emailSelectors);
+    const passwordInput = firstMatch(passwordSelectors);
+    return {
+      emailInput: !!emailInput,
+      passwordInput: !!passwordInput,
+      email: emailInput ? (emailInput.value || '') : '',
+      password: passwordInput ? (passwordInput.value || '') : '',
+      emailEj: emailInput?.ej2_instances?.[0]?.value || '',
+      passwordEj: passwordInput?.ej2_instances?.[0]?.value || '',
+    };
+  })()`;
+}
+
+async function focusLoginField(win, which) {
+  return win.webContents.executeJavaScript(
+    `(() => {
       function firstMatch(selectors) {
         for (const sel of selectors) {
           try {
@@ -220,77 +315,129 @@ async function fillAndSubmit(win, email, password) {
         }
         return null;
       }
+      const selectors = ${JSON.stringify(
+        which === 'password' ? CORRLINKS.passwordSelectors : CORRLINKS.emailSelectors
+      )};
+      const el = firstMatch(selectors);
+      if (!el) return { ok: false };
+      el.scrollIntoView({ block: 'center', inline: 'center' });
+      el.focus();
+      el.click();
+      try { el.select(); } catch (_) {}
+      return { ok: true, id: el.id || null, type: el.type || null };
+    })()`,
+    true
+  );
+}
 
-      function setFieldValue(el, value) {
+async function syncEj2LoginFields(win, email, password) {
+  return win.webContents.executeJavaScript(
+    `(() => {
+      function firstMatch(selectors) {
+        for (const sel of selectors) {
+          try {
+            const el = document.querySelector(sel);
+            if (el) return el;
+          } catch (_) {}
+        }
+        return null;
+      }
+      function apply(el, value) {
         if (!el) return false;
         const inst = el.ej2_instances && el.ej2_instances[0];
-
-        el.focus();
-        el.click();
-
-        // Clear then type through insertText so Angular/zone sees real edits.
-        try {
-          document.execCommand('selectAll', false, null);
-          document.execCommand('delete', false, null);
-          document.execCommand('insertText', false, value);
-        } catch (_) {}
-
+        const proto = window.HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (setter) setter.call(el, value);
+        else el.value = value;
         if (inst) {
           inst.value = value;
           if (typeof inst.dataBind === 'function') inst.dataBind();
-          // Notify Syncfusion listeners / Angular bindings.
           try {
             if (typeof inst.trigger === 'function') {
               inst.trigger('input', { value });
               inst.trigger('change', { value });
             }
           } catch (_) {}
-          if (typeof inst.focusOut === 'function') inst.focusOut();
-          try {
-            inst.element?.dispatchEvent(new Event('change', { bubbles: true }));
-          } catch (_) {}
         }
-
-        const proto = window.HTMLInputElement.prototype;
-        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-        if (setter) setter.call(el, value);
-        else el.value = value;
-
         el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: value, inputType: 'insertText' }));
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
-        el.dispatchEvent(new Event('blur', { bubbles: true }));
         return true;
       }
-
-      const emailInput = firstMatch(emailSelectors);
-      const passwordInput = firstMatch(passwordSelectors);
+      const emailInput = firstMatch(${JSON.stringify(CORRLINKS.emailSelectors)});
+      const passwordInput = firstMatch(${JSON.stringify(CORRLINKS.passwordSelectors)});
       if (!emailInput || !passwordInput) {
-        return {
-          ok: false,
-          reason: 'Could not find email/password fields',
-          found: { email: !!emailInput, password: !!passwordInput },
-        };
+        return { ok: false, reason: 'missing-fields' };
       }
-
-      setFieldValue(emailInput, emailValue);
-      setFieldValue(passwordInput, passwordValue);
-
+      apply(emailInput, ${JSON.stringify(email)});
+      apply(passwordInput, ${JSON.stringify(password)});
+      // Blur password last so validators re-run with both values present.
+      try { passwordInput.blur(); } catch (_) {}
+      try { emailInput.dispatchEvent(new Event('blur', { bubbles: true })); } catch (_) {}
       return {
         ok: true,
-        email: emailInput.value,
-        passwordLength: (passwordInput.value || '').length,
+        email: emailInput.value || '',
+        password: passwordInput.value || '',
+        emailEj: emailInput.ej2_instances?.[0]?.value || '',
+        passwordEj: passwordInput.ej2_instances?.[0]?.value || '',
       };
     })()`,
     true
   );
+}
 
-  if (!filled?.ok) return filled;
-  if (!filled.email || !filled.passwordLength) {
-    return { ok: false, reason: 'Fields did not accept values', filled };
+function credentialsMatch(snapshot, email, password) {
+  if (!snapshot) return false;
+  const wantEmail = String(email || '');
+  const wantPassword = String(password || '');
+  const gotEmail = String(snapshot.emailEj || snapshot.email || '');
+  const gotPassword = String(snapshot.passwordEj || snapshot.password || '');
+  return gotEmail === wantEmail && gotPassword === wantPassword && wantEmail.length > 0 && wantPassword.length > 0;
+}
+
+async function fillAndSubmit(win, email, password) {
+  const wantEmail = String(email || '').trim();
+  const wantPassword = String(password || '');
+  if (!wantEmail || !wantPassword) {
+    return { ok: false, reason: 'Missing email/password for CorrLinks fill' };
   }
 
-  // 2) Locate Login button center for a real OS-level click (Syncfusion ignores many synthetic clicks).
+  let filled = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const emailFocus = await focusLoginField(win, 'email');
+    if (!emailFocus?.ok) {
+      return { ok: false, reason: 'Could not find email field' };
+    }
+    await cdpTypeIntoFocused(win, wantEmail);
+    await new Promise((r) => setTimeout(r, 120));
+
+    const passFocus = await focusLoginField(win, 'password');
+    if (!passFocus?.ok) {
+      return { ok: false, reason: 'Could not find password field' };
+    }
+    await cdpTypeIntoFocused(win, wantPassword);
+    await new Promise((r) => setTimeout(r, 120));
+
+    filled = await syncEj2LoginFields(win, wantEmail, wantPassword);
+    if (credentialsMatch(filled, wantEmail, wantPassword)) break;
+
+    // Re-read DOM in case ej2 lagged.
+    const snap = await win.webContents.executeJavaScript(loginFieldScript(), true);
+    filled = { ...filled, ...snap };
+    if (credentialsMatch(filled, wantEmail, wantPassword)) break;
+
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
+  if (!credentialsMatch(filled, wantEmail, wantPassword)) {
+    return {
+      ok: false,
+      reason: 'Fields did not accept values (Angular/Syncfusion still empty)',
+      filled,
+    };
+  }
+
+  // Locate Login button for a trusted CDP click.
   const target = await win.webContents.executeJavaScript(
     `(() => {
       const submitSelectors = ${JSON.stringify(CORRLINKS.submitSelectors)};
@@ -326,38 +473,35 @@ async function fillAndSubmit(win, email, password) {
     return { ok: false, reason: 'Could not find Login button', filled };
   }
 
-  // Focus password, press Enter, then mouse-click Login as backup.
-  await win.webContents.executeJavaScript(
-    `(() => {
-      const pass = document.querySelector('#textbox_1') || document.querySelector('input[type="password"]');
-      if (pass) pass.focus();
-      return true;
-    })()`,
-    true
-  );
-  await new Promise((r) => setTimeout(r, 150));
-  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
-  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
-  await new Promise((r) => setTimeout(r, 400));
+  // Re-assert values one last time immediately before submit (validators were rejecting empty model).
+  await syncEj2LoginFields(win, wantEmail, wantPassword);
+  await new Promise((r) => setTimeout(r, 200));
 
-  // If still on login, force a real mouse click on the Login button.
+  await cdpClick(win, target.x, target.y);
+  await new Promise((r) => setTimeout(r, 350));
+
   const stillLogin = await win.webContents.executeJavaScript(
     ` /\\/login/i.test(location.pathname || location.href) `,
     true
   );
   if (stillLogin) {
+    // If validation toasts already appeared, refill once more and click again.
+    const feedback = await readAuthFeedback(win);
+    if (feedback?.some((m) => /password field is required|email address field|not a valid email/i.test(m))) {
+      await syncEj2LoginFields(win, wantEmail, wantPassword);
+      await focusLoginField(win, 'password');
+      await cdpTypeIntoFocused(win, wantPassword);
+      await syncEj2LoginFields(win, wantEmail, wantPassword);
+      await new Promise((r) => setTimeout(r, 200));
+    }
     clickAt(win, target.x, target.y);
-    await new Promise((r) => setTimeout(r, 200));
-    // Also fire element.click() after the real mouse event.
+    await cdpClick(win, target.x, target.y);
     await win.webContents.executeJavaScript(
       `(() => {
         const btn = [...document.querySelectorAll('button')].find((b) =>
           /^\\s*login\\s*$/i.test((b.innerText || '').trim())
         ) || document.querySelector('button.e-primary');
         if (!btn) return false;
-        btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-        btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-        btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
         btn.click();
         return true;
       })()`,
@@ -1791,6 +1935,8 @@ module.exports = {
   getStatus,
   getOrCreateWindow,
   forceCloseCorrWindow,
+  setHostWindow,
+  setCorrBounds,
   selectComposeRecipient,
   fillComposeSubject,
   fillComposeBody,

@@ -1,12 +1,20 @@
 const path = require('path');
 const { app, BrowserWindow, ipcMain } = require('electron');
 const { SportsDataClient } = require('./sportsdataClient');
-const { loginToCorrlinks, loginInmate, getStatus } = require('./corrlinksLogin');
+const {
+  loginToCorrlinks,
+  loginInmate,
+  getStatus,
+  setHostWindow,
+  setCorrBounds,
+  forceCloseCorrWindow,
+} = require('./corrlinksLogin');
 const {
   getSportsDataConfig,
   getAppTimezone,
   envPath,
   saveSportsDataCredentials,
+  clearSportsDataCredentials,
   reloadSavedCredentials,
 } = require('./config');
 const { buildCorrlinksSubject } = require('./subject');
@@ -17,9 +25,13 @@ const sportsData = new SportsDataClient();
 
 function createControlWindow() {
   controlWindow = new BrowserWindow({
-    width: 760,
+    width: 1440,
     height: 900,
-    title: 'Inmate Exchange Auto — CorrLinks Phase 1',
+    minWidth: 800,
+    minHeight: 600,
+    title: 'CorrLinks Automation',
+    backgroundColor: '#07131c',
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -28,8 +40,26 @@ function createControlWindow() {
     },
   });
 
+  setHostWindow(controlWindow);
   controlWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+
+  const relayout = () => {
+    if (!controlWindow || controlWindow.isDestroyed()) return;
+    controlWindow.webContents
+      .executeJavaScript(
+        'typeof window.__syncCorrPaneBounds === "function" && window.__syncCorrPaneBounds()',
+        true
+      )
+      .catch(() => {});
+  };
+  controlWindow.on('resize', relayout);
+  controlWindow.on('maximize', relayout);
+  controlWindow.on('unmaximize', relayout);
+  controlWindow.on('enter-full-screen', relayout);
+  controlWindow.on('leave-full-screen', relayout);
   controlWindow.on('closed', () => {
+    forceCloseCorrWindow();
+    setHostWindow(null);
     controlWindow = null;
   });
 }
@@ -71,6 +101,28 @@ function registerIpc() {
       return {
         ok: false,
         message: error.message || 'Failed to save SportsData login',
+      };
+    }
+  });
+
+  ipcMain.handle('config:logoutSportsData', async () => {
+    try {
+      forceCloseCorrWindow();
+      sportsData.resetSession();
+      cachedAccounts = [];
+      const cleared = clearSportsDataCredentials();
+      return {
+        ok: true,
+        message: 'Signed out of SportsData',
+        baseUrl: cleared.baseUrl,
+        email: '',
+        hasPassword: false,
+        credentialsPath: cleared.credentialsPath,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error.message || 'Failed to sign out',
       };
     }
   });
@@ -136,6 +188,7 @@ function registerIpc() {
   });
 
   ipcMain.handle('corrlinks:status', async () => getStatus());
+  ipcMain.handle('corrlinks:setBounds', async (_event, bounds) => setCorrBounds(bounds || {}));
 }
 
 app.whenReady().then(() => {

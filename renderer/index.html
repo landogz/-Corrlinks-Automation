@@ -4,27 +4,40 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; script-src 'self'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Inmate Exchange Auto</title>
+    <title>CorrLinks Automation</title>
+    <link rel="icon" href="assets/app-icon.png" type="image/png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main class="app">
-      <header>
-        <h1>CorrLinks Auto</h1>
-        <p class="sub">SportsData login → inmate accounts → CorrLinks compose</p>
-      </header>
+    <!-- SportsData gate — shown until operator signs in -->
+    <div id="loginScreen" class="login-screen" hidden>
+      <div class="login-panel">
+        <div class="login-brand">
+          <img
+            class="brand-mark login-mark"
+            src="assets/logo-mark-ui.png"
+            width="64"
+            height="64"
+            alt="CorrLinks Automation"
+          />
+          <h1>CorrLinks Automation</h1>
+          <p class="sub">Sign in with SportsData to load inmate accounts</p>
+        </div>
 
-      <section class="card">
-        <h2>SportsData login</h2>
-        <form id="sportsdataForm" class="form" autocomplete="on">
-          <label for="sdBaseUrl">Base URL</label>
+        <form id="sportsdataForm" class="form login-form" autocomplete="on">
           <input
             id="sdBaseUrl"
             name="sportsdata-base-url"
-            type="url"
+            type="hidden"
             value="https://sportsdata.com"
             autocomplete="url"
           />
@@ -55,31 +68,228 @@
           </label>
 
           <div class="row">
-            <button id="btnSaveLogin" type="submit">Save login</button>
-            <button id="btnRefresh" type="button" class="ghost">Refresh inmates</button>
+            <button id="btnSaveLogin" type="submit">Sign in</button>
           </div>
         </form>
-        <p id="configSummary" class="muted">Loading config…</p>
-      </section>
+        <p id="configSummary" class="muted meta-line login-meta" hidden></p>
+        <p class="status-credit login-credit">Designed by Landogz Web Solutions</p>
+      </div>
+    </div>
 
-      <section class="card">
-        <h2>Inmate</h2>
-        <label for="accountSelect">Inmate account</label>
-        <select id="accountSelect" disabled>
-          <option value="">Load inmates first</option>
-        </select>
-        <p id="accountMeta" class="muted"></p>
-        <div class="row">
-          <button id="btnLogin" type="button" disabled>Login to CorrLinks</button>
-          <button id="btnStatus" type="button" class="ghost">Check status</button>
+    <div id="mainShell" class="shell" hidden>
+      <header class="topbar">
+        <div class="brand">
+          <img
+            class="brand-mark"
+            src="assets/logo-mark-ui.png"
+            width="48"
+            height="48"
+            alt="CorrLinks Automation"
+          />
+          <div class="brand-text">
+            <h1>CorrLinks Automation</h1>
+            <p class="sub">Inmate → CorrLinks compose</p>
+          </div>
         </div>
-      </section>
+        <ol class="steps" id="stepIndicator" aria-label="Workflow steps">
+          <li class="step" data-step="1"><span class="step-num">1</span> Inmate</li>
+          <li class="step" data-step="2"><span class="step-num">2</span> CorrLinks</li>
+        </ol>
+        <div class="topbar-actions">
+          <span id="signedInEmail" class="signed-in-email truncate" title=""></span>
+          <button id="btnOpenLog" type="button" class="ghost" title="Open status log (⌘J)" aria-controls="logDrawer" aria-expanded="false">
+            Log
+          </button>
+          <button id="btnRefresh" type="button" class="ghost icon-btn" title="Refresh inmates (⌘R)">
+            <span class="btn-icon refresh-icon" aria-hidden="true"></span>
+            <span class="btn-label">Refresh</span>
+            <span class="spinner" aria-hidden="true"></span>
+          </button>
+          <button id="btnLogout" type="button" class="ghost" title="Sign out of SportsData">Log out</button>
+        </div>
+      </header>
 
-      <section class="card">
+      <main class="app">
+        <div class="workspace">
+          <div class="col col-controls">
+            <section class="card step-card" id="inmateCard" data-step="1">
+              <div class="collapse-header">
+                <button
+                  id="btnToggleInmate"
+                  class="collapse-toggle"
+                  type="button"
+                  aria-expanded="true"
+                  aria-controls="inmateBody"
+                >
+                  <span class="step-badge" aria-hidden="true">1</span>
+                  <span class="collapse-title">Inmate</span>
+                  <span id="inmateCollapsedSummary" class="collapse-summary truncate" title=""></span>
+                  <span class="step-check" aria-hidden="true">✓</span>
+                  <span class="chevron" aria-hidden="true"></span>
+                </button>
+              </div>
+              <div id="inmateBody" class="collapse-body">
+                <label for="inmateSearch">Inmate account</label>
+                <div class="combobox" id="inmateCombobox">
+                  <input
+                    id="inmateSearch"
+                    type="search"
+                    placeholder="Search name, ID, or email…"
+                    autocomplete="off"
+                    disabled
+                    aria-autocomplete="list"
+                    aria-controls="inmateOptions"
+                    aria-expanded="false"
+                  />
+                  <input id="accountSelect" type="hidden" value="" />
+                  <ul id="inmateOptions" class="combobox-list" role="listbox" hidden></ul>
+                </div>
+
+                <div id="accountMeta" class="account-meta" hidden>
+                  <div class="badge-row" id="badgeRow"></div>
+                  <div class="kv-list" id="accountRows"></div>
+                  <!-- Exchange file list hidden for now — all sendable parts stay auto-selected -->
+                  <div class="files-block" id="filesBlock" hidden>
+                    <div class="files-head">
+                      <span class="section-label">Exchange files</span>
+                      <span id="filesHint" class="muted"></span>
+                    </div>
+                    <ul id="filesList" class="files-list"></ul>
+                  </div>
+                </div>
+
+                <p id="loopProgress" class="loop-progress" hidden></p>
+                <div class="row actions-row" id="actionsRow">
+                  <button id="btnStartLoop" type="button" disabled title="Process each inmate: login + compose paste (no send)">
+                    Start loop
+                  </button>
+                  <button id="btnStopLoop" type="button" class="danger" disabled hidden>Stop loop</button>
+                  <button id="btnLogin" type="button" disabled title="Single inmate: login + compose paste (no send)">
+                    Login to CorrLinks
+                  </button>
+                  <button id="btnStatus" type="button" class="ghost">Check status</button>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div class="col col-corrlinks">
+            <section class="card step-card compose-card" id="composeCard" data-step="2">
+              <div class="collapse-header">
+                <button
+                  id="btnToggleCompose"
+                  class="collapse-toggle"
+                  type="button"
+                  aria-expanded="true"
+                  aria-controls="composeBody"
+                >
+                  <span class="step-badge" aria-hidden="true">2</span>
+                  <span class="collapse-title">Compose preview</span>
+                  <span id="composeCollapsedSummary" class="collapse-summary truncate" title="">Waiting for CorrLinks…</span>
+                  <span class="step-check" aria-hidden="true">✓</span>
+                  <span class="chevron" aria-hidden="true"></span>
+                </button>
+              </div>
+              <div id="composeBody" class="collapse-body">
+                <div class="preview-grid preview-inline">
+                  <div>
+                    <span class="kv-label">Recipient</span>
+                    <p id="previewTo" class="kv-value truncate">—</p>
+                  </div>
+                  <div>
+                    <span class="kv-label">Subject</span>
+                    <p id="previewSubject" class="kv-value truncate">—</p>
+                  </div>
+                  <div>
+                    <span class="kv-label">Body</span>
+                    <p id="previewBody" class="kv-value truncate">—</p>
+                  </div>
+                </div>
+                <div class="char-meter">
+                  <div class="char-meter-top">
+                    <span>Characters</span>
+                    <span id="charCountLabel">0 / 12750</span>
+                  </div>
+                  <div class="progress" aria-hidden="true">
+                    <div id="charProgress" class="progress-bar" style="width: 0%"></div>
+                  </div>
+                </div>
+                <div class="row compose-actions">
+                  <button id="btnSend" type="button" disabled title="Send not implemented yet">Send (coming soon)</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="card corr-card">
+              <div class="corr-head">
+                <h2>CorrLinks</h2>
+              </div>
+              <div id="corrPane" class="corr-pane">
+                <div class="corr-placeholder">
+                  Select an inmate to open CorrLinks here
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </main>
+
+      <footer class="statusbar" id="statusBar">
+        <div class="statusbar-left">
+          <span class="status-pill" id="sdConn"><span class="dot"></span><span class="status-label">SportsData offline</span></span>
+          <span class="status-pill" id="clConn"><span class="dot"></span><span class="status-label">CorrLinks not logged in</span></span>
+        </div>
+        <span id="statusHint" class="status-hint">Ready</span>
+        <span class="status-hint shortcuts" title="Shortcuts">⌘R refresh · ⌘L login · ⌘J log · ⌘K clear log</span>
+        <span class="status-credit">Designed by Landogz Web Solutions</span>
+      </footer>
+    </div>
+
+    <div id="logBackdrop" class="log-backdrop" hidden></div>
+    <aside id="logDrawer" class="log-drawer" hidden aria-label="Status log">
+      <div class="log-drawer-head">
         <h2>Status log</h2>
-        <pre id="log" class="log"></pre>
-      </section>
-    </main>
+        <button id="btnCloseLog" type="button" class="ghost" title="Close log">Close</button>
+      </div>
+      <div class="log-controls log-drawer-controls">
+        <label class="filter-label">
+          <span class="sr-only">Filter</span>
+          <select id="logFilter" aria-label="Filter log">
+            <option value="all">All</option>
+            <option value="error">Errors</option>
+          </select>
+        </label>
+        <label class="check tight">
+          <input id="logAutoScroll" type="checkbox" checked />
+          Auto-scroll
+        </label>
+        <label class="check tight">
+          <input id="logMask" type="checkbox" checked />
+          Mask emails
+        </label>
+        <button id="btnCopyLog" type="button" class="ghost tiny">Copy</button>
+        <button id="btnClearLog" type="button" class="ghost tiny">Clear</button>
+      </div>
+      <div id="log" class="log log-drawer-body" role="log" aria-live="polite"></div>
+    </aside>
+
+    <div id="toastHost" class="toast-host" aria-live="polite"></div>
+    <dialog id="confirmSend" class="modal">
+      <form method="dialog" id="confirmSendForm">
+        <h3>Confirm send</h3>
+        <p class="muted">Review the message before sending. This cannot be undone.</p>
+        <dl class="confirm-dl">
+          <div><dt>To</dt><dd id="confirmTo">—</dd></div>
+          <div><dt>Subject</dt><dd id="confirmSubject">—</dd></div>
+          <div><dt>Characters</dt><dd id="confirmChars">—</dd></div>
+        </dl>
+        <div class="row">
+          <button value="cancel" class="ghost">Cancel</button>
+          <button id="btnConfirmSend" value="confirm" class="danger" disabled>Send message</button>
+        </div>
+      </form>
+    </dialog>
+
     <script src="renderer.js"></script>
   </body>
 </html>

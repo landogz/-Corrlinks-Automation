@@ -150,6 +150,28 @@ function saveSportsDataCredentials({ email, password, baseUrl, remember = true }
   return { ...next, credentialsPath: filePath, remembered: false };
 }
 
+/** Clear remembered SportsData login for this session (and delete credentials file). */
+function clearSportsDataCredentials() {
+  const filePath = getCredentialsPath();
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch (_) {}
+
+  const baseUrl = (process.env.SPORTSDATA_BASE_URL || 'https://sportsdata.com').replace(/\/$/, '');
+  process.env.SPORTSDATA_EMAIL = '';
+  process.env.SPORTSDATA_PASSWORD = '';
+  // Keep base URL so the login form can still prefill it.
+  process.env.SPORTSDATA_BASE_URL = baseUrl;
+
+  return {
+    ok: true,
+    baseUrl,
+    email: '',
+    password: '',
+    credentialsPath: filePath,
+  };
+}
+
 // Saved UI credentials override empty/stale .env values
 applyCredentialsToEnv(loadSavedCredentials());
 
@@ -179,6 +201,7 @@ module.exports = {
   getCredentialsPath,
   loadSavedCredentials,
   saveSportsDataCredentials,
+  clearSportsDataCredentials,
   reloadSavedCredentials,
   envPath,
 };

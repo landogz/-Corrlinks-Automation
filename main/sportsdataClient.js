@@ -148,6 +148,12 @@ class SportsDataClient {
     });
   }
 
+  resetSession() {
+    this.jar = new CookieJar();
+    this.authenticated = false;
+    this.lastError = null;
+  }
+
   resolveUrl(config) {
     const base = config.baseURL || '';
     if (/^https?:\/\//i.test(config.url)) return config.url;
