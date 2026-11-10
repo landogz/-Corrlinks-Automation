@@ -75,9 +75,26 @@ let loopRunning = false;
 let loopAbort = false;
 /** When true, hide the CorrLinks embed so the HTML countdown can show. */
 let loopCountdownActive = false;
+/** Active top-level tab: automate | history */
+let activeMainTab = 'automate';
+/** @type {any} */
+let historyDataTable = null;
+let historyLoaded = false;
+/** @type {{ url: string|null, text: string, date: string|null, filename: string|null }} */
+let historyPreviewState = { url: null, text: '', date: null, filename: null };
 /** @type {{ to: string, subject: string, body: string, chars: number }} */
 let composePreview = { to: '', subject: '', body: '', chars: 0 };
 let optionHighlight = -1;
+
+const mainTabs = document.getElementById('mainTabs');
+const automateView = document.getElementById('automateView');
+const historyView = document.getElementById('historyView');
+const historyHint = document.getElementById('historyHint');
+const historyPreviewMeta = document.getElementById('historyPreviewMeta');
+const historyPreviewBody = document.getElementById('historyPreviewBody');
+const btnHistoryRefresh = document.getElementById('btnHistoryRefresh');
+const btnHistoryCopy = document.getElementById('btnHistoryCopy');
+const btnHistoryDownloadPreview = document.getElementById('btnHistoryDownloadPreview');
 
 function stamp() {
   return new Date().toLocaleTimeString([], { hour12: true });
@@ -1292,6 +1309,10 @@ function resetWorkspaceState() {
   setCorrlinksConnected(false);
   setStepState({ inmateDone: false, composeDone: false, active: 1 });
   setStatusHint('Sign in with SportsData');
+  historyLoaded = false;
+  destroyHistoryTable();
+  setHistoryPreview();
+  setMainTab('automate');
 }
 
 async function init() {
@@ -1381,7 +1402,47 @@ sdPassword?.addEventListener('input', () => {
   if (loginError && !loginError.hidden) setLoginError('');
 });
 
-btnRefresh.addEventListener('click', () => refreshInmates());
+btnRefresh.addEventListener('click', () => {
+  if (activeMainTab === 'history') loadExchangeHistory();
+  else refreshInmates();
+});
+
+mainTabs?.addEventListener('click', (event) => {
+  const btn = event.target.closest('.main-tab');
+  if (!btn?.dataset?.tab) return;
+  setMainTab(btn.dataset.tab);
+});
+
+btnHistoryRefresh?.addEventListener('click', () => loadExchangeHistory());
+
+document.getElementById('historyTable')?.addEventListener('click', (event) => {
+  const btn = event.target.closest('button[data-url]');
+  if (!btn) return;
+  const url = decodeURIComponent(btn.dataset.url || '');
+  const date = decodeURIComponent(btn.dataset.date || '');
+  const filename = decodeURIComponent(btn.dataset.filename || 'all.txt');
+  if (btn.classList.contains('hist-preview')) {
+    document.querySelectorAll('#historyTable tbody tr').forEach((tr) => tr.classList.remove('is-active-row'));
+    btn.closest('tr')?.classList.add('is-active-row');
+    previewHistoryRow({ url, date, filename });
+  } else if (btn.classList.contains('hist-download')) {
+    downloadHistoryRow({ url, date, filename });
+  }
+});
+
+btnHistoryCopy?.addEventListener('click', async () => {
+  if (!historyPreviewState.text) return;
+  await copyText(historyPreviewState.text);
+});
+
+btnHistoryDownloadPreview?.addEventListener('click', () => {
+  if (!historyPreviewState.url) return;
+  downloadHistoryRow({
+    url: historyPreviewState.url,
+    date: historyPreviewState.date,
+    filename: historyPreviewState.filename,
+  });
+});
 
 btnLogout.addEventListener('click', async () => {
   btnLogout.disabled = true;
@@ -1603,14 +1664,224 @@ function syncCorrPaneBounds() {
   const width = Math.max(0, right - left);
   const height = Math.max(0, bottom - top);
 
-  // Hide embed when scrolled away, collapsed, or a loop countdown overlay is up.
-  const visible = !loopCountdownActive && width >= 8 && height >= 8;
+  // Hide embed when History tab, countdown overlay, or scrolled/collapsed pane.
+  const visible =
+    activeMainTab === 'automate' && !loopCountdownActive && width >= 8 && height >= 8;
   window.api.setCorrBounds({
     x: Math.round(left),
     y: Math.round(top),
     width: visible ? Math.round(width) : 0,
     height: visible ? Math.round(height) : 0,
   });
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function setMainTab(tab) {
+  activeMainTab = tab === 'history' ? 'history' : 'automate';
+  document.querySelectorAll('.main-tab').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.tab === activeMainTab);
+  });
+  document.querySelectorAll('.tab-panel').forEach((panel) => {
+    const on = panel.dataset.tabPanel === activeMainTab;
+    panel.hidden = !on;
+    panel.classList.toggle('is-active', on);
+  });
+  stepIndicator?.classList.toggle('is-hidden', activeMainTab === 'history');
+  scheduleCorrPaneBounds();
+  if (activeMainTab === 'history' && !historyLoaded) {
+    loadExchangeHistory();
+  }
+}
+
+function setHistoryPreview({ url = null, text = '', date = null, filename = null } = {}) {
+  historyPreviewState = { url, text: text || '', date, filename };
+  if (historyPreviewMeta) {
+    historyPreviewMeta.textContent = url
+      ? `${date || '—'} · ${filename || 'all.txt'} · ${(text || '').length.toLocaleString()} chars`
+      : 'Select a day to preview all.txt';
+    historyPreviewMeta.title = historyPreviewMeta.textContent;
+  }
+  if (historyPreviewBody) {
+    historyPreviewBody.textContent = url ? text || '(empty file)' : 'No file selected.';
+  }
+  if (btnHistoryCopy) btnHistoryCopy.disabled = !text;
+  if (btnHistoryDownloadPreview) btnHistoryDownloadPreview.disabled = !url;
+}
+
+function destroyHistoryTable() {
+  if (historyDataTable && window.jQuery) {
+    try {
+      historyDataTable.destroy();
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  historyDataTable = null;
+  const table = document.getElementById('historyTable');
+  if (table) {
+    const tbody = table.querySelector('tbody');
+    if (tbody) tbody.innerHTML = '';
+  }
+}
+
+function renderHistoryTable(rows) {
+  const $ = window.jQuery;
+  if (!$?.fn?.DataTable) {
+    log('DataTables failed to load — check network/CDN', 'error');
+    toast('DataTables unavailable', 'error');
+    return;
+  }
+
+  const data = Array.isArray(rows) ? rows : [];
+  if (historyDataTable) {
+    historyDataTable.clear();
+    historyDataTable.rows.add(data);
+    historyDataTable.draw();
+    return;
+  }
+
+  historyDataTable = $('#historyTable').DataTable({
+    data,
+    pageLength: 10,
+    lengthMenu: [10, 25, 50],
+    order: [[0, 'desc']],
+    autoWidth: false,
+    columns: [
+      { data: 'date', title: 'Date' },
+      {
+        data: 'filename',
+        title: 'File',
+        defaultContent: 'all.txt',
+        render: (value, _type, row) => escapeHtml(value || row.file || 'all.txt'),
+      },
+      {
+        data: 'characters',
+        title: 'Characters',
+        render: (value) => (value == null ? '—' : Number(value).toLocaleString()),
+      },
+      {
+        data: null,
+        title: 'Actions',
+        orderable: false,
+        searchable: false,
+        render: (_value, _type, row) => {
+          const url = encodeURIComponent(row.url || '');
+          const date = encodeURIComponent(row.date || '');
+          const filename = encodeURIComponent(row.filename || 'all.txt');
+          return `<div class="history-row-actions">
+            <button type="button" class="ghost tiny hist-preview" data-url="${url}" data-date="${date}" data-filename="${filename}">Preview</button>
+            <button type="button" class="ghost tiny hist-download" data-url="${url}" data-date="${date}" data-filename="${filename}">Download</button>
+          </div>`;
+        },
+      },
+    ],
+    language: {
+      search: 'Search:',
+      lengthMenu: 'Show _MENU_',
+      info: '_START_–_END_ of _TOTAL_',
+      infoEmpty: 'No files',
+      zeroRecords: 'No matching exchange files',
+    },
+  });
+}
+
+async function loadExchangeHistory() {
+  if (!btnHistoryRefresh) return;
+  btnHistoryRefresh.disabled = true;
+  btnHistoryRefresh.classList.add('loading');
+  if (historyHint) historyHint.textContent = 'Loading from /inmate-exchange/all…';
+  setStatusHint('Loading Inmate Exchange All…');
+  log('Loading Inmate Exchange All from SportsData…', 'info');
+  try {
+    const result = await window.api.fetchExchangeHistory({ withCharacters: true });
+    if (!result?.ok) throw new Error(result?.message || 'Failed to load history');
+    historyLoaded = true;
+    const count = result.count ?? result.rows?.length ?? 0;
+    if (historyHint) {
+      historyHint.textContent =
+        count > 0
+          ? `${count} file(s) from /inmate-exchange/all`
+          : result.message || 'No files returned';
+    }
+    renderHistoryTable(result.rows || []);
+    log(`History loaded · ${count} file(s)`, 'success');
+    toast(`History · ${count} file(s)`, 'success');
+    setStatusHint(`${count} exchange file(s) ready`);
+  } catch (error) {
+    const message = error.message || String(error);
+    if (historyHint) historyHint.textContent = 'Failed to load history';
+    log(message, 'error');
+    toast(message, 'error');
+    setStatusHint('History load failed');
+  } finally {
+    btnHistoryRefresh.disabled = false;
+    btnHistoryRefresh.classList.remove('loading');
+  }
+}
+
+async function previewHistoryRow({ url, date, filename }) {
+  if (!url) return;
+  setHistoryPreview({
+    url,
+    text: 'Loading preview…',
+    date,
+    filename,
+  });
+  setStatusHint(`Preview ${date || filename || 'file'}…`);
+  try {
+    const result = await window.api.previewExchangeFile({ url, date, filename });
+    if (!result?.ok) throw new Error(result?.message || 'Preview failed');
+    setHistoryPreview({
+      url: result.url || url,
+      text: result.text || '',
+      date: result.date || date,
+      filename: result.filename || filename,
+    });
+    log(`Preview ${result.date || date}: ${(result.characters || 0).toLocaleString()} chars`, 'info');
+    setStatusHint(`Preview ready · ${(result.characters || 0).toLocaleString()} chars`);
+  } catch (error) {
+    setHistoryPreview({ url: null, text: '', date: null, filename: null });
+    if (historyPreviewBody) historyPreviewBody.textContent = error.message || String(error);
+    log(error.message || String(error), 'error');
+    toast(error.message || String(error), 'error');
+  }
+}
+
+async function downloadHistoryRow({ url, date, filename }) {
+  if (!url) return;
+  setStatusHint(`Downloading ${date || filename || 'file'}…`);
+  try {
+    const suggestedName =
+      date && filename
+        ? `inmate-exchange-${date}-${filename}`
+        : date
+          ? `inmate-exchange-all-${date}.txt`
+          : filename || 'inmate-exchange-all.txt';
+    const result = await window.api.downloadExchangeFile({
+      url,
+      date,
+      suggestedName,
+    });
+    if (result?.canceled) {
+      setStatusHint('Download canceled');
+      return;
+    }
+    if (!result?.ok) throw new Error(result?.message || 'Download failed');
+    log(`Saved ${result.path}`, 'success');
+    toast('File saved', 'success');
+    setStatusHint(`Saved · ${(result.characters || 0).toLocaleString()} chars`);
+  } catch (error) {
+    log(error.message || String(error), 'error');
+    toast(error.message || String(error), 'error');
+  }
 }
 
 let corrBoundsTimer = null;

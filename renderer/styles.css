@@ -75,6 +75,66 @@ body {
   flex: 0 0 auto;
 }
 
+.main-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.main-tab {
+  appearance: none;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 14px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 34px;
+}
+
+.main-tab:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+
+.main-tab.is-active {
+  background: color-mix(in srgb, var(--primary) 88%, #0b3d38);
+  color: #fff;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.1) inset;
+}
+
+.main-tab.is-active:hover:not(:disabled) {
+  background: var(--primary-hover);
+  color: #fff;
+}
+
+.steps.is-hidden {
+  display: none;
+}
+
+.tab-panel {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: none;
+  flex-direction: column;
+}
+
+.tab-panel.is-active {
+  display: flex;
+}
+
+.tab-panel[hidden] {
+  display: none !important;
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;
@@ -312,6 +372,10 @@ body.is-login .toast-host {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+
+#automateView.is-active .workspace {
+  flex: 1;
 }
 
 .workspace {
@@ -1619,5 +1683,218 @@ button.tiny {
   .log-controls .tiny {
     min-height: 36px;
     padding: 6px 10px;
+  }
+}
+
+/* —— History tab (DataTables) —— */
+.history-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  gap: 12px;
+  overflow: hidden;
+}
+
+.history-main,
+.history-preview {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px;
+  overflow: hidden;
+}
+
+.history-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex: 0 0 auto;
+}
+
+.history-toolbar h2,
+.history-preview-head h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.history-toolbar-text {
+  min-width: 0;
+}
+
+.history-toolbar .muted,
+.history-preview-titles .muted {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.history-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.history-preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex: 0 0 auto;
+  margin-bottom: 10px;
+}
+
+.history-preview-titles {
+  min-width: 0;
+}
+
+.history-preview-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.history-preview-body {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #050b12;
+  color: #d7e2ea;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.history-row-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* DataTables dark theme overrides */
+.dataTables_wrapper {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dataTables_wrapper .dataTables_length,
+.dataTables_wrapper .dataTables_filter,
+.dataTables_wrapper .dataTables_info,
+.dataTables_wrapper .dataTables_paginate {
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.dataTables_wrapper .dataTables_filter input,
+.dataTables_wrapper .dataTables_length select {
+  background: color-mix(in srgb, var(--card) 80%, #000);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 6px 10px;
+  margin-left: 6px;
+}
+
+.dataTables_wrapper .dataTables_filter input:focus,
+.dataTables_wrapper .dataTables_length select:focus {
+  outline: none;
+  box-shadow: var(--focus);
+  border-color: var(--primary);
+}
+
+table.dataTable.history-table {
+  border-collapse: collapse !important;
+  width: 100% !important;
+  color: var(--text);
+}
+
+table.dataTable.history-table thead th {
+  background: color-mix(in srgb, var(--navy) 55%, var(--card));
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border) !important;
+  padding: 10px 12px !important;
+}
+
+table.dataTable.history-table tbody td {
+  border-top: 1px solid var(--border) !important;
+  padding: 10px 12px !important;
+  vertical-align: middle;
+}
+
+table.dataTable.history-table tbody tr {
+  background: transparent;
+}
+
+table.dataTable.history-table tbody tr:hover {
+  background: rgba(42, 157, 143, 0.08);
+}
+
+table.dataTable.history-table.no-footer {
+  border-bottom: 0 !important;
+}
+
+table.dataTable.history-table tbody tr.selected,
+table.dataTable.history-table tbody tr.is-active-row {
+  background: rgba(42, 157, 143, 0.14) !important;
+}
+
+.dataTables_wrapper .dataTables_paginate .paginate_button {
+  color: var(--muted) !important;
+  border: 1px solid transparent !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  padding: 4px 10px !important;
+}
+
+.dataTables_wrapper .dataTables_paginate .paginate_button:hover {
+  color: var(--text) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: var(--border) !important;
+}
+
+.dataTables_wrapper .dataTables_paginate .paginate_button.current,
+.dataTables_wrapper .dataTables_paginate .paginate_button.current:hover {
+  color: #fff !important;
+  background: var(--primary) !important;
+  border-color: transparent !important;
+}
+
+.dataTables_wrapper .dataTables_paginate .paginate_button.disabled,
+.dataTables_wrapper .dataTables_paginate .paginate_button.disabled:hover {
+  color: rgba(143, 163, 179, 0.4) !important;
+  background: transparent !important;
+}
+
+@media (max-width: 1023px) {
+  .history-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(240px, 1fr) minmax(220px, 0.9fr);
+    overflow: auto;
+  }
+}
+
+@media (max-width: 767px) {
+  .main-tabs {
+    order: 3;
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .main-tab {
+    flex: 1;
   }
 }

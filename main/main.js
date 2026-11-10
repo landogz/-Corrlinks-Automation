@@ -1,5 +1,6 @@
 const path = require('path');
-const { app, BrowserWindow, ipcMain } = require('electron');
+const fs = require('fs/promises');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const { SportsDataClient } = require('./sportsdataClient');
 const {
   loginToCorrlinks,
@@ -283,6 +284,70 @@ function registerIpc() {
 
   ipcMain.handle('corrlinks:status', async () => getStatus());
   ipcMain.handle('corrlinks:setBounds', async (_event, bounds) => setCorrBounds(bounds || {}));
+
+  ipcMain.handle('exchange:history', async (_event, payload = {}) => {
+    try {
+      const result = await sportsData.fetchInmateExchangeHistory({
+        withCharacters: payload.withCharacters !== false,
+      });
+      return { ok: true, ...result };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error.message || 'Failed to load Inmate Exchange history',
+        rows: [],
+      };
+    }
+  });
+
+  ipcMain.handle('exchange:preview', async (_event, payload = {}) => {
+    try {
+      if (!payload.url) throw new Error('File URL is required');
+      const file = await sportsData.fetchExchangeFileText(payload.url);
+      return {
+        ok: true,
+        url: file.url,
+        text: file.text,
+        characters: file.characters,
+        date: payload.date || null,
+        filename: payload.filename || path.basename(String(payload.url).split('?')[0]) || 'all.txt',
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error.message || 'Failed to preview exchange file',
+      };
+    }
+  });
+
+  ipcMain.handle('exchange:download', async (_event, payload = {}) => {
+    try {
+      if (!payload.url) throw new Error('File URL is required');
+      const file = await sportsData.fetchExchangeFileText(payload.url);
+      const suggested =
+        payload.suggestedName ||
+        (payload.date ? `inmate-exchange-all-${payload.date}.txt` : 'inmate-exchange-all.txt');
+      const result = await dialog.showSaveDialog(controlWindow, {
+        title: 'Save Inmate Exchange All',
+        defaultPath: suggested,
+        filters: [{ name: 'Text files', extensions: ['txt'] }],
+      });
+      if (result.canceled || !result.filePath) {
+        return { ok: false, canceled: true };
+      }
+      await fs.writeFile(result.filePath, file.text, 'utf8');
+      return {
+        ok: true,
+        path: result.filePath,
+        characters: file.characters,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error.message || 'Failed to download exchange file',
+      };
+    }
+  });
 }
 
 app.whenReady().then(() => {

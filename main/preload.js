@@ -13,4 +13,7 @@ contextBridge.exposeInMainWorld('api', {
   saveSportsDataLogin: (payload) => ipcRenderer.invoke('config:saveSportsData', payload),
   verifySportsDataLogin: () => ipcRenderer.invoke('config:verifySportsData'),
   logoutSportsData: () => ipcRenderer.invoke('config:logoutSportsData'),
+  fetchExchangeHistory: (payload) => ipcRenderer.invoke('exchange:history', payload),
+  previewExchangeFile: (payload) => ipcRenderer.invoke('exchange:preview', payload),
+  downloadExchangeFile: (payload) => ipcRenderer.invoke('exchange:download', payload),
 });

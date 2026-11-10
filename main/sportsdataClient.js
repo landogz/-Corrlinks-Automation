@@ -367,6 +367,117 @@ class SportsDataClient {
       characters: text.length,
     };
   }
+
+  /**
+   * GET /api/v1/insidescore/inmate-exchange/all
+   * Supports a single data object or an array of { date, file, url }.
+   */
+  async fetchInmateExchangeAll(retry = true) {
+    const { baseUrl } = this.getConfig();
+    await this.ensureAuth();
+
+    const response = await this.http.get(`${baseUrl}/api/v1/insidescore/inmate-exchange/all`, {
+      headers: {
+        Accept: 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        Referer: `${baseUrl}/insidescore/inmate-exchange`,
+      },
+      maxRedirects: 0,
+      validateStatus: (status) => status >= 200 && status < 500,
+    });
+
+    const isLoginRedirect =
+      [301, 302, 303].includes(response.status) ||
+      response.status === 401 ||
+      response.status === 419 ||
+      (typeof response.data === 'string' && /Login to your account/i.test(response.data));
+
+    if (isLoginRedirect) {
+      this.authenticated = false;
+      if (!retry) throw new Error('SportsData session expired and re-login failed');
+      await this.login();
+      return this.fetchInmateExchangeAll(false);
+    }
+
+    if (response.status !== 200 || !response.data?.status) {
+      const message =
+        (typeof response.data === 'object' && response.data?.message) ||
+        `Unexpected SportsData response (HTTP ${response.status})`;
+      return { ok: false, items: [], message };
+    }
+
+    const raw = response.data.data;
+    const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    const items = list
+      .filter((item) => item && item.url)
+      .map((item) => ({
+        date: item.date || null,
+        file: item.file || null,
+        url: item.url,
+      }));
+
+    if (!items.length) {
+      return {
+        ok: false,
+        items: [],
+        message: response.data.message || 'No Inmate Exchange All file available',
+      };
+    }
+
+    return {
+      ok: true,
+      items,
+      // Convenience fields for the common single-file response
+      date: items[0].date,
+      file: items[0].file,
+      url: items[0].url,
+      message: response.data.message || 'Inmate Exchange All generated.',
+    };
+  }
+
+  /**
+   * History rows from /inmate-exchange/all only — no multi-day probing.
+   */
+  async fetchInmateExchangeHistory({ withCharacters = true } = {}) {
+    const meta = await this.fetchInmateExchangeAll();
+    if (!meta.ok || !meta.items?.length) {
+      return {
+        ok: true,
+        count: 0,
+        rows: [],
+        message: meta.message || 'No Inmate Exchange All file available',
+      };
+    }
+
+    const rows = [];
+    for (const item of meta.items) {
+      let characters = null;
+      if (withCharacters) {
+        try {
+          const file = await this.fetchExchangeFileText(item.url);
+          characters = file.characters;
+        } catch (_) {
+          characters = null;
+        }
+      }
+      rows.push({
+        date: item.date || null,
+        file: item.file || 'all.txt',
+        filename: String(item.file || '').split('/').pop() || 'all.txt',
+        url: item.url,
+        characters,
+        ok: true,
+      });
+    }
+
+    rows.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    return {
+      ok: true,
+      count: rows.length,
+      rows,
+      message: meta.message || null,
+    };
+  }
 }
 
 module.exports = {

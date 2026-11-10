@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; script-src 'self'"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.datatables.net https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com https://cdn.datatables.net data:; img-src 'self' data: https://cdn.datatables.net; script-src 'self' https://code.jquery.com https://cdn.datatables.net https://cdn.jsdelivr.net"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CorrLinks Automation</title>
@@ -14,6 +14,10 @@
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"
     />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -97,6 +101,14 @@
           <li class="step" data-step="1"><span class="step-num">1</span> Inmate</li>
           <li class="step" data-step="2"><span class="step-num">2</span> CorrLinks</li>
         </ol>
+        <nav class="main-tabs" id="mainTabs" aria-label="Main views">
+          <button type="button" class="main-tab is-active" data-tab="automate" id="tabAutomate">
+            Automate
+          </button>
+          <button type="button" class="main-tab" data-tab="history" id="tabHistory">
+            History
+          </button>
+        </nav>
         <div class="topbar-actions">
           <span id="signedInEmail" class="signed-in-email truncate" title=""></span>
           <button id="btnOpenLog" type="button" class="ghost" title="Open status log (⌘J)" aria-controls="logDrawer" aria-expanded="false">
@@ -112,6 +124,7 @@
       </header>
 
       <main class="app">
+        <div id="automateView" class="tab-panel is-active" data-tab-panel="automate">
         <div class="workspace">
           <div class="col col-controls">
             <section class="card step-card" id="inmateCard" data-step="1">
@@ -257,6 +270,53 @@
             </section>
           </div>
         </div>
+        </div>
+
+        <div id="historyView" class="tab-panel" data-tab-panel="history" hidden>
+          <div class="history-layout">
+            <section class="history-main card">
+              <div class="history-toolbar">
+                <div class="history-toolbar-text">
+                  <h2>Inmate Exchange history</h2>
+                  <p class="muted" id="historyHint">From SportsData · /inmate-exchange/all</p>
+                </div>
+                <button id="btnHistoryRefresh" type="button" class="ghost icon-btn" title="Refresh history">
+                  <span class="btn-icon refresh-icon" aria-hidden="true"></span>
+                  <span class="btn-label">Refresh</span>
+                  <span class="spinner" aria-hidden="true"></span>
+                </button>
+              </div>
+              <div class="history-table-wrap">
+                <table id="historyTable" class="display history-table" style="width: 100%">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>File</th>
+                      <th>Characters</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                </table>
+              </div>
+            </section>
+
+            <aside class="history-preview card" aria-label="TXT preview">
+              <div class="history-preview-head">
+                <div class="history-preview-titles">
+                  <h2>Preview</h2>
+                  <p id="historyPreviewMeta" class="muted truncate">Select a day to preview all.txt</p>
+                </div>
+                <div class="history-preview-actions">
+                  <button id="btnHistoryCopy" type="button" class="ghost tiny" disabled>Copy</button>
+                  <button id="btnHistoryDownloadPreview" type="button" class="ghost tiny" disabled>
+                    Download
+                  </button>
+                </div>
+              </div>
+              <pre id="historyPreviewBody" class="history-preview-body" aria-live="polite">No file selected.</pre>
+            </aside>
+          </div>
+        </div>
       </main>
 
       <footer class="statusbar" id="statusBar">
@@ -315,6 +375,8 @@
       </form>
     </dialog>
 
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>
