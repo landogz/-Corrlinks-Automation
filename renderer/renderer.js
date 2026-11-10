@@ -2,6 +2,12 @@ const logEl = document.getElementById('log');
 const accountSelect = document.getElementById('accountSelect');
 const accountMeta = document.getElementById('accountMeta');
 const configSummary = document.getElementById('configSummary');
+const sportsdataForm = document.getElementById('sportsdataForm');
+const sdBaseUrl = document.getElementById('sdBaseUrl');
+const sdEmail = document.getElementById('sdEmail');
+const sdPassword = document.getElementById('sdPassword');
+const sdRemember = document.getElementById('sdRemember');
+const btnSaveLogin = document.getElementById('btnSaveLogin');
 const btnRefresh = document.getElementById('btnRefresh');
 const btnLogin = document.getElementById('btnLogin');
 const btnStatus = document.getElementById('btnStatus');
@@ -25,6 +31,18 @@ function log(message, level = 'info') {
 function selectedInmate() {
   const id = accountSelect.value;
   return accounts.find((a) => String(a.id) === String(id)) || null;
+}
+
+function setConfigSummary(summary) {
+  configSummary.textContent = `Base: ${summary.baseUrl} · Operator: ${summary.email || '(missing)'} · TZ: ${
+    summary.timezone || 'n/a'
+  } · Subject now: ${summary.subjectToday || 'n/a'}`;
+}
+
+function fillLoginForm(summary) {
+  if (summary.baseUrl) sdBaseUrl.value = summary.baseUrl;
+  if (summary.email) sdEmail.value = summary.email;
+  if (summary.password) sdPassword.value = summary.password;
 }
 
 function renderAccounts(list) {
@@ -75,25 +93,30 @@ function updateAccountMeta() {
   ].join(' · ');
 }
 
-async function init() {
-  try {
-    const summary = await window.api.getConfigSummary();
-    configSummary.textContent = `Base: ${summary.baseUrl} · Operator: ${summary.email || '(missing)'} · TZ: ${
-      summary.timezone || 'n/a'
-    } · Subject now: ${summary.subjectToday || 'n/a'}`;
-    log('Control UI ready');
-    if (summary.envPath) log(`Loaded .env from: ${summary.envPath}`);
-    if (!summary.hasPassword) log('Missing SPORTSDATA_PASSWORD — create/edit .env (see INSTALL.md)', 'err');
-  } catch (error) {
-    configSummary.textContent = 'Failed to load config';
-    log(error.message || String(error), 'err');
+async function ensureCredentialsSaved() {
+  const email = sdEmail.value.trim();
+  const password = sdPassword.value;
+  const baseUrl = sdBaseUrl.value.trim() || 'https://sportsdata.com';
+
+  if (!email || !password) {
+    throw new Error('Enter SportsData email and password');
   }
+
+  const result = await window.api.saveSportsDataLogin({
+    email,
+    password,
+    baseUrl,
+    remember: sdRemember.checked,
+  });
+  if (!result.ok) throw new Error(result.message || 'Failed to save login');
+  return result;
 }
 
-btnRefresh.addEventListener('click', async () => {
+async function refreshInmates() {
   btnRefresh.disabled = true;
   log('Refreshing inmate accounts from SportsData…');
   try {
+    await ensureCredentialsSaved();
     const result = await window.api.refreshAccounts();
     if (!result.ok) {
       log(result.message || 'Refresh failed', 'err');
@@ -106,6 +129,50 @@ btnRefresh.addEventListener('click', async () => {
   } finally {
     btnRefresh.disabled = false;
   }
+}
+
+async function init() {
+  try {
+    const summary = await window.api.getConfigSummary();
+    fillLoginForm(summary);
+    setConfigSummary(summary);
+    log('Control UI ready');
+    if (summary.credentialsPath && summary.hasPassword) {
+      log(`Remembered SportsData login (${summary.email})`);
+    } else if (summary.envPath) {
+      log(`Loaded .env from: ${summary.envPath}`);
+    }
+    if (!summary.hasPassword && !summary.email) {
+      log('Enter SportsData email and password, then Save login', 'err');
+    } else if (!summary.hasPassword) {
+      log('Missing SportsData password — enter it and Save login', 'err');
+    }
+  } catch (error) {
+    configSummary.textContent = 'Failed to load config';
+    log(error.message || String(error), 'err');
+  }
+}
+
+sportsdataForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  btnSaveLogin.disabled = true;
+  try {
+    const saved = await ensureCredentialsSaved();
+    const summary = await window.api.getConfigSummary();
+    fillLoginForm(summary);
+    setConfigSummary(summary);
+    log(`SportsData login saved for ${saved.email}`, 'ok');
+    if (saved.credentialsPath) log(`Stored at: ${saved.credentialsPath}`);
+    await refreshInmates();
+  } catch (error) {
+    log(error.message || String(error), 'err');
+  } finally {
+    btnSaveLogin.disabled = false;
+  }
+});
+
+btnRefresh.addEventListener('click', () => {
+  refreshInmates();
 });
 
 accountSelect.addEventListener('change', updateAccountMeta);

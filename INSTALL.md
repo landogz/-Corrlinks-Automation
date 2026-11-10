@@ -12,7 +12,7 @@ Built installers are in the `release/` folder after `npm run dist`.
 2. Network access to:
    - `https://sportsdata.com`
    - `https://www.corrlinks.com`
-3. A `.env` file with credentials (see below)
+3. SportsData email/password (enter once in the app — remembered on this computer)
 
 ---
 
@@ -43,32 +43,13 @@ Because this build is not Apple-notarized:
 
 (Only needed the first time.)
 
-### 4) Add your `.env`
+### 4) Run and sign in
 
-Create a file named `.env` in the **same folder as the `.app`** (usually `/Applications/` next to the app), or inside:
+Launch **Inmate Exchange Auto** → enter SportsData **email** and **password** → **Save login** (remembered under Application Support) → **Refresh inmates** → select inmate → **Login to CorrLinks**.
 
-`~/Library/Application Support/Inmate Exchange Auto/.env`
+Optional: a `.env` file still works if you prefer. The in-app login overrides it and is saved to:
 
-Recommended for simplicity — place beside the app:
-
-```text
-/Applications/.env
-```
-
-Or next to a portable copy of the `.app`.
-
-Contents (copy from `.env.example`):
-
-```env
-SPORTSDATA_BASE_URL=https://sportsdata.com
-SPORTSDATA_EMAIL=your-email@example.com
-SPORTSDATA_PASSWORD=your-password
-APP_TIMEZONE=America/New_York
-```
-
-### 5) Run
-
-Launch **Inmate Exchange Auto** → **Refresh inmates** → select inmate → **Login to CorrLinks**.
+`~/Library/Application Support/Inmate Exchange Auto/sportsdata-credentials.json`
 
 ---
 

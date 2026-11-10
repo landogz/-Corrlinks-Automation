@@ -14,15 +14,52 @@
     <main class="app">
       <header>
         <h1>CorrLinks Auto</h1>
-        <p class="sub">Phase 1 — inmate accounts → primary login → second if locked</p>
+        <p class="sub">SportsData login → inmate accounts → CorrLinks compose</p>
       </header>
 
       <section class="card">
-        <h2>SportsData</h2>
+        <h2>SportsData login</h2>
+        <form id="sportsdataForm" class="form" autocomplete="on">
+          <label for="sdBaseUrl">Base URL</label>
+          <input
+            id="sdBaseUrl"
+            name="sportsdata-base-url"
+            type="url"
+            value="https://sportsdata.com"
+            autocomplete="url"
+          />
+
+          <label for="sdEmail">Email</label>
+          <input
+            id="sdEmail"
+            name="sportsdata-email"
+            type="email"
+            placeholder="operator@example.com"
+            autocomplete="username"
+            required
+          />
+
+          <label for="sdPassword">Password</label>
+          <input
+            id="sdPassword"
+            name="sportsdata-password"
+            type="password"
+            placeholder="SportsData password"
+            autocomplete="current-password"
+            required
+          />
+
+          <label class="check">
+            <input id="sdRemember" type="checkbox" checked />
+            Remember email and password on this computer
+          </label>
+
+          <div class="row">
+            <button id="btnSaveLogin" type="submit">Save login</button>
+            <button id="btnRefresh" type="button" class="ghost">Refresh inmates</button>
+          </div>
+        </form>
         <p id="configSummary" class="muted">Loading config…</p>
-        <div class="row">
-          <button id="btnRefresh" type="button">Refresh inmates</button>
-        </div>
       </section>
 
       <section class="card">

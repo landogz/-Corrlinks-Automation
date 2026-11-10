@@ -8,6 +8,7 @@ function resolveEnvPath() {
   try {
     const { app } = require('electron');
     if (app?.isPackaged) {
+      candidates.push(path.join(app.getPath('userData'), '.env'));
       candidates.push(path.join(path.dirname(process.execPath), '.env'));
       // macOS: Inmate Exchange Auto.app/Contents/MacOS → put .env next to .app
       if (process.platform === 'darwin') {
@@ -18,7 +19,6 @@ function resolveEnvPath() {
       if (process.resourcesPath) {
         candidates.push(path.join(process.resourcesPath, '.env'));
       }
-      candidates.push(path.join(app.getPath('userData'), '.env'));
     }
   } catch (_) {
     // electron may be unavailable in plain node smoke scripts
@@ -81,12 +81,90 @@ const CORRLINKS = {
   loginPathPattern: /\/login/i,
 };
 
-function getSportsDataConfig() {
-  const baseUrl = (process.env.SPORTSDATA_BASE_URL || 'https://sportsdata.com').replace(/\/$/, '');
-  const email = process.env.SPORTSDATA_EMAIL || '';
-  const password = process.env.SPORTSDATA_PASSWORD || '';
+function getCredentialsPath() {
+  try {
+    const { app } = require('electron');
+    if (app?.isReady?.() && typeof app.getPath === 'function') {
+      return path.join(app.getPath('userData'), 'sportsdata-credentials.json');
+    }
+  } catch (_) {}
+  return path.join(__dirname, '..', 'sportsdata-credentials.json');
+}
 
-  return { baseUrl, email, password };
+/** Call once after app.whenReady so packaged installs use userData. */
+function reloadSavedCredentials() {
+  applyCredentialsToEnv(loadSavedCredentials());
+  return getSportsDataConfig();
+}
+
+function loadSavedCredentials() {
+  try {
+    const filePath = getCredentialsPath();
+    if (!fs.existsSync(filePath)) return {};
+    const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    if (!raw || typeof raw !== 'object') return {};
+    return {
+      baseUrl: typeof raw.baseUrl === 'string' ? raw.baseUrl : undefined,
+      email: typeof raw.email === 'string' ? raw.email : undefined,
+      password: typeof raw.password === 'string' ? raw.password : undefined,
+    };
+  } catch (_) {
+    return {};
+  }
+}
+
+function applyCredentialsToEnv(creds = {}) {
+  if (creds.baseUrl) process.env.SPORTSDATA_BASE_URL = String(creds.baseUrl).replace(/\/$/, '');
+  if (creds.email != null) process.env.SPORTSDATA_EMAIL = String(creds.email);
+  if (creds.password != null) process.env.SPORTSDATA_PASSWORD = String(creds.password);
+}
+
+function saveSportsDataCredentials({ email, password, baseUrl, remember = true } = {}) {
+  const current = loadSavedCredentials();
+  const next = {
+    baseUrl: (baseUrl || current.baseUrl || process.env.SPORTSDATA_BASE_URL || 'https://sportsdata.com').replace(
+      /\/$/,
+      ''
+    ),
+    email: email != null ? String(email).trim() : current.email || '',
+    password: password != null ? String(password) : current.password || '',
+  };
+
+  if (!next.email || !next.password) {
+    throw new Error('SportsData email and password are required');
+  }
+
+  applyCredentialsToEnv(next);
+
+  const filePath = getCredentialsPath();
+  if (remember) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, `${JSON.stringify(next, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    return { ...next, credentialsPath: filePath, remembered: true };
+  }
+
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch (_) {}
+
+  return { ...next, credentialsPath: filePath, remembered: false };
+}
+
+// Saved UI credentials override empty/stale .env values
+applyCredentialsToEnv(loadSavedCredentials());
+
+function getSportsDataConfig() {
+  const saved = loadSavedCredentials();
+  const baseUrl = (saved.baseUrl || process.env.SPORTSDATA_BASE_URL || 'https://sportsdata.com').replace(/\/$/, '');
+  const email = saved.email || process.env.SPORTSDATA_EMAIL || '';
+  const password = saved.password || process.env.SPORTSDATA_PASSWORD || '';
+
+  return {
+    baseUrl,
+    email,
+    password,
+    credentialsPath: getCredentialsPath(),
+  };
 }
 
 function getAppTimezone() {
@@ -98,5 +176,9 @@ module.exports = {
   getSportsDataConfig,
   getAppTimezone,
   resolveEnvPath,
+  getCredentialsPath,
+  loadSavedCredentials,
+  saveSportsDataCredentials,
+  reloadSavedCredentials,
   envPath,
 };

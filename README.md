@@ -38,7 +38,9 @@ xattr -dr com.apple.quarantine "/Applications/Inmate Exchange Auto.app"
 
 ## Configuration
 
-Create a `.env` file next to the app / installer folder (or in the app user-data folder):
+In the app: enter SportsData **email** / **password** → **Save login** (remembered on this computer).
+
+Optional `.env` (still supported; in-app login overrides it):
 
 ```env
 SPORTSDATA_BASE_URL=https://sportsdata.com
@@ -54,11 +56,11 @@ APP_TIMEZONE=America/New_York
 | `SPORTSDATA_PASSWORD` | SportsData password |
 | `APP_TIMEZONE` | Subject day rules (default `America/New_York`) |
 
-Do not commit a filled `.env`.
+Do not commit a filled `.env` or `sportsdata-credentials.json`.
 
 ## Usage
 
-1. Open the app.
+1. Open the app and save SportsData login (remembered for next launch).
 2. Click **Refresh inmates**.
 3. Select an inmate.
 4. Click **Login to CorrLinks**.

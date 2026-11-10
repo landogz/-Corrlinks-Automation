@@ -6,4 +6,5 @@ contextBridge.exposeInMainWorld('api', {
   loginCorrlinks: (payload) => ipcRenderer.invoke('corrlinks:login', payload),
   getCorrlinksStatus: () => ipcRenderer.invoke('corrlinks:status'),
   getConfigSummary: () => ipcRenderer.invoke('config:summary'),
+  saveSportsDataLogin: (payload) => ipcRenderer.invoke('config:saveSportsData', payload),
 });

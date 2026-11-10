@@ -2,7 +2,13 @@ const path = require('path');
 const { app, BrowserWindow, ipcMain } = require('electron');
 const { SportsDataClient } = require('./sportsdataClient');
 const { loginToCorrlinks, loginInmate, getStatus } = require('./corrlinksLogin');
-const { getSportsDataConfig, getAppTimezone, envPath } = require('./config');
+const {
+  getSportsDataConfig,
+  getAppTimezone,
+  envPath,
+  saveSportsDataCredentials,
+  reloadSavedCredentials,
+} = require('./config');
 const { buildCorrlinksSubject } = require('./subject');
 
 let controlWindow = null;
@@ -12,7 +18,7 @@ const sportsData = new SportsDataClient();
 function createControlWindow() {
   controlWindow = new BrowserWindow({
     width: 760,
-    height: 820,
+    height: 900,
     title: 'Inmate Exchange Auto — CorrLinks Phase 1',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -35,11 +41,38 @@ function registerIpc() {
     return {
       baseUrl: cfg.baseUrl,
       email: cfg.email,
+      password: cfg.password || '',
       hasPassword: Boolean(cfg.password),
       timezone,
       subjectToday: buildCorrlinksSubject(),
       envPath,
+      credentialsPath: cfg.credentialsPath,
     };
+  });
+
+  ipcMain.handle('config:saveSportsData', async (_event, payload = {}) => {
+    try {
+      const saved = saveSportsDataCredentials({
+        email: payload.email,
+        password: payload.password,
+        baseUrl: payload.baseUrl,
+        remember: payload.remember !== false,
+      });
+      return {
+        ok: true,
+        message: saved.remembered ? 'SportsData login saved' : 'SportsData login applied for this session',
+        baseUrl: saved.baseUrl,
+        email: saved.email,
+        hasPassword: Boolean(saved.password),
+        credentialsPath: saved.credentialsPath,
+        remembered: saved.remembered,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error.message || 'Failed to save SportsData login',
+      };
+    }
   });
 
   ipcMain.handle('accounts:list', async () => ({
@@ -106,6 +139,7 @@ function registerIpc() {
 }
 
 app.whenReady().then(() => {
+  reloadSavedCredentials();
   registerIpc();
   createControlWindow();
 
