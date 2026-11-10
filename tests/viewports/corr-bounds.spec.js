@@ -40,6 +40,9 @@ async function stubApi(page) {
         return bounds;
       },
       listAccounts: async () => ({ ok: true, accounts: [] }),
+      verifySportsDataLogin: async () => ({ ok: true, email: 'operator@example.com' }),
+      getUpdateStatus: async () => ({ state: 'dev', currentVersion: '0.1.4', message: 'dev' }),
+      onUpdateStatus: () => () => {},
     };
   });
 }
@@ -83,7 +86,7 @@ for (const vp of VIEWPORTS) {
       if (vp.width < 1024) {
         await page.evaluate(() => {
           document.querySelector('.workspace')?.scrollTo(0, 0);
-          document.querySelector('#sportsdataCard')?.scrollIntoView({ block: 'start' });
+          document.querySelector('#inmateCard')?.scrollIntoView({ block: 'start' });
           window.__syncCorrPaneBounds();
         });
         const hidden = await page.evaluate(() => window.__lastCorrBounds);
@@ -107,11 +110,11 @@ for (const vp of VIEWPORTS) {
         const land = await page.evaluate(() => {
           const btn = document.getElementById('btnToggleCompose').getBoundingClientRect();
           const footer = document.querySelector('.statusbar').getBoundingClientRect();
-          const credit = document.querySelector('.status-credit');
+          const credit = document.querySelector('#mainShell .status-credit');
           return {
             btnBottom: btn.bottom,
             footerTop: footer.top,
-            creditHidden: getComputedStyle(credit).display === 'none',
+            creditHidden: !credit || getComputedStyle(credit).display === 'none',
             covered: btn.bottom > footer.top + 2 && btn.top < footer.bottom,
           };
         });

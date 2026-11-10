@@ -45,6 +45,10 @@ async function stubApi(page, { signedIn = false } = {}) {
       getCorrlinksStatus: async () => ({ state: 'idle', message: 'stub' }),
       setCorrBounds: async () => ({}),
       listAccounts: async () => ({ ok: true, accounts: [] }),
+      verifySportsDataLogin: async () => ({ ok: true, email: 'very.long.operator.name+test@sportsdata-example.com' }),
+      getUpdateStatus: async () => ({ state: 'dev', currentVersion: '0.1.4', message: 'dev' }),
+      onUpdateStatus: () => () => {},
+      checkForUpdates: async () => ({ ok: false, state: 'dev', currentVersion: '0.1.4' }),
     };
   }, signedIn);
 }
@@ -112,16 +116,18 @@ for (const vp of VIEWPORTS) {
       await page.waitForSelector('#mainShell:not([hidden])');
 
       await expect(page.locator('#loginScreen')).toBeHidden();
-      await expect(page.locator('#btnLogout')).toBeVisible();
+      await expect(page.locator('#btnAccountMenu')).toBeVisible();
       await expect(page.locator('#btnRefresh')).toBeVisible();
-      await expect(page.locator('#stepIndicator .step')).toHaveCount(2);
-      await expect(page.locator('#stepIndicator .step[data-step="1"]')).toContainText('Inmate');
+      await expect(page.locator('#stepIndicator .wf-step')).toHaveCount(2);
+      await expect(page.locator('#stepIndicator .wf-step[data-step="1"]')).toContainText('Inmate');
       await expect(page.locator('#sportsdataCard')).toHaveCount(0);
 
-      const emailBox = await page.locator('#signedInEmail').boundingBox();
-      expect(emailBox.width).toBeGreaterThan(20);
-      expect(emailBox.x + emailBox.width).toBeLessThanOrEqual(vp.width + 2);
+      const avatarBox = await page.locator('#accountAvatar').boundingBox();
+      expect(avatarBox.width).toBeGreaterThan(16);
+      expect(avatarBox.x + avatarBox.width).toBeLessThanOrEqual(vp.width + 2);
 
+      await page.locator('#btnAccountMenu').click();
+      await expect(page.locator('#btnLogout')).toBeVisible();
       await page.locator('#btnLogout').click();
       await expect(page.locator('#loginScreen')).toBeVisible();
       await expect(page.locator('#mainShell')).toBeHidden();

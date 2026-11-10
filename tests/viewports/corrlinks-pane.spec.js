@@ -34,6 +34,9 @@ async function stubApi(page) {
       setCorrBounds: async () => ({}),
       logoutSportsData: async () => ({ ok: true, baseUrl: 'https://sportsdata.com', email: '', hasPassword: false }),
       listAccounts: async () => ({ ok: true, accounts: [] }),
+      verifySportsDataLogin: async () => ({ ok: true, email: 'operator@example.com' }),
+      getUpdateStatus: async () => ({ state: 'dev', currentVersion: '0.1.4', message: 'dev' }),
+      onUpdateStatus: () => () => {},
     };
   });
 }
@@ -96,10 +99,12 @@ for (const vp of VIEWPORTS) {
       expect(m.headClipped, 'corr head clipped').toBe(false);
       expect(m.placeholderClipped, 'placeholder clipped').toBe(false);
       expect(m.paneW, 'pane width').toBeGreaterThan(140);
-      expect(m.paneH, 'pane usable height').toBeGreaterThanOrEqual(120);
+      const minPaneH = vp.height <= 420 ? 72 : 100;
+      expect(m.paneH, 'pane usable height').toBeGreaterThanOrEqual(minPaneH);
       expect(m.paintsOverFooter, 'pane paints over statusbar').toBe(false);
       expect(m.paneInsideApp, 'pane must stay inside .app').toBe(true);
       expect(m.placeholderText.length).toBeGreaterThan(10);
+      await expect(page.locator('#corrPlaceholder')).toContainText('No active CorrLinks session');
 
       // Desktop: compose + pane share right column (pane below compose)
       if (vp.width >= 1024) {

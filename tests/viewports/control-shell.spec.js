@@ -58,6 +58,10 @@ async function stubApi(page) {
       setCorrBounds: async () => ({}),
       logoutSportsData: async () => ({ ok: true, baseUrl: 'https://sportsdata.com', email: '', hasPassword: false }),
       listAccounts: async () => ({ ok: true, accounts: [] }),
+      verifySportsDataLogin: async () => ({ ok: true, email: 'operator@example.com' }),
+      getUpdateStatus: async () => ({ state: 'dev', currentVersion: '0.1.4', message: 'dev' }),
+      onUpdateStatus: () => () => {},
+      checkForUpdates: async () => ({ ok: false, state: 'dev', currentVersion: '0.1.4' }),
     };
   });
 }
@@ -121,7 +125,7 @@ for (const vp of VIEWPORTS) {
     await expect(page.locator('#mainShell .topbar')).toBeVisible();
     await expect(page.locator('#mainShell .statusbar')).toBeVisible();
     await expect(page.locator('#mainShell .brand-mark')).toBeVisible();
-    await expect(page.locator('#stepIndicator .step')).toHaveCount(2);
+    await expect(page.locator('#stepIndicator .wf-step')).toHaveCount(2);
     if (vp.height > 420) {
       await expect(page.locator('#mainShell .status-credit')).toBeVisible();
       const metrics = await page.evaluate(() => {

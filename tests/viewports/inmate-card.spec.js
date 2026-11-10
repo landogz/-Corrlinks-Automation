@@ -71,6 +71,9 @@ async function stubApi(page) {
       setCorrBounds: async () => ({}),
       logoutSportsData: async () => ({ ok: true, baseUrl: 'https://sportsdata.com', email: '', hasPassword: false }),
       listAccounts: async () => ({ ok: true, accounts }),
+      verifySportsDataLogin: async () => ({ ok: true, email: 'operator@example.com' }),
+      getUpdateStatus: async () => ({ state: 'dev', currentVersion: '0.1.4', message: 'dev' }),
+      onUpdateStatus: () => () => {},
     };
   }, SAMPLE_ACCOUNTS);
 }
@@ -129,7 +132,8 @@ for (const vp of VIEWPORTS) {
         return {
           metaClipped: meta.right > vw + 2,
           emails,
-          filesHidden: document.querySelector('#filesBlock')?.hidden === true,
+          filesVisible: document.querySelector('#filesBlock')?.hidden !== true,
+          fileChecks: document.querySelectorAll('#filesList input[type="checkbox"]').length,
           loginH: Math.round(login.height),
           loginDisabled: document.querySelector('#btnLogin').disabled,
           searchW: Math.round(search.width),
@@ -140,13 +144,14 @@ for (const vp of VIEWPORTS) {
       expect(layout.searchW).toBeGreaterThan(140);
       expect(layout.loginH).toBeGreaterThanOrEqual(36);
       expect(layout.loginDisabled).toBe(false);
-      expect(layout.filesHidden, 'exchange files should stay hidden').toBe(true);
+      expect(layout.filesVisible, 'exchange files list should be visible').toBe(true);
+      expect(layout.fileChecks).toBe(0); // long-name inmate has no sendable files
       for (const e of layout.emails) {
         expect(e.clipped, `email clipped: ${e.text}`).toBe(false);
       }
     });
 
-    test(`files UI hidden + auto-selected keys ${vp.width}x${vp.height}`, async ({ page }) => {
+    test(`files list checkboxes + selected keys ${vp.width}x${vp.height}`, async ({ page }) => {
       await page.setViewportSize({ width: vp.width, height: vp.height });
       await stubApi(page);
       await page.goto(FILE_URL);
@@ -158,15 +163,22 @@ for (const vp of VIEWPORTS) {
       await openInmateList(page);
       await page.locator('#inmateOptions .combobox-option[data-id="180"]').dispatchEvent('mousedown');
       await expect(page.locator('#accountMeta')).toBeVisible();
-      await expect(page.locator('#filesBlock')).toBeHidden();
+      await expect(page.locator('#filesBlock')).toBeVisible();
 
       const keys = await page.evaluate(() => {
-        // selectedFileKeys is module-scoped; infer from login payload path via DOM hint + re-check selection side effect
         const hint = document.querySelector('#filesHint')?.textContent || '';
-        return { hint, filesHidden: document.querySelector('#filesBlock')?.hidden === true };
+        const checks = [...document.querySelectorAll('#filesList input[type="checkbox"]')];
+        return {
+          hint,
+          filesHidden: document.querySelector('#filesBlock')?.hidden === true,
+          checked: checks.filter((c) => c.checked).length,
+          total: checks.length,
+        };
       });
-      expect(keys.filesHidden).toBe(true);
-      expect(keys.hint).toMatch(/3 auto-selected/);
+      expect(keys.filesHidden).toBe(false);
+      expect(keys.total).toBe(3);
+      expect(keys.checked).toBe(3);
+      expect(keys.hint).toMatch(/3 selected/);
     });
   });
 }

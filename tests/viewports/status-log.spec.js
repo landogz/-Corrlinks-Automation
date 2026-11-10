@@ -39,6 +39,9 @@ async function stubApi(page) {
         hasPassword: false,
       }),
       listAccounts: async () => ({ ok: true, accounts: [] }),
+      verifySportsDataLogin: async () => ({ ok: true, email: 'operator@example.com' }),
+      getUpdateStatus: async () => ({ state: 'dev', currentVersion: '0.1.4', message: 'dev' }),
+      onUpdateStatus: () => () => {},
     };
   });
 }
