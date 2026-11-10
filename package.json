@@ -1,7 +1,7 @@
 {
   "name": "inmateexchange-auto",
   "productName": "Inmate Exchange Auto",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "CorrLinks login automation via Electron",
   "main": "main/main.js",
   "author": "MJR",

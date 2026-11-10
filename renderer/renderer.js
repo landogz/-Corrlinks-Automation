@@ -311,8 +311,13 @@ function initialsFromEmail(email) {
 
 function setAccountMenuOpen(open) {
   if (!accountDropdown || !btnAccountMenu) return;
-  accountDropdown.hidden = !open;
-  btnAccountMenu.setAttribute('aria-expanded', open ? 'true' : 'false');
+  const next = Boolean(open);
+  accountDropdown.hidden = !next;
+  btnAccountMenu.setAttribute('aria-expanded', next ? 'true' : 'false');
+  document.body.classList.toggle('account-menu-open', next);
+  // Native CorrLinks view paints above HTML and was covering this dropdown.
+  if (next) hideCorrEmbedNow();
+  scheduleCorrPaneBounds();
 }
 
 function setCorrPlaceholderVisible(visible) {
@@ -3774,12 +3779,14 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-/** Native WebContentsView paints above HTML — hide it under modals/drawers. */
+/** Native WebContentsView paints above HTML — hide it under modals/drawers/menus. */
 function isCorrEmbedBlocked() {
   if (loopInitializingActive || bootVerifyRunning) return true;
   if (loopCountdownActive) return true;
   if (activeMainTab !== 'automate') return true;
   if (document.body.classList.contains('log-open')) return true;
+  if (document.body.classList.contains('account-menu-open')) return true;
+  if (accountDropdown && !accountDropdown.hidden) return true;
   const dialogs = [updatesDialog, aboutDialog, shortcutsDialog, confirmSend, loopDoneDialog];
   if (dialogs.some((dialog) => dialog && dialog.open)) return true;
   return false;
