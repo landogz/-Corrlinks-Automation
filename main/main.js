@@ -22,6 +22,7 @@ const {
   reloadSavedCredentials,
 } = require('./config');
 const { buildCorrlinksSubject } = require('./subject');
+const { setupAutoUpdater, registerUpdateIpc } = require('./updater');
 
 let controlWindow = null;
 let cachedAccounts = [];
@@ -45,6 +46,7 @@ function createControlWindow() {
   });
 
   setHostWindow(controlWindow);
+  setupAutoUpdater(controlWindow);
   controlWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
   const relayout = () => {
@@ -353,6 +355,7 @@ function registerIpc() {
 app.whenReady().then(() => {
   reloadSavedCredentials();
   registerIpc();
+  registerUpdateIpc();
   createControlWindow();
 
   app.on('activate', () => {

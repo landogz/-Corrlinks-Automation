@@ -111,6 +111,9 @@
         </nav>
         <div class="topbar-actions">
           <span id="signedInEmail" class="signed-in-email truncate" title=""></span>
+          <button id="btnUpdate" type="button" class="ghost" title="Check for app updates" data-update-action="check">
+            Updates
+          </button>
           <button id="btnOpenLog" type="button" class="ghost" title="Open status log (⌘J)" aria-controls="logDrawer" aria-expanded="false">
             Log
           </button>
@@ -323,6 +326,10 @@
         <div class="statusbar-left">
           <span class="status-pill" id="sdConn"><span class="dot"></span><span class="status-label">SportsData offline</span></span>
           <span class="status-pill" id="clConn"><span class="dot"></span><span class="status-label">CorrLinks not logged in</span></span>
+          <span class="status-pill" id="appVersionPill" title="App version"><span class="status-label">v…</span></span>
+          <button type="button" class="status-pill update-pill" id="updatePill" hidden title="App update">
+            <span class="dot"></span><span class="status-label">Update</span>
+          </button>
         </div>
         <span id="statusHint" class="status-hint">Ready</span>
         <span class="status-hint shortcuts" title="Shortcuts">⌘R refresh · ⌘L login · ⌘J log · ⌘K clear log</span>

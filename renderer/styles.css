@@ -1424,6 +1424,43 @@ button.tiny {
   background: var(--warning);
 }
 
+button.status-pill.update-pill {
+  cursor: pointer;
+  font: inherit;
+  background: transparent;
+  appearance: none;
+}
+
+button.status-pill.update-pill:hover {
+  border-color: rgba(42, 157, 143, 0.45);
+  color: var(--accent, #2a9d8f);
+}
+
+button.status-pill.update-pill.is-available,
+button.status-pill.update-pill.is-downloaded {
+  color: var(--warning);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+button.status-pill.update-pill.is-available .dot,
+button.status-pill.update-pill.is-downloaded .dot {
+  background: var(--warning);
+}
+
+button.status-pill.update-pill.is-downloading {
+  color: var(--accent, #2a9d8f);
+  border-color: rgba(42, 157, 143, 0.35);
+}
+
+button.status-pill.update-pill.is-downloading .dot {
+  background: var(--accent, #2a9d8f);
+}
+
+#btnUpdate.is-attention {
+  color: var(--warning);
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
 .status-hint {
   color: var(--muted);
   font-size: 12px;

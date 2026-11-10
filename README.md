@@ -6,13 +6,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.3**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.4**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inmate Exchange Auto-0.1.3-arm64.dmg` or `Inmate Exchange Auto-0.1.3-arm64-mac.zip` |
-| macOS (Intel) | `Inmate Exchange Auto-0.1.3.dmg` or `Inmate Exchange Auto-0.1.3-mac.zip` |
-| Windows | `Inmate Exchange Auto Setup 0.1.3.exe` or `Inmate Exchange Auto 0.1.3.exe` (portable) |
+| macOS (Apple Silicon) | `Inmate Exchange Auto-0.1.4-arm64.dmg` or `Inmate Exchange Auto-0.1.4-arm64-mac.zip` |
+| macOS (Intel) | `Inmate Exchange Auto-0.1.4.dmg` or `Inmate Exchange Auto-0.1.4-mac.zip` |
+| Windows | `Inmate Exchange Auto Setup 0.1.4.exe` or `Inmate Exchange Auto 0.1.4.exe` (portable) |
 
 ## Install on macOS
 
@@ -30,11 +30,11 @@ xattr -dr com.apple.quarantine "/Applications/Inmate Exchange Auto.app"
 
 ## Install on Windows
 
-1. Run `Inmate Exchange Auto Setup 0.1.3.exe`.
+1. Run `Inmate Exchange Auto Setup 0.1.4.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inmate Exchange Auto** from the Start menu.
 
-`Inmate Exchange Auto 0.1.3.exe` (portable) runs without installing — put `.env` in the same folder as the `.exe` if you use one.
+`Inmate Exchange Auto 0.1.4.exe` (portable) runs without installing — put `.env` in the same folder as the `.exe` if you use one.
 
 ## Configuration
 
@@ -92,7 +92,17 @@ npm run dist:win
 npm run dist
 ```
 
-Outputs are written to `release/`. Upload those files to a [GitHub Release](https://github.com/landogz/-Corrlinks-Automation/releases).
+Outputs are written to `release/`. Publish a GitHub Release (includes `latest.yml` / `latest-mac.yml` for in-app updates):
+
+```bash
+npm run publish:github
+```
+
+### In-app updates
+
+Packaged builds check GitHub Releases on startup and via the **Updates** button. Windows NSIS installs update cleanly; macOS updates work best with a signed app (current builds are unsigned). Portable Windows `.exe` is not an auto-update target — use the Setup installer.
+
+Release assets must keep the hyphenated names from `latest.yml` / `latest-mac.yml` (the publish script uploads them that way).
 
 ### Smoke tests
 

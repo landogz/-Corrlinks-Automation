@@ -16,4 +16,13 @@ contextBridge.exposeInMainWorld('api', {
   fetchExchangeHistory: (payload) => ipcRenderer.invoke('exchange:history', payload),
   previewExchangeFile: (payload) => ipcRenderer.invoke('exchange:preview', payload),
   downloadExchangeFile: (payload) => ipcRenderer.invoke('exchange:download', payload),
+  getUpdateStatus: () => ipcRenderer.invoke('update:getStatus'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  onUpdateStatus: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on('update:status', listener);
+    return () => ipcRenderer.removeListener('update:status', listener);
+  },
 });

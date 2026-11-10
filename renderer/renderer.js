@@ -95,6 +95,21 @@ const historyPreviewBody = document.getElementById('historyPreviewBody');
 const btnHistoryRefresh = document.getElementById('btnHistoryRefresh');
 const btnHistoryCopy = document.getElementById('btnHistoryCopy');
 const btnHistoryDownloadPreview = document.getElementById('btnHistoryDownloadPreview');
+const btnUpdate = document.getElementById('btnUpdate');
+const updatePill = document.getElementById('updatePill');
+const appVersionPill = document.getElementById('appVersionPill');
+
+/** @type {any} */
+let updateStatus = {
+  state: 'idle',
+  currentVersion: '',
+  latestVersion: null,
+  percent: null,
+  message: '',
+  error: null,
+};
+let updateBusy = false;
+let lastUpdateToastKey = '';
 
 function stamp() {
   return new Date().toLocaleTimeString([], { hour12: true });
@@ -1315,10 +1330,156 @@ function resetWorkspaceState() {
   setMainTab('automate');
 }
 
+function renderUpdateUi(status = updateStatus) {
+  updateStatus = status || updateStatus;
+  const state = String(updateStatus.state || 'idle');
+  const version = updateStatus.currentVersion || '';
+  if (appVersionPill) {
+    const label = appVersionPill.querySelector('.status-label');
+    if (label) label.textContent = version ? `v${version}` : 'v…';
+    appVersionPill.title = version ? `App version ${version}` : 'App version';
+  }
+
+  const action =
+    state === 'available'
+      ? 'download'
+      : state === 'downloaded'
+        ? 'install'
+        : state === 'downloading' || state === 'checking'
+          ? 'busy'
+          : 'check';
+
+  if (btnUpdate) {
+    btnUpdate.disabled = updateBusy || action === 'busy';
+    btnUpdate.dataset.updateAction = action === 'busy' ? 'check' : action;
+    btnUpdate.classList.toggle('is-attention', state === 'available' || state === 'downloaded');
+    if (state === 'available') btnUpdate.textContent = 'Download update';
+    else if (state === 'downloading') {
+      btnUpdate.textContent =
+        updateStatus.percent != null ? `Updating ${updateStatus.percent}%` : 'Updating…';
+    } else if (state === 'downloaded') btnUpdate.textContent = 'Restart to update';
+    else if (state === 'checking') btnUpdate.textContent = 'Checking…';
+    else btnUpdate.textContent = 'Updates';
+  }
+
+  if (updatePill) {
+    const show =
+      state === 'available' ||
+      state === 'downloading' ||
+      state === 'downloaded' ||
+      state === 'error';
+    updatePill.hidden = !show;
+    updatePill.classList.toggle('is-available', state === 'available');
+    updatePill.classList.toggle('is-downloading', state === 'downloading');
+    updatePill.classList.toggle('is-downloaded', state === 'downloaded');
+    updatePill.classList.toggle('warn', state === 'available' || state === 'downloaded' || state === 'error');
+    const pillLabel = updatePill.querySelector('.status-label');
+    if (pillLabel) {
+      if (state === 'available') pillLabel.textContent = `Update v${updateStatus.latestVersion || ''}`;
+      else if (state === 'downloading') {
+        pillLabel.textContent =
+          updateStatus.percent != null ? `Update ${updateStatus.percent}%` : 'Updating…';
+      } else if (state === 'downloaded') pillLabel.textContent = 'Restart to update';
+      else if (state === 'error') pillLabel.textContent = 'Update failed';
+      else pillLabel.textContent = 'Update';
+    }
+    updatePill.title = updateStatus.error || updateStatus.message || 'App update';
+    updatePill.dataset.updateAction = action === 'busy' ? 'check' : action;
+  }
+}
+
+function maybeToastUpdate(status) {
+  const state = String(status?.state || '');
+  const key = `${state}:${status?.latestVersion || ''}:${status?.error || ''}`;
+  if (!state || key === lastUpdateToastKey) return;
+  if (state === 'available') {
+    lastUpdateToastKey = key;
+    toast(`Update available: v${status.latestVersion}`, 'warn');
+    log(status.message || `Update available: v${status.latestVersion}`, 'warn');
+  } else if (state === 'downloaded') {
+    lastUpdateToastKey = key;
+    toast('Update ready — restart to install', 'success');
+    log(status.message || 'Update downloaded', 'success');
+  } else if (state === 'error' && status?.error) {
+    lastUpdateToastKey = key;
+    toast(status.error, 'error');
+    log(`Update error: ${status.error}`, 'error');
+  } else if (state === 'not-available') {
+    lastUpdateToastKey = key;
+  }
+}
+
+async function runUpdateAction(preferredAction) {
+  if (updateBusy) return;
+  const action =
+    preferredAction ||
+    btnUpdate?.dataset?.updateAction ||
+    (updateStatus.state === 'available'
+      ? 'download'
+      : updateStatus.state === 'downloaded'
+        ? 'install'
+        : 'check');
+
+  updateBusy = true;
+  renderUpdateUi(updateStatus);
+  try {
+    if (action === 'download') {
+      toast('Downloading update…', 'info');
+      const result = await window.api.downloadUpdate();
+      renderUpdateUi(result);
+      maybeToastUpdate(result);
+      if (!result?.ok && result?.error) toast(result.error, 'error');
+      return;
+    }
+    if (action === 'install') {
+      toast('Restarting to install update…', 'info');
+      await window.api.installUpdate();
+      return;
+    }
+    const result = await window.api.checkForUpdates();
+    renderUpdateUi(result);
+    maybeToastUpdate(result);
+    if (result?.state === 'not-available' || result?.state === 'dev') {
+      toast(result.message || `Up to date (v${result.currentVersion || ''})`, 'info');
+    } else if (!result?.ok && result?.error) {
+      toast(result.error, 'error');
+    }
+  } catch (error) {
+    toast(error.message || String(error), 'error');
+    log(error.message || String(error), 'error');
+  } finally {
+    updateBusy = false;
+    renderUpdateUi(updateStatus);
+  }
+}
+
+function wireAppUpdates() {
+  if (typeof window.api?.onUpdateStatus === 'function') {
+    window.api.onUpdateStatus((status) => {
+      renderUpdateUi(status);
+      maybeToastUpdate(status);
+      if (status?.message && status.state !== 'idle') {
+        setStatusHint(status.message);
+      }
+    });
+  }
+  window.api
+    ?.getUpdateStatus?.()
+    .then((status) => renderUpdateUi(status))
+    .catch(() => {});
+
+  btnUpdate?.addEventListener('click', () => runUpdateAction());
+  updatePill?.addEventListener('click', () => {
+    const action = updatePill.dataset.updateAction || 'check';
+    runUpdateAction(action);
+  });
+}
+
 async function init() {
   resetWorkspaceState();
   showLoginScreen();
   setLoginError('');
+  wireAppUpdates();
 
   try {
     const summary = await window.api.getConfigSummary();

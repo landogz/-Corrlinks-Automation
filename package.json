@@ -1,7 +1,7 @@
 {
   "name": "inmateexchange-auto",
   "productName": "Inmate Exchange Auto",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "CorrLinks login automation via Electron",
   "main": "main/main.js",
   "author": "MJR",
@@ -16,6 +16,7 @@
     "dist": "electron-builder --mac --win",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win",
+    "publish:github": "bash scripts/publish-github-release.sh",
     "publish:release": "bash scripts/publish-gitlab-release.sh",
     "test:viewports": "playwright test tests/viewports",
     "test:viewports:shell": "playwright test tests/viewports/control-shell.spec.js",
@@ -25,6 +26,7 @@
   "dependencies": {
     "axios": "^1.13.2",
     "dotenv": "^17.2.3",
+    "electron-updater": "^6.8.11",
     "tough-cookie": "^5.1.2"
   },
   "devDependencies": {
@@ -114,6 +116,13 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Inmate Exchange Auto"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "landogz",
+        "repo": "-Corrlinks-Automation"
+      }
+    ]
   }
 }
