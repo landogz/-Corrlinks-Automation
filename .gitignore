@@ -1,6 +1,7 @@
 node_modules/
 .env
 sportsdata-credentials.json
+corrlinks-verify-cache.json
 dist/
 out/
 release/

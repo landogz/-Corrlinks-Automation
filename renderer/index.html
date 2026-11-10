@@ -198,6 +198,7 @@
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </span>
             </li>
+            <li class="wf-connector" aria-hidden="true"></li>
             <li class="wf-step" data-step="2">
               <span class="wf-index" aria-hidden="true">2</span>
               <span class="wf-label">CorrLinks</span>
@@ -211,7 +212,6 @@
             <div class="col col-controls">
               <section class="card step-card" id="inmateCard" data-step="1">
                 <div class="card-header-static">
-                  <span class="step-badge" aria-hidden="true">1</span>
                   <h2 class="collapse-title">Inmate</h2>
                   <span id="inmateCollapsedSummary" class="collapse-summary truncate" title=""></span>
                   <span class="step-check" aria-hidden="true">
@@ -224,16 +224,28 @@
                     <span id="inmateCount" class="field-meta tabular">0 inmates</span>
                   </div>
                   <div class="combobox" id="inmateCombobox">
-                    <input
-                      id="inmateSearch"
-                      type="search"
-                      placeholder="Search name, ID, or email…"
-                      autocomplete="off"
-                      disabled
-                      aria-autocomplete="list"
-                      aria-controls="inmateOptions"
-                      aria-expanded="false"
-                    />
+                    <div class="combobox-control">
+                      <input
+                        id="inmateSearch"
+                        type="search"
+                        placeholder="Search name, ID, or email…"
+                        autocomplete="off"
+                        disabled
+                        aria-autocomplete="list"
+                        aria-controls="inmateOptions"
+                        aria-expanded="false"
+                        role="combobox"
+                      />
+                      <div id="inmateSelectedDisplay" class="combobox-selected" hidden>
+                        <span id="inmateSelectedName" class="combobox-selected-name truncate"></span>
+                        <span id="inmateSelectedId" class="combobox-selected-id truncate"></span>
+                      </div>
+                      <span class="combobox-chevron" aria-hidden="true">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                          <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                      </span>
+                    </div>
                     <input id="accountSelect" type="hidden" value="" />
                     <ul id="inmateOptions" class="combobox-list" role="listbox" hidden></ul>
                   </div>
@@ -241,6 +253,31 @@
                   <div id="accountMeta" class="account-meta" hidden>
                     <div class="badge-row" id="badgeRow"></div>
                     <div class="kv-list" id="accountRows"></div>
+
+                    <div class="template-block" id="templateBlock">
+                      <div class="files-head">
+                        <span class="section-label">Template</span>
+                        <span id="templateSubjectHint" class="muted tabular">Subject: —</span>
+                      </div>
+                      <div class="template-mode" role="group" aria-label="Message template">
+                        <button type="button" class="template-chip is-active" data-template-mode="daily" id="btnTemplateDaily">
+                          Daily
+                        </button>
+                        <button type="button" class="template-chip" data-template-mode="weekly" id="btnTemplateWeekly">
+                          Weekly update
+                        </button>
+                      </div>
+                      <div class="template-league" id="templateLeagueRow" hidden role="group" aria-label="Weekly league">
+                        <button type="button" class="template-chip is-active" data-weekly-league="NFL" id="btnLeagueNfl">
+                          NFL
+                        </button>
+                        <button type="button" class="template-chip" data-weekly-league="CFB" id="btnLeagueCfb">
+                          CFB
+                        </button>
+                      </div>
+                      <p id="templateWeekMeta" class="template-week-meta muted" hidden></p>
+                    </div>
+
                     <div class="files-block" id="filesBlock">
                       <div class="files-head">
                         <span class="section-label">Files sendable</span>
@@ -251,7 +288,14 @@
                     </div>
                   </div>
 
-                  <p id="loopProgress" class="loop-progress" hidden></p>
+                  <div id="loopProgress" class="loop-progress" hidden role="status" aria-live="polite">
+                    <div class="loop-progress-icon" id="loopProgressIcon" aria-hidden="true">✓</div>
+                    <div class="loop-progress-body">
+                      <p class="loop-progress-title" id="loopProgressTitle"></p>
+                      <p class="loop-progress-time muted tabular" id="loopProgressTime" hidden></p>
+                      <div class="loop-progress-stats" id="loopProgressStats" hidden></div>
+                    </div>
+                  </div>
                   <div class="actions-stack" id="actionsRow">
                     <button
                       id="btnLogin"
@@ -261,7 +305,6 @@
                       title="Select an inmate with CorrLinks credentials"
                     >
                       <span class="btn-main-label">Login to CorrLinks</span>
-                      <kbd class="btn-shortcut" aria-hidden="true">⌘L</kbd>
                     </button>
                     <div class="actions-secondary">
                       <button
@@ -273,9 +316,9 @@
                       >
                         Start loop
                       </button>
-                      <button id="btnStopLoop" type="button" class="action-stop danger" disabled hidden>
-                        <span class="live-dot" aria-hidden="true"></span>
-                        Stop loop
+                      <button id="btnStopLoop" type="button" class="action-stop" disabled hidden>
+                        <span class="live-dot live-dot-run" aria-hidden="true"></span>
+                        <span class="btn-stop-label">Stop loop</span>
                       </button>
                       <button id="btnStatus" type="button" class="action-ghost ghost" title="Check CorrLinks status">
                         Status
@@ -287,7 +330,8 @@
                     <div class="session-head">
                       <span class="section-label">Session</span>
                       <span id="sessionLive" class="session-live" hidden>
-                        <span class="live-dot" aria-hidden="true"></span> Loop running
+                        <span class="live-dot live-dot-run" aria-hidden="true"></span>
+                        <span id="sessionLiveLabel">Running</span>
                       </span>
                     </div>
                     <dl class="session-grid">
@@ -300,8 +344,12 @@
                         <dd id="sessionLoopState">Idle</dd>
                       </div>
                       <div>
-                        <dt>Next account</dt>
+                        <dt>Next acct</dt>
                         <dd id="sessionNextRun" class="tabular">—</dd>
+                      </div>
+                      <div>
+                        <dt>Result</dt>
+                        <dd id="sessionLastResult">—</dd>
                       </div>
                     </dl>
                   </div>
@@ -314,8 +362,8 @@
                 <div class="corr-head">
                   <div class="corr-title-row">
                     <h2>CorrLinks</h2>
-                    <span class="corr-status" id="corrPanelStatus">
-                      <span class="dot"></span>
+                    <span class="corr-status" id="corrPanelStatus" title="">
+                      <span class="dot" aria-hidden="true"></span>
                       <span class="status-label">No session</span>
                     </span>
                   </div>
@@ -341,7 +389,7 @@
                     </svg>
                     <h3>No active CorrLinks session</h3>
                     <p class="muted">Select an inmate and log in to open CorrLinks here</p>
-                    <button type="button" class="action-primary" id="btnCorrLoginCta">Login to CorrLinks</button>
+                    <button type="button" class="action-secondary" id="btnCorrLoginCta">Login to CorrLinks</button>
                   </div>
                   <div id="corrErrorBanner" class="corr-error-banner" hidden>
                     <p id="corrErrorMessage">CorrLinks failed to load.</p>
@@ -366,14 +414,27 @@
             <section class="history-main card">
               <div class="history-toolbar">
                 <div class="history-toolbar-text">
-                  <h2>Inmate Exchange history</h2>
+                  <h2>Exchange history</h2>
                   <p class="muted" id="historyHint">From SportsData · /inmate-exchange/all</p>
                 </div>
-                <div class="history-toolbar-actions">
-                  <button id="btnHistoryExport" type="button" class="ghost tiny" title="Export visible rows as CSV" disabled>
+              </div>
+              <div class="history-controls" id="historyControls">
+                <label class="history-filter">
+                  <span class="sr-only">Status</span>
+                  <select id="historyStatusFilter" aria-label="Filter by status">
+                    <option value="all">All statuses</option>
+                    <option value="ready">Ready</option>
+                  </select>
+                </label>
+                <label class="history-filter">
+                  <span class="sr-only">Date</span>
+                  <input id="historyDateFilter" type="search" placeholder="Filter date…" aria-label="Filter by date" />
+                </label>
+                <div class="history-toolbar-actions" id="historyToolbarActions">
+                  <button id="btnHistoryExport" type="button" class="ghost history-ctrl-btn" title="Export visible rows as CSV" disabled>
                     Export CSV
                   </button>
-                  <button id="btnHistoryRefresh" type="button" class="ghost icon-btn" title="Refresh history">
+                  <button id="btnHistoryRefresh" type="button" class="ghost icon-btn history-ctrl-btn" title="Refresh history">
                     <span class="btn-icon refresh-icon" aria-hidden="true"></span>
                     <span class="btn-label">Refresh</span>
                     <span class="spinner" aria-hidden="true"></span>
@@ -402,13 +463,25 @@
                   <p id="historyPreviewMeta" class="muted truncate">Select a day to preview all.txt</p>
                 </div>
                 <div class="history-preview-actions">
-                  <button id="btnHistoryCopy" type="button" class="ghost tiny" disabled>Copy</button>
-                  <button id="btnHistoryDownloadPreview" type="button" class="ghost tiny" disabled>
+                  <button id="btnHistoryCopy" type="button" class="ghost" disabled>Copy</button>
+                  <button id="btnHistoryDownloadPreview" type="button" class="ghost" disabled>
                     Download
                   </button>
                 </div>
               </div>
-              <pre id="historyPreviewBody" class="history-preview-body" aria-live="polite">No file selected.</pre>
+              <div class="history-preview-tools">
+                <label class="history-preview-search">
+                  <svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.5"/>
+                    <path d="M16 16l4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  </svg>
+                  <input id="historyPreviewSearch" type="search" placeholder="Search in preview…" disabled aria-label="Search in preview" />
+                </label>
+              </div>
+              <div class="history-preview-frame">
+                <pre id="historyPreviewLines" class="history-preview-lines" aria-hidden="true"></pre>
+                <pre id="historyPreviewBody" class="history-preview-body" aria-live="polite">No file selected.</pre>
+              </div>
             </aside>
           </div>
         </div>
@@ -423,7 +496,11 @@
             <span class="dot"></span><span class="status-label">CorrLinks: not logged in</span>
           </button>
         </div>
-        <span id="statusHint" class="status-hint">Ready</span>
+        <span id="statusHint" class="status-hint status-hint-chip">
+          <span class="status-hint-icon" aria-hidden="true">●</span>
+          <span id="statusHintText">Ready</span>
+        </span>
+        <time id="statusClock" class="status-clock tabular" datetime="">—</time>
         <button
           type="button"
           class="update-chip"
@@ -441,6 +518,28 @@
           >Landogz</a
         >
       </footer>
+
+      <div id="appVerifying" class="app-verifying" hidden aria-live="polite" aria-busy="false">
+        <div class="app-verifying-card">
+          <div class="loop-initializing-spinner" aria-hidden="true"></div>
+          <p class="loop-initializing-title" id="appVerifyingTitle">Preparing your workspace</p>
+          <p id="appVerifyingStatus" class="loop-initializing-status">Validating CorrLinks accounts</p>
+          <p id="appVerifyingDetail" class="loop-initializing-detail tabular"></p>
+          <div
+            class="app-verifying-progress"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            aria-labelledby="appVerifyingStatus"
+            id="appVerifyingProgress"
+          >
+            <div class="app-verifying-progress-bar" id="appVerifyingProgressBar"></div>
+          </div>
+          <p id="appVerifyingPercent" class="app-verifying-percent tabular">0%</p>
+          <button type="button" class="ghost app-verifying-stop" id="btnStopBootVerify">Cancel</button>
+        </div>
+      </div>
     </div>
 
     <div id="logBackdrop" class="log-backdrop" hidden></div>
@@ -468,7 +567,7 @@
           Auto-scroll
         </label>
         <label class="check tight">
-          <input id="logMask" type="checkbox" checked />
+          <input id="logMask" type="checkbox" />
           Mask emails
         </label>
         <button id="btnCopyLog" type="button" class="ghost tiny">Copy</button>
@@ -491,6 +590,18 @@
         <div class="row">
           <button value="cancel" class="ghost">Cancel</button>
           <button id="btnConfirmSend" value="confirm" class="danger" disabled>Send message</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="loopDoneDialog" class="modal loop-done-modal">
+      <form method="dialog" id="loopDoneForm">
+        <div id="loopDoneIcon" class="loop-done-icon" aria-hidden="true">✓</div>
+        <h3 id="loopDoneTitle">Loop finished</h3>
+        <p id="loopDoneMessage" class="muted">The send loop has already completed.</p>
+        <p id="loopDoneSummary" class="loop-done-summary tabular">—</p>
+        <div class="row">
+          <button value="ok" class="action-primary" id="btnLoopDoneOk">OK</button>
         </div>
       </form>
     </dialog>

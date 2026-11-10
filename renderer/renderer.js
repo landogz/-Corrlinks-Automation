@@ -19,9 +19,44 @@ const btnLogin = document.getElementById('btnLogin');
 const btnStartLoop = document.getElementById('btnStartLoop');
 const btnStopLoop = document.getElementById('btnStopLoop');
 const loopProgress = document.getElementById('loopProgress');
+const loopProgressIcon = document.getElementById('loopProgressIcon');
+const loopProgressTitle = document.getElementById('loopProgressTitle');
+const loopProgressTime = document.getElementById('loopProgressTime');
+const loopProgressStats = document.getElementById('loopProgressStats');
+const historyPreviewLines = document.getElementById('historyPreviewLines');
+const historyPreviewSearch = document.getElementById('historyPreviewSearch');
+const statusHintText = document.getElementById('statusHintText');
+const sessionLiveLabel = document.getElementById('sessionLiveLabel');
+const sessionLastResult = document.getElementById('sessionLastResult');
+const inmateSelectedDisplay = document.getElementById('inmateSelectedDisplay');
+const inmateSelectedName = document.getElementById('inmateSelectedName');
+const inmateSelectedId = document.getElementById('inmateSelectedId');
+const historyStatusFilter = document.getElementById('historyStatusFilter');
+const historyDateFilter = document.getElementById('historyDateFilter');
+const historyControls = document.getElementById('historyControls');
+const historyToolbarActions = document.getElementById('historyToolbarActions');
 const loopCountdown = document.getElementById('loopCountdown');
 const loopCountdownNum = document.getElementById('loopCountdownNum');
 const loopCountdownNext = document.getElementById('loopCountdownNext');
+const appVerifying = document.getElementById('appVerifying');
+const appVerifyingTitle = document.getElementById('appVerifyingTitle');
+const appVerifyingStatus = document.getElementById('appVerifyingStatus');
+const appVerifyingDetail = document.getElementById('appVerifyingDetail');
+const appVerifyingProgress = document.getElementById('appVerifyingProgress');
+const appVerifyingProgressBar = document.getElementById('appVerifyingProgressBar');
+const appVerifyingPercent = document.getElementById('appVerifyingPercent');
+const btnStopBootVerify = document.getElementById('btnStopBootVerify');
+const loopInitializing = appVerifying;
+const loopInitializingStatus = appVerifyingStatus;
+const loopInitializingDetail = appVerifyingDetail;
+
+const VERIFY_COPY = {
+  title: 'Preparing your workspace',
+  status: 'Validating CorrLinks accounts',
+  statusRetry: 'Retrying unavailable accounts',
+  statusPause: 'Brief pause between checks',
+  defaultStatus: 'Validating CorrLinks accounts',
+};
 const actionsRow = document.getElementById('actionsRow');
 const btnStatus = document.getElementById('btnStatus');
 const btnSend = document.getElementById('btnSend');
@@ -40,6 +75,7 @@ const stepIndicator = document.getElementById('stepIndicator');
 const sdConn = document.getElementById('sdConn');
 const clConn = document.getElementById('clConn');
 const statusHint = document.getElementById('statusHint');
+const statusClock = document.getElementById('statusClock');
 const toastHost = document.getElementById('toastHost');
 const logFilter = document.getElementById('logFilter');
 const logAutoScroll = document.getElementById('logAutoScroll');
@@ -59,6 +95,11 @@ const confirmSend = document.getElementById('confirmSend');
 const confirmTo = document.getElementById('confirmTo');
 const confirmSubject = document.getElementById('confirmSubject');
 const confirmChars = document.getElementById('confirmChars');
+const loopDoneDialog = document.getElementById('loopDoneDialog');
+const loopDoneIcon = document.getElementById('loopDoneIcon');
+const loopDoneTitle = document.getElementById('loopDoneTitle');
+const loopDoneMessage = document.getElementById('loopDoneMessage');
+const loopDoneSummary = document.getElementById('loopDoneSummary');
 
 const CHAR_MAX = 12750;
 const CHAR_WARN = 11000;
@@ -67,14 +108,55 @@ const CHAR_WARN = 11000;
 let accounts = [];
 /** @type {string[]} */
 let selectedFileKeys = [];
+/** @type {'daily' | 'weekly'} */
+let templateMode = 'daily';
+/** @type {'NFL' | 'CFB'} */
+let weeklyLeague = 'NFL';
+/** Cached weekly update files for the selected league. */
+let weeklyCache = {
+  league: null,
+  updates: [],
+  week_start: null,
+  week_end: null,
+  subject: null,
+  message: '',
+};
+let weeklyLoading = false;
+let dailySubjectHint = '';
 let sportsConnected = false;
 let corrlinksConnected = false;
 let activeStep = 1;
 let corrlinksLoginBusy = false;
+/** Bumped to invalidate an in-flight single login/compose after Force stop. */
+let corrlinksOpGeneration = 0;
+let corrlinksForceStop = false;
+/**
+ * CorrLinks emails verified this session (single login or probe).
+ * Loop Phase 1 skips re-checking these.
+ * @type {Map<string, { state: string, loggedIn?: boolean, email?: string, message?: string, verifiedAt: number, cached: true }>}
+ */
+const verifiedCorrlinksAccounts = new Map();
+/** Session TTL for cached verifications (30 minutes). */
+const VERIFIED_ACCOUNT_TTL_MS = 30 * 60 * 1000;
 let loopRunning = false;
 let loopAbort = false;
+/** @type {'idle' | 'running' | 'done' | 'stopped' | 'error'} */
+let loopPhase = 'idle';
+let lastLoopResult = null;
+/** Bumped on force-stop so an in-flight startInmateLoop exits without finishing. */
+let loopGeneration = 0;
 /** When true, hide the CorrLinks embed so the HTML countdown can show. */
 let loopCountdownActive = false;
+/** When true, full-page verifying overlay is showing. */
+let loopInitializingActive = false;
+/** Boot-time CorrLinks account verification (after SportsData login). */
+let bootVerifyRunning = false;
+let bootVerifyAbort = false;
+/** Last full probe map from boot verify — reused by Start loop. */
+let bootProbeByEmail = new Map();
+let accountsVerifiedOnce = false;
+/** Fingerprint of live corrlinks-accounts used for persisted validation skip. */
+let lastAccountsFingerprint = null;
 /** Active top-level tab: automate | history */
 let activeMainTab = 'automate';
 /** @type {any} */
@@ -142,7 +224,8 @@ const btnCorrZoomOut = document.getElementById('btnCorrZoomOut');
 const btnCorrClear = document.getElementById('btnCorrClear');
 const btnCorrRetry = document.getElementById('btnCorrRetry');
 const btnCorrViewLog = document.getElementById('btnCorrViewLog');
-const modKey = /Mac|iPhone|iPad/.test(navigator.platform || '') ? '⌘' : 'Ctrl';
+const isMacPlatform = /Mac|iPhone|iPad/.test(navigator.platform || '');
+const modKey = isMacPlatform ? 'Cmd' : 'Ctrl';
 
 /** @type {any} */
 let updateStatus = {
@@ -159,18 +242,62 @@ let logErrorUnread = 0;
 let activeCorrEmail = '';
 let lastLoginAt = null;
 let historyRowsCache = [];
+/** From APP_TIMEZONE in .env (via config summary). */
+let appTimezone = 'America/New_York';
+
+function getDisplayTimeZone() {
+  return appTimezone || 'America/New_York';
+}
 
 function stamp() {
-  return new Date().toLocaleTimeString([], { hour12: true });
+  return new Date().toLocaleTimeString([], {
+    hour12: true,
+    timeZone: getDisplayTimeZone(),
+  });
+}
+
+/** Compact wall clock using APP_TIMEZONE from .env — e.g. "Nov 10, 2026 · 12:25 PM EST". */
+function formatDateTime(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date);
+  const timeZone = getDisplayTimeZone();
+  const day = d.toLocaleDateString('en-US', {
+    timeZone,
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const time = d.toLocaleTimeString('en-US', {
+    timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZoneName: 'short',
+  });
+  return `${day} · ${time}`;
+}
+
+function tickStatusClock() {
+  const now = new Date();
+  const label = formatDateTime(now);
+  const tz = getDisplayTimeZone();
+  if (statusClock) {
+    statusClock.dateTime = now.toISOString();
+    statusClock.textContent = label;
+    statusClock.title = `${label} (${tz})`;
+  }
+}
+
+function startStatusClock() {
+  tickStatusClock();
+  if (startStatusClock._timer) clearInterval(startStatusClock._timer);
+  startStatusClock._timer = setInterval(tickStatusClock, 1000);
 }
 
 function platformShortcutLabel(key) {
-  return `${modKey}${key}`;
+  return `${modKey}+${key}`;
 }
 
 function setLoginShortcutHint() {
-  const kbd = btnLogin?.querySelector('.btn-shortcut');
-  if (kbd) kbd.textContent = platformShortcutLabel('L');
   if (btnRefresh) btnRefresh.title = `Refresh (${platformShortcutLabel('R')})`;
   if (btnOpenLog) btnOpenLog.title = `Open status log (${platformShortcutLabel('J')})`;
 }
@@ -192,22 +319,93 @@ function setCorrPlaceholderVisible(visible) {
   if (corrPlaceholder) corrPlaceholder.classList.toggle('is-hidden', !visible);
 }
 
+/** Live compose/login progress shown in the CorrLinks card header. */
+let corrPanelBusyText = null;
+/** Last connection warn flag — restored after busy progress clears. */
+let corrPanelWarn = false;
+
 function setCorrPanelConnection(on, warn = false) {
+  corrPanelWarn = Boolean(warn);
   if (!corrPanelStatus) return;
-  corrPanelStatus.classList.toggle('is-on', Boolean(on) && !warn);
-  corrPanelStatus.classList.toggle('is-warn', Boolean(warn) || !on);
-  const label = corrPanelStatus.querySelector('.status-label');
-  if (label) {
-    label.textContent = on ? (warn ? 'Attention' : 'Connected') : 'No session';
-  }
   setCorrPlaceholderVisible(!on);
+  // Keep live loop progress in the header until cleared.
+  if (corrPanelBusyText) {
+    corrPanelStatus.classList.add('is-busy', 'is-warn');
+    corrPanelStatus.classList.remove('is-on', 'is-off');
+    return;
+  }
+  corrPanelStatus.classList.remove('is-busy');
+  corrPanelStatus.classList.toggle('is-on', Boolean(on) && !warn);
+  corrPanelStatus.classList.toggle('is-warn', Boolean(warn));
+  corrPanelStatus.classList.toggle('is-off', !on && !warn);
+  const label = corrPanelStatus.querySelector('.status-label');
+  const text = on ? (warn ? 'Attention' : 'Connected') : 'Not logged in';
+  if (label) label.textContent = text;
+  corrPanelStatus.title = text;
+}
+
+/** Show running loop progress beside “CorrLinks” in the panel header. */
+function setCorrPanelBusy(text = null) {
+  if (!corrPanelStatus) return;
+  const label = corrPanelStatus.querySelector('.status-label');
+  const next = String(text || '').trim();
+  if (!next) {
+    corrPanelBusyText = null;
+    setCorrPanelConnection(corrlinksConnected, corrPanelWarn);
+    return;
+  }
+  corrPanelBusyText = next;
+  corrPanelStatus.classList.add('is-busy', 'is-warn');
+  corrPanelStatus.classList.remove('is-on', 'is-off');
+  if (label) label.textContent = next;
+  corrPanelStatus.title = next;
+}
+
+function currentLoopPhase() {
+  return loopRunning ? 'running' : loopPhase || 'idle';
 }
 
 function updateSessionPanel() {
+  const phase = currentLoopPhase();
+  const phaseLabel =
+    phase === 'running'
+      ? 'Running'
+      : phase === 'done'
+        ? 'Done'
+        : phase === 'stopped'
+          ? 'Stopped'
+          : phase === 'error'
+            ? 'Error'
+            : 'Idle';
+
   if (sessionLastLogin) sessionLastLogin.textContent = lastLoginAt || '—';
-  if (sessionLoopState) sessionLoopState.textContent = loopRunning ? 'Running' : 'Idle';
-  if (sessionLive) sessionLive.hidden = !loopRunning;
-  if (sessionNextRun && !loopCountdownActive) sessionNextRun.textContent = loopRunning ? '…' : '—';
+  if (sessionLoopState) {
+    sessionLoopState.textContent = phaseLabel;
+    sessionLoopState.dataset.phase = phase;
+  }
+  if (sessionLive) {
+    const showLive = phase === 'running';
+    sessionLive.hidden = !showLive;
+    sessionLive.setAttribute('aria-hidden', showLive ? 'false' : 'true');
+    sessionLive.classList.toggle('is-running', showLive);
+    if (sessionLiveLabel) sessionLiveLabel.textContent = 'Running';
+  }
+  if (sessionNextRun && !loopCountdownActive) {
+    sessionNextRun.textContent = phase === 'running' ? '…' : '—';
+  }
+  if (sessionLastResult) {
+    if (phase === 'running') {
+      sessionLastResult.textContent = 'In progress';
+    } else if (lastLoopResult) {
+      const ok = Number(lastLoopResult.okCount || 0);
+      const fail = Number(lastLoopResult.failCount || 0);
+      sessionLastResult.textContent = `${ok} ok · ${fail} failed`;
+      sessionLastResult.title = lastLoopResult.summary || sessionLastResult.textContent;
+    } else {
+      sessionLastResult.textContent = '—';
+      sessionLastResult.removeAttribute('title');
+    }
+  }
 }
 
 function refreshLogBadge() {
@@ -324,7 +522,10 @@ function toast(message, level = 'info') {
 }
 
 function setStatusHint(text) {
-  statusHint.textContent = text;
+  const value = text || 'Ready';
+  if (statusHintText) statusHintText.textContent = value;
+  else if (statusHint) statusHint.textContent = value;
+  statusHint?.classList.toggle('has-preview', /preview ready/i.test(value));
 }
 
 function setSportsConnected(on) {
@@ -341,11 +542,12 @@ function setSportsConnected(on) {
 function setCorrlinksConnected(on, warn = false) {
   corrlinksConnected = Boolean(on);
   clConn.classList.toggle('on', corrlinksConnected && !warn);
-  clConn.classList.toggle('warn', Boolean(warn) || !corrlinksConnected);
+  clConn.classList.toggle('warn', Boolean(warn));
+  clConn.classList.toggle('is-off', !corrlinksConnected && !warn);
   const clLabel = clConn.querySelector('.status-label');
   if (clLabel) {
     clLabel.textContent = corrlinksConnected
-      ? 'CorrLinks: logged in'
+      ? 'CorrLinks: connected'
       : warn
         ? 'CorrLinks: attention'
         : 'CorrLinks: not logged in';
@@ -424,7 +626,15 @@ function selectedInmate() {
   return accounts.find((a) => String(a.id) === String(id)) || null;
 }
 
-function setConfigSummary(_summary) {
+function setConfigSummary(summary = {}) {
+  if (summary?.timezone) {
+    appTimezone = String(summary.timezone).trim() || appTimezone;
+    tickStatusClock();
+  }
+  if (summary?.subjectToday != null) {
+    dailySubjectHint = String(summary.subjectToday || '').trim();
+    syncTemplateControls();
+  }
   // Keep login meta (Base / TZ / Subject) hidden from the sign-in screen.
   if (configSummary) {
     configSummary.hidden = true;
@@ -547,26 +757,137 @@ function updateComposePreview({ to, subject, body, chars, parts } = {}) {
   if (confirmChars) confirmChars.textContent = `${count.toLocaleString()} / ${CHAR_MAX.toLocaleString()}`;
 }
 
+function currentTemplateSubject() {
+  if (templateMode === 'weekly') return weeklyCache.subject || weeklyLeague;
+  return dailySubjectHint || '—';
+}
+
+function currentSendableFiles(inmate) {
+  if (templateMode === 'weekly') return Array.isArray(weeklyCache.updates) ? weeklyCache.updates : [];
+  return inmate?.inmate_exchange?.sendable || [];
+}
+
+function buildTemplatePayload() {
+  if (templateMode !== 'weekly') {
+    return { mode: 'daily', league: null, subject: null, files: null };
+  }
+  const files = (weeklyCache.updates || []).map((file, index) => ({
+    part: file.part || index + 1,
+    filename: file.filename || `weekly-${index + 1}.txt`,
+    url: file.url,
+    characters: file.characters ?? null,
+    league: file.league || weeklyLeague,
+  }));
+  return {
+    mode: 'weekly',
+    league: weeklyLeague,
+    subject: weeklyCache.subject || weeklyLeague,
+    files,
+  };
+}
+
+function syncTemplateControls() {
+  document.querySelectorAll('[data-template-mode]').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.templateMode === templateMode);
+  });
+  document.querySelectorAll('[data-weekly-league]').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.weeklyLeague === weeklyLeague);
+  });
+  const leagueRow = document.getElementById('templateLeagueRow');
+  if (leagueRow) leagueRow.hidden = templateMode !== 'weekly';
+  const subjectHint = document.getElementById('templateSubjectHint');
+  if (subjectHint) {
+    subjectHint.textContent =
+      templateMode === 'weekly'
+        ? `Subject: ${currentTemplateSubject()}`
+        : `Subject: ${dailySubjectHint || '—'}`;
+  }
+  const weekMeta = document.getElementById('templateWeekMeta');
+  if (weekMeta) {
+    if (templateMode === 'weekly' && (weeklyCache.week_start || weeklyCache.week_end)) {
+      weekMeta.hidden = false;
+      weekMeta.textContent = weeklyLoading
+        ? 'Loading weekly update…'
+        : `Week ${weeklyCache.week_start || '—'} → ${weeklyCache.week_end || '—'}`;
+    } else if (templateMode === 'weekly' && weeklyLoading) {
+      weekMeta.hidden = false;
+      weekMeta.textContent = 'Loading weekly update…';
+    } else {
+      weekMeta.hidden = true;
+      weekMeta.textContent = '';
+    }
+  }
+}
+
+function renderFilesList(sendable, { skippedCount = 0, emptyMessage = 'No sendable files for this inmate.' } = {}) {
+  selectedFileKeys = sendable.map((file, index) => `${file.part}:${file.filename || index}`);
+  if (filesHint) {
+    filesHint.textContent = sendable.length
+      ? `${sendable.length} selected` + (skippedCount ? ` · ${skippedCount} empty skipped` : '')
+      : weeklyLoading
+        ? 'Loading…'
+        : '';
+  }
+  if (filesList) {
+    filesList.innerHTML = '';
+    sendable.forEach((file, index) => {
+      const key = `${file.part}:${file.filename || index}`;
+      const li = document.createElement('li');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = selectedFileKeys.includes(key);
+      cb.addEventListener('change', () => {
+        if (cb.checked) {
+          if (!selectedFileKeys.includes(key)) selectedFileKeys.push(key);
+        } else {
+          selectedFileKeys = selectedFileKeys.filter((k) => k !== key);
+        }
+        if (filesHint) filesHint.textContent = `${selectedFileKeys.length} selected`;
+      });
+      const name = document.createElement('span');
+      name.className = 'file-name';
+      name.textContent = file.filename || `part-${file.part || index + 1}.txt`;
+      name.title = name.textContent;
+      const meta = document.createElement('span');
+      meta.className = 'file-meta';
+      const chars = file.characters != null ? Number(file.characters).toLocaleString() : '—';
+      meta.textContent = `${chars} chars`;
+      li.append(cb, name, meta);
+      filesList.appendChild(li);
+    });
+  }
+  if (filesEmpty) {
+    filesEmpty.textContent = emptyMessage;
+    filesEmpty.hidden = sendable.length > 0 || weeklyLoading;
+  }
+  if (filesBlock) filesBlock.hidden = false;
+}
+
 function renderAccountMeta(inmate) {
   if (!inmate) {
     accountMeta.hidden = true;
+    inmateCollapsedSummary.hidden = false;
     inmateCollapsedSummary.textContent = accounts.length ? 'Select an inmate' : 'Load inmates first';
     inmateCollapsedSummary.title = inmateCollapsedSummary.textContent;
     inmateCollapsedSummary.classList.add('warn');
+    setInmateSelectedDisplay(null);
     updateActionButtons({ canLogin: false });
     return;
   }
 
   accountMeta.hidden = false;
   inmateCollapsedSummary.classList.remove('warn');
-  inmateCollapsedSummary.textContent = `${inmate.name || 'Inmate'} · ${inmate.inmate_id || inmate.id}`;
-  inmateCollapsedSummary.title = inmateCollapsedSummary.textContent;
+  // Header stays "Inmate" + check while expanded; summary is for collapsed state only.
+  inmateCollapsedSummary.textContent = '';
+  inmateCollapsedSummary.title = `${inmate.name || 'Inmate'} (${inmate.inmate_id || inmate.id})`;
+  inmateCollapsedSummary.hidden = true;
 
   const primary = inmate.corrlinks_account;
   const second = inmate.second_corrlinks_account;
   const exchange = inmate.inmate_exchange || {};
-  const sendable = exchange.sendable || [];
+  const dailySendable = exchange.sendable || [];
   const skipped = exchange.skipped || [];
+  const sendable = currentSendableFiles(inmate);
   const status = String(inmate.status || 'n/a');
 
   badgeRow.innerHTML = '';
@@ -577,10 +898,13 @@ function renderAccountMeta(inmate) {
 
   const filesBadge = document.createElement('span');
   filesBadge.className = 'badge info';
-  filesBadge.textContent = `Files: ${sendable.length} sendable`;
+  filesBadge.textContent =
+    templateMode === 'weekly'
+      ? `Weekly ${weeklyLeague}: ${sendable.length} file(s)`
+      : `Files: ${dailySendable.length} sendable`;
   badgeRow.appendChild(filesBadge);
 
-  if (skipped.length) {
+  if (templateMode === 'daily' && skipped.length) {
     const skipBadge = document.createElement('span');
     skipBadge.className = 'badge warn';
     skipBadge.textContent = `${skipped.length} empty skipped`;
@@ -624,120 +948,584 @@ function renderAccountMeta(inmate) {
     accountRows.appendChild(el);
   });
 
-  selectedFileKeys = sendable.map((file, index) => `${file.part}:${file.filename || index}`);
-  if (filesHint) {
-    filesHint.textContent = sendable.length
-      ? `${sendable.length} selected` + (skipped.length ? ` · ${skipped.length} empty skipped` : '')
-      : '';
-  }
-  if (filesList) {
-    filesList.innerHTML = '';
-    sendable.forEach((file, index) => {
-      const key = `${file.part}:${file.filename || index}`;
-      const li = document.createElement('li');
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = selectedFileKeys.includes(key);
-      cb.addEventListener('change', () => {
-        if (cb.checked) {
-          if (!selectedFileKeys.includes(key)) selectedFileKeys.push(key);
-        } else {
-          selectedFileKeys = selectedFileKeys.filter((k) => k !== key);
-        }
-        if (filesHint) filesHint.textContent = `${selectedFileKeys.length} selected`;
-      });
-      const name = document.createElement('span');
-      name.className = 'file-name';
-      name.textContent = file.filename || `part-${file.part || index + 1}.txt`;
-      name.title = name.textContent;
-      const meta = document.createElement('span');
-      meta.className = 'file-meta';
-      const chars = file.characters != null ? Number(file.characters).toLocaleString() : '—';
-      meta.textContent = `${chars} chars`;
-      li.append(cb, name, meta);
-      filesList.appendChild(li);
-    });
-  }
-  if (filesEmpty) filesEmpty.hidden = sendable.length > 0;
-  if (filesBlock) filesBlock.hidden = false;
+  syncTemplateControls();
+  renderFilesList(sendable, {
+    skippedCount: templateMode === 'daily' ? skipped.length : 0,
+    emptyMessage:
+      templateMode === 'weekly'
+        ? `No ${weeklyLeague} weekly update file available.`
+        : 'No sendable files for this inmate.',
+  });
 
   const canLogin = Boolean(primary?.email && primary?.password);
   updateActionButtons({ canLogin });
+}
+
+async function loadWeeklyTemplate({ force = false } = {}) {
+  if (templateMode !== 'weekly') return;
+  if (!force && weeklyCache.league === weeklyLeague && weeklyCache.updates.length) {
+    syncTemplateControls();
+    const inmate = selectedInmate();
+    if (inmate) renderAccountMeta(inmate);
+    return;
+  }
+  weeklyLoading = true;
+  syncTemplateControls();
+  try {
+    const result = await window.api.fetchExchangeWeekly({
+      league: weeklyLeague,
+      withCharacters: true,
+    });
+    if (!result?.ok) {
+      weeklyCache = {
+        league: weeklyLeague,
+        updates: [],
+        week_start: null,
+        week_end: null,
+        subject: weeklyLeague,
+        message: result?.message || 'Weekly update unavailable',
+      };
+      toast(result?.message || 'Weekly update unavailable', 'warn');
+      log(result?.message || 'Weekly update unavailable', 'warn');
+    } else {
+      weeklyCache = {
+        league: weeklyLeague,
+        updates: result.updates || [],
+        week_start: result.week_start || null,
+        week_end: result.week_end || null,
+        subject: result.subject || weeklyLeague,
+        message: result.message || '',
+      };
+      log(
+        `Weekly ${weeklyLeague} loaded · ${weeklyCache.updates.length} file(s)` +
+          (weeklyCache.week_start ? ` · ${weeklyCache.week_start} → ${weeklyCache.week_end}` : ''),
+        'success'
+      );
+    }
+  } catch (error) {
+    weeklyCache = {
+      league: weeklyLeague,
+      updates: [],
+      week_start: null,
+      week_end: null,
+      subject: weeklyLeague,
+      message: error.message || String(error),
+    };
+    log(error.message || String(error), 'error');
+    toast(error.message || String(error), 'error');
+  } finally {
+    weeklyLoading = false;
+    syncTemplateControls();
+    const inmate = selectedInmate();
+    if (inmate) renderAccountMeta(inmate);
+  }
+}
+
+async function setTemplateMode(mode) {
+  templateMode = mode === 'weekly' ? 'weekly' : 'daily';
+  syncTemplateControls();
+  if (templateMode === 'weekly') {
+    await loadWeeklyTemplate({ force: weeklyCache.league !== weeklyLeague });
+  } else {
+    const inmate = selectedInmate();
+    if (inmate) renderAccountMeta(inmate);
+    else syncTemplateControls();
+  }
+}
+
+async function setWeeklyLeague(league) {
+  weeklyLeague = league === 'CFB' ? 'CFB' : 'NFL';
+  syncTemplateControls();
+  if (templateMode === 'weekly') {
+    await loadWeeklyTemplate({ force: true });
+  }
 }
 
 function inmateHasCorrlinksLogin(inmate) {
   return Boolean(inmate?.corrlinks_account?.email && inmate?.corrlinks_account?.password);
 }
 
+function recipientLoopKey(inmate) {
+  const id =
+    inmate?.inmate_id != null && String(inmate.inmate_id).trim() !== ''
+      ? String(inmate.inmate_id).trim()
+      : inmate?.id != null && String(inmate.id).trim() !== ''
+        ? String(inmate.id).trim()
+        : '';
+  return id ? id.toLowerCase() : '';
+}
+
+function emailLoopKey(email) {
+  return String(email || '')
+    .trim()
+    .toLowerCase();
+}
+
+function inmateLoopLabel(inmate) {
+  return `${inmate?.name || 'Inmate'} (${inmate?.inmate_id || inmate?.id || '?'})`;
+}
+
+function accountRoleLabel(account) {
+  const roles = account?.roles || [];
+  if (roles.includes('primary') && roles.includes('second')) return 'PRIMARY+SECONDARY';
+  if (roles.includes('second')) return 'SECONDARY';
+  return 'PRIMARY';
+}
+
+/** Every distinct CorrLinks login on the inmate list (primary vs secondary kept distinct). */
+function collectUniqueCorrlinksAccounts(list = accounts) {
+  const out = [];
+  const indexByEmail = new Map();
+
+  function add(email, password, role, inmate) {
+    const key = emailLoopKey(email);
+    if (!key || !password) return;
+    if (!indexByEmail.has(key)) {
+      indexByEmail.set(key, out.length);
+      out.push({
+        email: String(email).trim(),
+        password,
+        roles: [role],
+        primaryFor: [],
+        secondFor: [],
+      });
+    }
+    const row = out[indexByEmail.get(key)];
+    if (!row.roles.includes(role)) row.roles.push(role);
+    const label = inmateLoopLabel(inmate);
+    if (role === 'primary' && !row.primaryFor.includes(label)) row.primaryFor.push(label);
+    if (role === 'second' && !row.secondFor.includes(label)) row.secondFor.push(label);
+  }
+
+  for (const inmate of list) {
+    const primary = inmate?.corrlinks_account || {};
+    const second = inmate?.second_corrlinks_account || {};
+    add(primary.email, primary.password, 'primary', inmate);
+    add(second.email, second.password, 'second', inmate);
+  }
+  return out;
+}
+
+function probeAccountUsable(probe) {
+  return Boolean(
+    probe && (probe.state === 'success' || (probe.state === 'locked' && probe.loggedIn))
+  );
+}
+
+/** Retry only soft failures (timeout/error) — not hard locks. */
+function shouldRetryProbeLogin(probe) {
+  if (probeAccountUsable(probe)) return false;
+  if (!probe) return true;
+  if (probe.state === 'locked') return false;
+  if (probe?.cached) return false;
+  return true;
+}
+
+function rememberVerifiedAccount(email, status = {}) {
+  const key = emailLoopKey(email || status.email);
+  if (!key || !probeAccountUsable(status)) return;
+  verifiedCorrlinksAccounts.set(key, {
+    state: status.state || 'success',
+    loggedIn: status.loggedIn !== false,
+    email: status.email || email,
+    message: status.message || 'Verified earlier this session',
+    attempt: status.attempt || null,
+    usedSecondAccount: Boolean(status.usedSecondAccount),
+    verifiedAt: Date.now(),
+    cached: true,
+    persistent: Boolean(status.persistent),
+  });
+}
+
+function getCachedVerifiedProbe(email) {
+  const key = emailLoopKey(email);
+  if (!key) return null;
+  const hit = verifiedCorrlinksAccounts.get(key);
+  if (!hit) return null;
+  // Disk-backed probes stay valid until corrlinks-accounts fingerprint changes.
+  if (!hit.persistent && Date.now() - Number(hit.verifiedAt || 0) > VERIFIED_ACCOUNT_TTL_MS) {
+    verifiedCorrlinksAccounts.delete(key);
+    return null;
+  }
+  return { ...hit };
+}
+
+function clearVerifiedAccounts() {
+  verifiedCorrlinksAccounts.clear();
+}
+
+async function computeAccountsFingerprint(inmateList = accounts) {
+  if (!window.api?.fingerprintCorrlinksAccounts) return null;
+  const result = await window.api.fingerprintCorrlinksAccounts(inmateList || []);
+  return result?.fingerprint || null;
+}
+
+function restoreVerifiedFromPersistedProbes(probes = {}, uniqueAccounts = []) {
+  clearVerifiedAccounts();
+  const map = new Map();
+  for (const account of uniqueAccounts) {
+    const key = emailLoopKey(account.email);
+    const saved = probes?.[key];
+    if (!saved || typeof saved !== 'object') continue;
+    const entry = {
+      state: saved.state || 'error',
+      loggedIn: Boolean(saved.loggedIn),
+      email: saved.email || account.email,
+      message: saved.message || 'Restored from saved validation',
+      attempt: saved.attempt || null,
+      usedSecondAccount: Boolean(saved.usedSecondAccount),
+      verifiedAt: Number(saved.verifiedAt) || Date.now(),
+      cached: true,
+      persistent: true,
+    };
+    verifiedCorrlinksAccounts.set(key, entry);
+    map.set(key, { ...entry });
+  }
+  bootProbeByEmail = map;
+  return map;
+}
+
+function persistedCacheCoversAccounts(probes = {}, uniqueAccounts = []) {
+  if (!uniqueAccounts.length) return true;
+  return uniqueAccounts.every((account) => {
+    const key = emailLoopKey(account.email);
+    return Boolean(probes?.[key] && typeof probes[key] === 'object');
+  });
+}
+
+async function persistVerifiedAccountsCache(fingerprint, probeByEmail = bootProbeByEmail) {
+  if (!fingerprint || !window.api?.saveCorrlinksVerifyCache) return false;
+  const probes = {};
+  for (const [key, value] of probeByEmail.entries()) {
+    probes[key] = {
+      ...value,
+      persistent: true,
+    };
+  }
+  // Also keep usable session cache entries.
+  for (const [key, value] of verifiedCorrlinksAccounts.entries()) {
+    if (!probes[key]) {
+      probes[key] = { ...value, persistent: true };
+    }
+  }
+  const saved = await window.api.saveCorrlinksVerifyCache({ fingerprint, probes });
+  if (saved?.ok) {
+    lastAccountsFingerprint = fingerprint;
+    // Mark in-memory probes as persistent after disk save.
+    for (const [key, value] of verifiedCorrlinksAccounts.entries()) {
+      verifiedCorrlinksAccounts.set(key, { ...value, persistent: true });
+    }
+    return true;
+  }
+  return false;
+}
+
 /**
- * Group inmates by primary CorrLinks email (first-seen order).
- * @returns {Array<{ email: string, password: string, secondEmail: string|null, secondPassword: string|null, inmates: any[] }>}
+ * If live corrlinks-accounts credentials match the saved fingerprint, restore probes and skip login validation.
+ * Fingerprint covers every inmate’s primary/second email+password assignment (not exchange files).
+ * @returns {Promise<boolean>} true when validation was skipped
+ */
+async function tryRestoreVerifiedFromDisk(uniqueAccounts = collectUniqueCorrlinksAccounts()) {
+  if (!window.api?.loadCorrlinksVerifyCache) return false;
+  const fingerprint = await computeAccountsFingerprint(accounts);
+  lastAccountsFingerprint = fingerprint;
+  if (!fingerprint) return false;
+
+  const cache = await window.api.loadCorrlinksVerifyCache();
+  if (!cache?.ok) {
+    log('No saved CorrLinks validation — will validate', 'info');
+    return false;
+  }
+  if (cache.fingerprint !== fingerprint) {
+    log('Live corrlinks-accounts credentials changed — re-validating', 'info');
+    return false;
+  }
+  if (!persistedCacheCoversAccounts(cache.probes, uniqueAccounts)) {
+    log('Saved validation incomplete for current accounts — re-validating', 'warn');
+    return false;
+  }
+
+  restoreVerifiedFromPersistedProbes(cache.probes, uniqueAccounts);
+  accountsVerifiedOnce = true;
+  const ok = [...bootProbeByEmail.values()].filter((s) => probeAccountUsable(s)).length;
+  const fail = uniqueAccounts.length - ok;
+  const summary =
+    fail > 0
+      ? `Accounts unchanged · using saved validation · ${ok} ready · ${fail} unavailable`
+      : `Accounts unchanged · using saved validation · ${ok} accounts ready`;
+  log(summary, fail > 0 ? 'warn' : 'success');
+  toast(summary, fail > 0 ? 'warn' : 'success');
+  setStatusHint(summary);
+  updateActionButtons();
+  return true;
+}
+
+/**
+ * Pre-probe preview: group by primary email only.
+ * @returns {{
+ *   groups: Array<{ email: string, password: string, secondEmail: string|null, secondPassword: string|null, inmates: any[] }>,
+ *   duplicates: Array<{ key: string, name: string, keptUnder: string, ignoredUnder: string }>,
+ * }}
  */
 function groupInmatesByCorrlinksAccount(list = accounts) {
   const groups = [];
   const indexByEmail = new Map();
+  const seenRecipients = new Map();
+  const duplicates = [];
+
   for (const inmate of list) {
     if (!inmateHasCorrlinksLogin(inmate)) continue;
-    const emailKey = String(inmate.corrlinks_account.email).trim().toLowerCase();
-    if (!emailKey) continue;
-    if (!indexByEmail.has(emailKey)) {
-      indexByEmail.set(emailKey, groups.length);
+    const keyEmail = emailLoopKey(inmate.corrlinks_account.email);
+    if (!keyEmail) continue;
+
+    const key = recipientLoopKey(inmate);
+    if (key && seenRecipients.has(key)) {
+      duplicates.push({
+        key,
+        name: inmate.name || 'Inmate',
+        keptUnder: seenRecipients.get(key),
+        ignoredUnder: keyEmail,
+      });
+      continue;
+    }
+
+    if (!indexByEmail.has(keyEmail)) {
+      indexByEmail.set(keyEmail, groups.length);
       const second = inmate.second_corrlinks_account || {};
       groups.push({
         email: inmate.corrlinks_account.email,
         password: inmate.corrlinks_account.password,
         secondEmail: second.email || null,
         secondPassword: second.password || null,
-        inmates: [inmate],
+        inmates: [],
       });
-      continue;
     }
-    const group = groups[indexByEmail.get(emailKey)];
+
+    const group = groups[indexByEmail.get(keyEmail)];
     group.inmates.push(inmate);
+    if (key) seenRecipients.set(key, keyEmail);
+
     if (!group.secondEmail && inmate.second_corrlinks_account?.email) {
       group.secondEmail = inmate.second_corrlinks_account.email;
       group.secondPassword = inmate.second_corrlinks_account.password || null;
     }
   }
-  return groups;
+
+  return { groups, duplicates };
+}
+
+/**
+ * After probing every account, assign each inmate to a usable login
+ * (primary if OK, else second if OK). Dedupes recipients.
+ */
+function regroupInmatesAfterProbe(list = accounts, probeByEmail = new Map()) {
+  const groups = [];
+  const indexByEmail = new Map();
+  const seenRecipients = new Map();
+  const duplicates = [];
+  const skipped = [];
+  const assignments = [];
+
+  for (const inmate of list) {
+    if (!inmateHasCorrlinksLogin(inmate)) continue;
+
+    const key = recipientLoopKey(inmate);
+    const name = inmate.name || 'Inmate';
+    const primary = inmate.corrlinks_account || {};
+    const second = inmate.second_corrlinks_account || {};
+    const primaryKey = emailLoopKey(primary.email);
+    const secondKey = emailLoopKey(second.email);
+    const primaryProbe = primaryKey ? probeByEmail.get(primaryKey) : null;
+    const secondProbe = secondKey ? probeByEmail.get(secondKey) : null;
+
+    let chosen = null;
+    if (probeAccountUsable(primaryProbe)) {
+      chosen = { email: primary.email, password: primary.password, via: 'primary' };
+    } else if (secondKey && second.password && probeAccountUsable(secondProbe)) {
+      chosen = { email: second.email, password: second.password, via: 'second' };
+    }
+
+    const assignmentBase = {
+      key: key || String(inmate.id || ''),
+      name,
+      inmate,
+      primary: primary.email || null,
+      second: second.email || null,
+      primaryState: primaryProbe?.state || (primary.email ? 'missing' : 'none'),
+      secondState: second.email ? secondProbe?.state || 'missing' : 'none',
+    };
+
+    if (!chosen) {
+      skipped.push(assignmentBase);
+      continue;
+    }
+
+    const chosenKey = emailLoopKey(chosen.email);
+    if (key && seenRecipients.has(key)) {
+      duplicates.push({
+        key,
+        name,
+        keptUnder: seenRecipients.get(key),
+        ignoredUnder: chosenKey,
+      });
+      continue;
+    }
+
+    if (!indexByEmail.has(chosenKey)) {
+      indexByEmail.set(chosenKey, groups.length);
+      groups.push({
+        email: chosen.email,
+        password: chosen.password,
+        secondEmail: null,
+        secondPassword: null,
+        via: chosen.via,
+        inmates: [],
+        assignments: [],
+      });
+    }
+
+    const group = groups[indexByEmail.get(chosenKey)];
+    group.inmates.push(inmate);
+    const detail = {
+      ...assignmentBase,
+      via: chosen.via,
+      usedEmail: chosen.email,
+    };
+    group.assignments.push(detail);
+    assignments.push(detail);
+    if (chosen.via === 'second') group.via = 'second';
+    if (key) seenRecipients.set(key, chosenKey);
+  }
+
+  return { groups, duplicates, skipped, assignments };
 }
 
 function updateActionButtons({ canLogin } = {}) {
   const loginOk =
     canLogin != null ? canLogin : Boolean(selectedInmate() && inmateHasCorrlinksLogin(selectedInmate()));
-  const hasLoopQueue = groupInmatesByCorrlinksAccount().length > 0;
-  btnLogin.disabled = loopRunning || corrlinksLoginBusy || !loginOk;
-  btnLogin.hidden = loopRunning;
-  btnLogin.title = corrlinksLoginBusy
-    ? 'Logging in…'
-    : loginOk
-      ? `Login to CorrLinks (${platformShortcutLabel('L')})`
-      : selectedInmate()
-        ? 'Selected inmate is missing CorrLinks credentials'
-        : 'Select an inmate with CorrLinks credentials';
+  const hasLoopQueue = groupInmatesByCorrlinksAccount().groups.length > 0;
+  const singleBusy = corrlinksLoginBusy && !loopRunning && !bootVerifyRunning;
+  const canForceStop = loopRunning || corrlinksLoginBusy || bootVerifyRunning;
+  const busy = loopRunning || corrlinksLoginBusy || bootVerifyRunning;
+  btnLogin.disabled = busy || !loginOk;
+  btnLogin.hidden = loopRunning || bootVerifyRunning;
+  btnLogin.title = bootVerifyRunning
+    ? 'Verifying CorrLinks accounts…'
+    : corrlinksLoginBusy
+      ? 'Logging in…'
+      : loginOk
+        ? `Login to CorrLinks (${platformShortcutLabel('L')})`
+        : selectedInmate()
+          ? 'Selected inmate is missing CorrLinks credentials'
+          : 'Select an inmate with CorrLinks credentials';
   const loginLabel = btnLogin.querySelector('.btn-main-label');
-  if (loginLabel) loginLabel.textContent = corrlinksLoginBusy ? 'Logging in…' : 'Login to CorrLinks';
-  btnStartLoop.disabled = loopRunning || corrlinksLoginBusy || !hasLoopQueue;
-  btnStartLoop.hidden = loopRunning;
-  btnStartLoop.title = hasLoopQueue
-    ? 'Probe accounts then compose recipients (no send)'
-    : 'Load inmates with CorrLinks credentials first';
-  btnStopLoop.disabled = !loopRunning;
-  btnStopLoop.hidden = !loopRunning;
+  if (loginLabel) {
+    loginLabel.textContent = corrlinksLoginBusy ? 'Logging in…' : 'Login to CorrLinks';
+  }
+  btnStartLoop.disabled = busy || !hasLoopQueue || !accountsVerifiedOnce;
+  btnStartLoop.hidden = loopRunning || singleBusy || bootVerifyRunning;
+  btnStartLoop.title = !accountsVerifiedOnce
+    ? 'Wait for account verification to finish'
+    : hasLoopQueue
+      ? 'Regroup recipients and run New Message loop (accounts already verified)'
+      : 'Load inmates with CorrLinks credentials first';
+  btnStopLoop.disabled = !canForceStop;
+  btnStopLoop.hidden = !canForceStop;
+  const stopLabel = btnStopLoop?.querySelector('.btn-stop-label');
+  if (stopLabel) {
+    stopLabel.textContent = loopRunning ? 'Stop loop' : 'Force stop';
+  }
+  btnStopLoop.title = loopRunning
+    ? 'Force-stop the inmate loop'
+    : bootVerifyRunning
+      ? 'Cancel account validation'
+      : 'Force-stop this CorrLinks login';
   actionsRow?.classList.toggle('is-looping', loopRunning);
-  if (inmateSearch) inmateSearch.disabled = loopRunning || !accounts.length;
+  actionsRow?.classList.toggle('is-single-busy', singleBusy);
+  if (inmateSearch) inmateSearch.disabled = busy || !accounts.length;
+  if (btnRefresh) btnRefresh.disabled = busy;
   updateSessionPanel();
 }
 
-function setLoopProgress(text) {
-  if (!loopProgress) return;
-  if (!text) {
+function clearLoopProgressStats() {
+  if (loopProgressStats) {
+    loopProgressStats.hidden = true;
+    loopProgressStats.innerHTML = '';
+  }
+  if (loopProgressTime) {
+    loopProgressTime.hidden = true;
+    loopProgressTime.textContent = '';
+  }
+}
+
+function clearLoopResultBanner() {
+  lastLoopResult = null;
+  setLoopProgress('');
+  updateSessionPanel();
+}
+
+function setLoopProgress(text, opts = {}) {
+  const isResult = Boolean(opts.result);
+  if (!text && !opts.result) {
+    setCorrPanelBusy(null);
+    if (!loopProgress) return;
     loopProgress.hidden = true;
-    loopProgress.textContent = '';
+    loopProgress.classList.remove('is-result', 'is-warn', 'is-error', 'is-running');
+    if (loopProgressTitle) loopProgressTitle.textContent = '';
+    if (loopProgressIcon) loopProgressIcon.textContent = '';
+    clearLoopProgressStats();
     return;
   }
+
+  // Live progress lives in the CorrLinks header; result cards stay on the left.
+  if (!isResult) {
+    setCorrPanelBusy(text);
+    if (loopProgress) {
+      loopProgress.hidden = true;
+      loopProgress.classList.remove('is-result', 'is-warn', 'is-error', 'is-running');
+      clearLoopProgressStats();
+    }
+    return;
+  }
+
+  setCorrPanelBusy(null);
+  if (!loopProgress) return;
+  const level = opts.level || (opts.aborted ? 'warn' : 'success');
+  const hideStats = Boolean(opts.hideStats);
   loopProgress.hidden = false;
-  loopProgress.textContent = text;
+  loopProgress.classList.toggle('is-result', true);
+  loopProgress.classList.toggle('is-running', false);
+  loopProgress.classList.toggle('is-warn', level === 'warn');
+  loopProgress.classList.toggle('is-error', level === 'error');
+
+  if (loopProgressIcon) {
+    loopProgressIcon.textContent =
+      level === 'error' ? '×' : level === 'warn' ? '!' : '✓';
+  }
+  if (loopProgressTitle) loopProgressTitle.textContent = text || '';
+
+  if (!hideStats) {
+    if (loopProgressTime) {
+      loopProgressTime.hidden = false;
+      loopProgressTime.textContent = opts.timestamp || formatDateTime();
+    }
+    if (loopProgressStats) {
+      const stats = [
+        { label: 'ok', value: opts.okCount ?? 0 },
+        { label: 'failed', value: opts.failCount ?? 0 },
+        { label: 'recipients', value: opts.recipientTotal ?? 0 },
+      ];
+      loopProgressStats.hidden = false;
+      loopProgressStats.innerHTML = stats
+        .map(
+          (stat) =>
+            `<span class="loop-stat"><strong class="tabular">${Number(stat.value).toLocaleString()}</strong> ${stat.label}</span>`
+        )
+        .join('');
+    }
+  } else {
+    clearLoopProgressStats();
+  }
 }
 
 function filterAccounts(query) {
@@ -801,21 +1589,60 @@ function renderInmateOptions(list, { open = true } = {}) {
   }
   inmateOptions.hidden = !open;
   inmateSearch.setAttribute('aria-expanded', open ? 'true' : 'false');
+  document.getElementById('inmateCombobox')?.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
 function closeInmateOptions() {
   inmateOptions.hidden = true;
   inmateSearch.setAttribute('aria-expanded', 'false');
+  document.getElementById('inmateCombobox')?.setAttribute('aria-expanded', 'false');
   optionHighlight = -1;
+}
+
+function setInmateSelectedDisplay(inmate) {
+  if (!inmateSelectedDisplay) return;
+  if (!inmate) {
+    inmateSelectedDisplay.hidden = true;
+    if (inmateSelectedName) inmateSelectedName.textContent = '';
+    if (inmateSelectedId) inmateSelectedId.textContent = '';
+    inmateSearch?.removeAttribute('title');
+    return;
+  }
+  const name = inmate.name || 'Inmate';
+  const idLabel = String(inmate.inmate_id || inmate.id || '');
+  if (inmateSelectedName) {
+    inmateSelectedName.textContent = name;
+    inmateSelectedName.title = name;
+  }
+  if (inmateSelectedId) {
+    inmateSelectedId.textContent = idLabel ? `ID ${idLabel}` : '';
+    inmateSelectedId.title = idLabel;
+  }
+  inmateSelectedDisplay.hidden = false;
+  inmateSearch.title = idLabel ? `${name} (${idLabel})` : name;
+}
+
+function syncInmateComboboxDisplay({ editing = false } = {}) {
+  const inmate = selectedInmate();
+  const showSelected = Boolean(inmate) && !editing;
+  if (inmateSearch) {
+    inmateSearch.classList.toggle('is-displaying-selected', showSelected);
+    if (showSelected) {
+      inmateSearch.value = '';
+      // Empty value would reveal the placeholder under the selected overlay.
+      inmateSearch.placeholder = '';
+    } else {
+      inmateSearch.placeholder = 'Search name, ID, or email…';
+    }
+  }
+  setInmateSelectedDisplay(showSelected ? inmate : null);
 }
 
 function selectInmate(id, { autoLogin = false } = {}) {
   const inmate = accounts.find((a) => String(a.id) === String(id));
   accountSelect.value = inmate ? String(inmate.id) : '';
   selectedFileKeys = [];
-  if (inmate) {
-    inmateSearch.value = `${inmate.name || 'Inmate'} (${inmate.inmate_id || inmate.id})`;
-  }
+  syncInmateComboboxDisplay({ editing: false });
   renderAccountMeta(inmate || null);
   const inmateDone = Boolean(inmate);
   setStepState({
@@ -838,6 +1665,7 @@ function renderAccounts(list) {
   if (!accounts.length) {
     accountSelect.value = '';
     inmateSearch.value = '';
+    syncInmateComboboxDisplay({ editing: false });
     renderAccountMeta(null);
     renderInmateOptions([], { open: false });
     updateActionButtons({ canLogin: false });
@@ -855,6 +1683,10 @@ function renderAccounts(list) {
  * @param {{ quietToast?: boolean }} [options]
  * @returns {Promise<object|null>} status or null if skipped/busy
  */
+function corrlinksOpStillActive(generation) {
+  return !corrlinksForceStop && generation === corrlinksOpGeneration;
+}
+
 async function startCorrlinksLogin(options = {}) {
   const { quietToast = false } = options;
   const inmate = selectedInmate();
@@ -869,17 +1701,29 @@ async function startCorrlinksLogin(options = {}) {
   if (corrlinksLoginBusy) return null;
 
   syncCorrPaneBounds();
+  corrlinksForceStop = false;
+  const myGeneration = ++corrlinksOpGeneration;
   corrlinksLoginBusy = true;
+  clearLoopResultBanner();
   updateActionButtons({ canLogin: true });
   setStatusHint(`CorrLinks: ${inmate.name || inmate.inmate_id || inmate.id}…`);
   setCorrlinksConnected(false, true);
+  const template = buildTemplatePayload();
+  if (template.mode === 'weekly' && !template.files?.length) {
+    toast(`No ${weeklyLeague} weekly file loaded — pick Weekly update again`, 'error');
+    return null;
+  }
   const checkedCount = selectedFileKeys.length;
   log(
     `Login primary ${maskSensitive(inmate.corrlinks_account.email)}` +
       (inmate.second_corrlinks_account?.email
         ? ` (fallback ${maskSensitive(inmate.second_corrlinks_account.email)} if locked)`
         : '') +
-      (checkedCount ? ` · ${checkedCount} exchange file(s) checked` : '') +
+      (template.mode === 'weekly'
+        ? ` · weekly ${template.league} · subject ${template.subject}`
+        : checkedCount
+          ? ` · ${checkedCount} exchange file(s) checked`
+          : '') +
       ' · no send',
     'info'
   );
@@ -887,26 +1731,77 @@ async function startCorrlinksLogin(options = {}) {
     const result = await window.api.loginCorrlinks({
       inmateId: inmate.id,
       selectedFiles: selectedFileKeys.slice(),
+      template,
     });
+    if (!corrlinksOpStillActive(myGeneration)) {
+      return { state: 'aborted', message: 'Force-stopped' };
+    }
     handleLoginResult(result.status || {}, { quietToast });
     setStatusHint((result.status && result.status.message) || 'CorrLinks finished (not sent)');
     return result.status || null;
   } catch (error) {
+    if (!corrlinksOpStillActive(myGeneration)) {
+      return { state: 'aborted', message: 'Force-stopped' };
+    }
     log(error.message || String(error), 'error');
     if (!quietToast) toast(error.message || String(error), 'error');
     setCorrlinksConnected(false);
     return { state: 'error', message: error.message || String(error) };
   } finally {
-    corrlinksLoginBusy = false;
-    updateActionButtons();
+    if (myGeneration === corrlinksOpGeneration || !corrlinksLoginBusy) {
+      corrlinksLoginBusy = false;
+      updateActionButtons();
+    }
   }
 }
 
-/** Gap only when switching CorrLinks accounts (not between same-account recipients). */
-const LOOP_GAP_MS = 10_000;
+/** Gap between live account probes during initializing (skipped for cache hits). */
+const LOOP_GAP_MS = 2_000;
+/** Rest before retrying a skipped/failed CorrLinks login, and before compose re-login. */
+const LOOP_RELOGIN_REST_MS = 5_000;
 
 function buildLoopQueue() {
   return groupInmatesByCorrlinksAccount();
+}
+
+function logLoopPlan(groups, duplicates) {
+  groups.forEach((group, i) => {
+    const via = group.via === 'second' ? 'SECONDARY' : 'PRIMARY';
+    log(
+      `Plan · Account ${i + 1}/${groups.length}: ${maskSensitive(group.email)} [${via}]` +
+        ` · ${group.inmates.length} recipient(s)`,
+      via === 'SECONDARY' ? 'warn' : 'info'
+    );
+    const rows = group.assignments?.length
+      ? group.assignments
+      : group.inmates.map((inmate) => ({
+          name: inmate.name || 'Inmate',
+          key: inmate.inmate_id || inmate.id,
+          via: group.via,
+          primary: inmate.corrlinks_account?.email || null,
+          second: inmate.second_corrlinks_account?.email || null,
+          primaryState: '—',
+          secondState: '—',
+        }));
+    rows.forEach((row, r) => {
+      log(
+        `  ${r + 1}. ${row.name} (${row.key})` +
+          ` · use ${row.via === 'second' ? 'SECONDARY' : 'PRIMARY'} ${maskSensitive(row.usedEmail || group.email)}` +
+          ` · PRIMARY ${maskSensitive(row.primary)}=${row.primaryState}` +
+          (row.second ? ` · SECONDARY ${maskSensitive(row.second)}=${row.secondState}` : ' · SECONDARY none'),
+        row.via === 'second' ? 'warn' : 'info',
+        row
+      );
+    });
+  });
+  for (const dup of duplicates) {
+    log(
+      `Duplicate skipped · ${dup.name} (${dup.key}) already under ${maskSensitive(dup.keptUnder)}` +
+        ` — ignored for ${maskSensitive(dup.ignoredUnder)}`,
+      'warn',
+      dup
+    );
+  }
 }
 
 function sleep(ms) {
@@ -943,6 +1838,403 @@ function setLoopCountdownOverlay({ seconds, nextLabel, current, total } = {}) {
   }
   // Collapse embed bounds so this HTML overlay is not covered by WebContentsView.
   syncCorrPaneBounds();
+}
+
+/**
+ * Full-screen CorrLinks cover while probing accounts (hides login verification UI).
+ * @param {{ active?: boolean, status?: string, detail?: string, current?: number, total?: number, percent?: number }|null} [opts]
+ */
+function verifyingSessionActive() {
+  return (bootVerifyRunning && !bootVerifyAbort) || (loopRunning && !loopAbort);
+}
+
+function setAppVerifyingProgress({ current = null, total = null, percent = null } = {}) {
+  let value = percent;
+  if (value == null && total != null && total > 0 && current != null) {
+    value = Math.round((Math.max(0, Number(current)) / Number(total)) * 100);
+  }
+  if (value == null || Number.isNaN(value)) value = 0;
+  value = Math.max(0, Math.min(100, value));
+  if (appVerifyingProgressBar) appVerifyingProgressBar.style.width = `${value}%`;
+  if (appVerifyingProgress) appVerifyingProgress.setAttribute('aria-valuenow', String(value));
+  if (appVerifyingPercent) appVerifyingPercent.textContent = `${value}%`;
+}
+
+function setLoopInitializingOverlay(opts = null) {
+  if (!loopInitializing) return;
+  if (!opts || opts.active === false) {
+    loopInitializingActive = false;
+    loopInitializing.hidden = true;
+    loopInitializing.setAttribute('aria-busy', 'false');
+    if (appVerifyingTitle) appVerifyingTitle.textContent = VERIFY_COPY.title;
+    if (loopInitializingStatus) loopInitializingStatus.textContent = VERIFY_COPY.defaultStatus;
+    if (loopInitializingDetail) loopInitializingDetail.textContent = '';
+    setAppVerifyingProgress({ percent: 0 });
+    syncCorrPaneBounds();
+    return;
+  }
+  // Never resurrect the cover after Force stop / verify end.
+  if (!verifyingSessionActive()) {
+    loopInitializingActive = false;
+    loopInitializing.hidden = true;
+    loopInitializing.setAttribute('aria-busy', 'false');
+    syncCorrPaneBounds();
+    return;
+  }
+  // Keep countdown hidden under the initializing cover.
+  setLoopCountdownOverlay();
+  loopInitializingActive = true;
+  loopInitializing.hidden = false;
+  loopInitializing.setAttribute('aria-busy', 'true');
+  if (appVerifyingTitle) {
+    appVerifyingTitle.textContent = opts.title || VERIFY_COPY.title;
+  }
+  if (loopInitializingStatus) {
+    loopInitializingStatus.textContent = opts.status || VERIFY_COPY.status;
+  }
+  if (loopInitializingDetail) {
+    loopInitializingDetail.textContent = opts.detail || '';
+  }
+  if (opts.current != null || opts.total != null || opts.percent != null) {
+    setAppVerifyingProgress({
+      current: opts.current,
+      total: opts.total,
+      percent: opts.percent,
+    });
+  }
+  // WebContentsView paints above HTML — collapse it so the login page never shows.
+  hideCorrEmbedNow();
+}
+
+/** Quiet wait during init (updates initializing overlay, not account countdown). */
+async function waitLoopInitGap(
+  ms,
+  { current, total, status = VERIFY_COPY.statusPause, detailPrefix, progressCurrent, progressTotal } = {}
+) {
+  const endsAt = Date.now() + ms;
+  let lastShown = -1;
+  const barCurrent = progressCurrent != null ? progressCurrent : current;
+  const barTotal = progressTotal != null ? progressTotal : total;
+  while (Date.now() < endsAt) {
+    if (!verifyingSessionActive()) {
+      setLoopInitializingOverlay(null);
+      return false;
+    }
+    const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+    if (left !== lastShown) {
+      lastShown = left;
+      const detail =
+        detailPrefix != null
+          ? `${detailPrefix} · ${left}s remaining`
+          : `${current} of ${total} checked · next in ${left}s`;
+      setLoopInitializingOverlay({
+        active: true,
+        status,
+        detail,
+        current: barCurrent,
+        total: barTotal,
+      });
+      setLoopProgress(`${status} · ${detail}`);
+      setStatusHint(`${status} · ${left}s`);
+      if (sessionNextRun) sessionNextRun.textContent = `${left}s`;
+    }
+    await sleep(Math.min(200, endsAt - Date.now()));
+  }
+  return verifyingSessionActive();
+}
+
+/**
+ * Probe every unique CorrLinks account (boot init or leftover loop checks).
+ * Applies session cache instantly, then live-probes only the rest.
+ * Caches usable accounts so Start loop can skip re-verify.
+ */
+async function verifyAllCorrlinksAccounts({
+  uniqueAccounts = null,
+  isActive = () => verifyingSessionActive(),
+  statusLabel = VERIFY_COPY.status,
+} = {}) {
+  const list = Array.isArray(uniqueAccounts) ? uniqueAccounts : collectUniqueCorrlinksAccounts();
+  const probeTotal = list.length;
+  /** @type {Map<string, object>} */
+  const probeByEmail = new Map();
+  if (!probeTotal) {
+    return { probeByEmail, probeOk: 0, probeFail: 0, probeTotal: 0, aborted: false };
+  }
+
+  // Fast path: reuse TTL-valid probes without waiting or re-login.
+  const pending = [];
+  for (const account of list) {
+    const cached = getCachedVerifiedProbe(account.email);
+    if (cached) {
+      probeByEmail.set(emailLoopKey(account.email), cached);
+    } else {
+      pending.push(account);
+    }
+  }
+  const cachedCount = probeTotal - pending.length;
+  if (cachedCount > 0) {
+    log(`Fast validation · ${cachedCount}/${probeTotal} already verified this session`, 'info');
+    setLoopInitializingOverlay({
+      active: true,
+      status: statusLabel,
+      detail:
+        pending.length === 0
+          ? `All ${probeTotal} accounts ready`
+          : `${cachedCount} cached · checking ${pending.length} remaining`,
+      current: cachedCount,
+      total: probeTotal,
+    });
+  }
+  if (!pending.length) {
+    const probeOk = [...probeByEmail.values()].filter((s) => probeAccountUsable(s)).length;
+    return {
+      probeByEmail,
+      probeOk,
+      probeFail: probeTotal - probeOk,
+      probeTotal,
+      aborted: false,
+    };
+  }
+
+  async function probeAccountLive(account, { indexLabel, current, total }) {
+    if (!isActive()) return false;
+    const accountLabel = maskSensitive(account.email);
+    const roleTag = accountRoleLabel(account);
+    const key = emailLoopKey(account.email);
+    setLoopInitializingOverlay({
+      active: true,
+      status: statusLabel,
+      detail: indexLabel,
+      current,
+      total,
+    });
+    setLoopProgress(`${statusLabel} · ${indexLabel}`);
+    setStatusHint(`${statusLabel} · ${indexLabel}`);
+    log(`—— ${indexLabel}: ${accountLabel} [${roleTag}] ——`, 'info');
+    if (account.primaryFor?.length) {
+      log(`  PRIMARY for: ${account.primaryFor.join('; ')}`, 'info');
+    }
+    if (account.secondFor?.length) {
+      log(`  SECONDARY for: ${account.secondFor.join('; ')}`, 'info');
+    }
+
+    const status = await startCorrlinksAccountLogin(
+      {
+        email: account.email,
+        password: account.password,
+        secondEmail: null,
+        secondPassword: null,
+      },
+      { quietToast: true }
+    );
+    if (!isActive()) return false;
+    setLoopInitializingOverlay({
+      active: true,
+      status: statusLabel,
+      detail: indexLabel,
+      current,
+      total,
+    });
+    hideCorrEmbedNow();
+
+    probeByEmail.set(key, status || { state: 'error', message: 'No status' });
+    const usable = probeAccountUsable(status);
+    if (usable) rememberVerifiedAccount(account.email, status);
+    log(
+      usable
+        ? `Probe OK · ${accountLabel} [${roleTag}]` +
+            (status.state === 'locked' ? ' (locked but session usable)' : '')
+        : `Probe failed · ${accountLabel} [${roleTag}]` +
+            (status?.state ? ` · ${status.state}` : '') +
+            (status?.message ? `: ${status.message}` : ''),
+      usable ? (status.state === 'locked' ? 'warn' : 'success') : 'error'
+    );
+
+    await forceResetCorrlinksPanel();
+    if (!isActive()) return usable;
+    setLoopInitializingOverlay({
+      active: true,
+      status: statusLabel,
+      detail: indexLabel,
+      current,
+      total,
+    });
+    hideCorrEmbedNow();
+    return usable;
+  }
+
+  for (let i = 0; i < pending.length; i += 1) {
+    if (!isActive()) {
+      const probeOk = [...probeByEmail.values()].filter((s) => probeAccountUsable(s)).length;
+      return {
+        probeByEmail,
+        probeOk,
+        probeFail: probeTotal - probeOk,
+        probeTotal,
+        aborted: true,
+      };
+    }
+    const step = cachedCount + i + 1;
+    await probeAccountLive(pending[i], {
+      indexLabel: `Account ${step} of ${probeTotal}`,
+      current: step,
+      total: probeTotal,
+    });
+    if (!isActive()) break;
+    // Only pause between live logins (not after cache / last account).
+    if (i < pending.length - 1 && isActive()) {
+      log(`Waiting ${LOOP_GAP_MS / 1000}s before next account probe…`, 'info');
+      const continued = await waitLoopInitGap(LOOP_GAP_MS, {
+        current: step,
+        total: probeTotal,
+        status: VERIFY_COPY.statusPause,
+        progressCurrent: step,
+        progressTotal: probeTotal,
+      });
+      if (!continued || !isActive()) break;
+    }
+  }
+
+  if (!isActive()) {
+    const probeOk = [...probeByEmail.values()].filter((s) => probeAccountUsable(s)).length;
+    return { probeByEmail, probeOk, probeFail: probeTotal - probeOk, probeTotal, aborted: true };
+  }
+
+  const failedAccounts = pending.filter((account) =>
+    shouldRetryProbeLogin(probeByEmail.get(emailLoopKey(account.email)))
+  );
+  const lockedSkipped = pending.filter((account) => {
+    const status = probeByEmail.get(emailLoopKey(account.email));
+    return status?.state === 'locked' && !probeAccountUsable(status);
+  });
+  if (lockedSkipped.length) {
+    log(
+      `Not retrying ${lockedSkipped.length} locked account(s): ` +
+        lockedSkipped.map((a) => maskSensitive(a.email)).join(', '),
+      'warn'
+    );
+  }
+  if (failedAccounts.length && isActive()) {
+    log(
+      `Retrying ${failedAccounts.length} non-locked failed account(s) after ${LOOP_RELOGIN_REST_MS / 1000}s rest…`,
+      'warn'
+    );
+    for (let r = 0; r < failedAccounts.length; r += 1) {
+      if (!isActive()) break;
+      const account = failedAccounts[r];
+      const accountLabel = maskSensitive(account.email);
+      log(
+        `Resting ${LOOP_RELOGIN_REST_MS / 1000}s before login retry · ${accountLabel} (${r + 1}/${failedAccounts.length})`,
+        'info'
+      );
+      const retryStep = r + 1;
+      const rested = await waitLoopInitGap(LOOP_RELOGIN_REST_MS, {
+        current: retryStep,
+        total: failedAccounts.length,
+        status: VERIFY_COPY.statusRetry,
+        detailPrefix: `Retry ${retryStep} of ${failedAccounts.length}`,
+        progressCurrent: probeTotal,
+        progressTotal: probeTotal,
+      });
+      if (!rested || !isActive()) break;
+      await probeAccountLive(account, {
+        indexLabel: `Retry ${retryStep} of ${failedAccounts.length}`,
+        current: probeTotal,
+        total: probeTotal,
+      });
+    }
+  }
+
+  if (isActive() && probeTotal > 0) {
+    setLoopInitializingOverlay({
+      active: true,
+      status: statusLabel,
+      detail: `Finishing · ${probeTotal} of ${probeTotal}`,
+      current: probeTotal,
+      total: probeTotal,
+    });
+  }
+
+  const probeOk = [...probeByEmail.values()].filter((s) => probeAccountUsable(s)).length;
+  const probeFail = probeTotal - probeOk;
+  return {
+    probeByEmail,
+    probeOk,
+    probeFail,
+    probeTotal,
+    aborted: !isActive(),
+  };
+}
+
+async function verifyCorrlinksAccountsOnBoot({ force = false } = {}) {
+  if (bootVerifyRunning || loopRunning || corrlinksLoginBusy) return null;
+  const uniqueAccounts = collectUniqueCorrlinksAccounts();
+  if (!uniqueAccounts.length) {
+    accountsVerifiedOnce = true;
+    bootProbeByEmail = new Map();
+    setStatusHint('No CorrLinks accounts to verify');
+    return { probeByEmail: bootProbeByEmail, probeOk: 0, probeFail: 0, probeTotal: 0 };
+  }
+  if (accountsVerifiedOnce && !force) {
+    // Still refresh probe map from cache for any new emails.
+    const map = new Map();
+    uniqueAccounts.forEach((account) => {
+      const cached = getCachedVerifiedProbe(account.email);
+      if (cached) map.set(emailLoopKey(account.email), cached);
+    });
+    if (map.size === uniqueAccounts.length) {
+      bootProbeByEmail = map;
+      return { probeByEmail: map, probeOk: map.size, probeFail: 0, probeTotal: uniqueAccounts.length };
+    }
+  }
+
+  bootVerifyRunning = true;
+  bootVerifyAbort = false;
+  updateActionButtons();
+  log(
+    `Workspace setup — validating ${uniqueAccounts.length} CorrLinks account(s)`,
+    'info'
+  );
+  toast('Preparing workspace… validating CorrLinks accounts', 'info');
+  setLoopInitializingOverlay({
+    active: true,
+    title: VERIFY_COPY.title,
+    status: VERIFY_COPY.status,
+    detail: `Starting · ${uniqueAccounts.length} accounts`,
+    current: 0,
+    total: uniqueAccounts.length,
+  });
+  setStatusHint('Preparing workspace…');
+
+  try {
+    const result = await verifyAllCorrlinksAccounts({
+      uniqueAccounts,
+      isActive: () => bootVerifyRunning && !bootVerifyAbort,
+      statusLabel: VERIFY_COPY.status,
+    });
+    bootProbeByEmail = result.probeByEmail;
+    accountsVerifiedOnce = !result.aborted;
+    if (!result.aborted) {
+      const fingerprint = lastAccountsFingerprint || (await computeAccountsFingerprint(accounts));
+      if (fingerprint) {
+        const saved = await persistVerifiedAccountsCache(fingerprint, result.probeByEmail);
+        if (saved) log('Saved CorrLinks validation for next launch', 'info');
+      }
+    }
+    const summary = result.aborted
+      ? `Setup canceled · ${result.probeOk} ready · ${result.probeFail} unavailable`
+      : `Workspace ready · ${result.probeOk} accounts available · ${result.probeFail} unavailable`;
+    log(summary, result.probeFail || result.aborted ? 'warn' : 'success');
+    toast(summary, result.probeFail || result.aborted ? 'warn' : 'success');
+    setStatusHint(summary);
+    return result;
+  } finally {
+    bootVerifyRunning = false;
+    bootVerifyAbort = false;
+    setLoopInitializingOverlay(null);
+    hideCorrEmbedNow();
+    updateActionButtons();
+  }
 }
 
 /** Wait up to `ms` between CorrLinks accounts. Returns false if aborted. */
@@ -1012,6 +2304,7 @@ async function startCorrlinksAccountLogin(group, options = {}) {
     const viaLabel = viaSecond ? 'second' : status.attempt || 'primary';
     if (status.state === 'success' || (status.state === 'locked' && status.loggedIn)) {
       setCorrlinksConnected(true);
+      rememberVerifiedAccount(status.email || group.email, status);
       if (viaSecond) {
         log(
           `Primary locked — using second ${maskSensitive(status.email || group.secondEmail)}` +
@@ -1037,9 +2330,9 @@ async function startCorrlinksAccountLogin(group, options = {}) {
     } else if (status.state === 'locked' && !status.loggedIn) {
       setCorrlinksConnected(false, true);
       log(
-        `Primary locked` +
-          (group.secondEmail ? ' and second login failed' : ' (no second account)') +
-          `: ${status.message || 'locked'}`,
+        group.secondEmail
+          ? `Primary locked and second login failed: ${status.message || 'locked'}`
+          : `Account locked: ${status.message || 'locked'}`,
         'error'
       );
       if (!quietToast) toast(status.message || 'Account locked', 'error');
@@ -1072,11 +2365,21 @@ async function startCorrlinksCompose(inmate, options = {}) {
   syncCorrPaneBounds();
   corrlinksLoginBusy = true;
   updateActionButtons({ canLogin: true });
+  const template = buildTemplatePayload();
+  if (template.mode === 'weekly' && !template.files?.length) {
+    toast(`No ${weeklyLeague} weekly file loaded — pick Weekly update again`, 'error');
+    return null;
+  }
   const label = `${inmate.name || 'Inmate'} (${inmate.inmate_id || inmate.id})`;
   setStatusHint(`Compose: ${label}…`);
-  log(`Compose recipient ${label} · no send`, 'info');
+  log(
+    `Compose recipient ${label}` +
+      (template.mode === 'weekly' ? ` · weekly ${template.league} · subject ${template.subject}` : '') +
+      ' · no send',
+    'info'
+  );
   try {
-    const result = await window.api.composeCorrlinksInmate({ inmateId: inmate.id });
+    const result = await window.api.composeCorrlinksInmate({ inmateId: inmate.id, template });
     handleLoginResult(result.status || {}, { quietToast });
     setStatusHint((result.status && result.status.message) || 'Compose finished (not sent)');
     return result.status || null;
@@ -1090,32 +2393,6 @@ async function startCorrlinksCompose(inmate, options = {}) {
   }
 }
 
-function logAccountProbeSummary(accountSummaries) {
-  for (const row of accountSummaries) {
-    if (row.via === 'second') {
-      log(
-        `Probe · ${maskSensitive(row.primary)} locked → second ${maskSensitive(row.sessionEmail)}` +
-          ` · ${row.recipients} recipient(s)` +
-          (row.primaryError ? ` · ${row.primaryError}` : ''),
-        'warn',
-        row
-      );
-    } else if (row.via === 'failed') {
-      log(
-        `Probe · ${maskSensitive(row.primary)} login failed · ${row.recipients} recipient(s) will be skipped`,
-        'error',
-        row
-      );
-    } else {
-      log(
-        `Probe · ${maskSensitive(row.primary)} OK via primary · ${row.recipients} recipient(s)`,
-        'info',
-        row
-      );
-    }
-  }
-}
-
 async function logoutCorrlinksQuiet() {
   try {
     if (window.api?.logoutCorrlinks) await window.api.logoutCorrlinks();
@@ -1125,231 +2402,452 @@ async function logoutCorrlinksQuiet() {
   setCorrlinksConnected(false);
 }
 
+/** Destroy CorrLinks panel so the next probe cannot inherit lock dialogs/toasts. */
+async function forceResetCorrlinksPanel() {
+  try {
+    if (window.api?.forceStopCorrlinks) await window.api.forceStopCorrlinks();
+    else if (window.api?.logoutCorrlinks) await window.api.logoutCorrlinks();
+  } catch (_) {
+    /* ignore */
+  }
+  setCorrlinksConnected(false);
+  hideCorrEmbedNow();
+}
+
+function loopStillActive(generation) {
+  return loopRunning && !loopAbort && generation === loopGeneration;
+}
+
 async function startInmateLoop() {
-  if (loopRunning || corrlinksLoginBusy) return;
-  const groups = buildLoopQueue();
-  if (!groups.length) {
+  if (loopRunning || corrlinksLoginBusy || bootVerifyRunning) return;
+  if (!accountsVerifiedOnce) {
+    toast('Wait for account verification to finish', 'warn');
+    await verifyCorrlinksAccountsOnBoot({ force: true });
+    if (!accountsVerifiedOnce) return;
+  }
+
+  // Claim the loop immediately so double-clicks / weekly reload cannot start a second run.
+  loopRunning = true;
+  loopAbort = false;
+  loopPhase = 'running';
+  clearLoopResultBanner();
+  const myGeneration = ++loopGeneration;
+  updateActionButtons();
+
+  const uniqueAccounts = collectUniqueCorrlinksAccounts();
+  if (!uniqueAccounts.length) {
+    loopRunning = false;
+    loopPhase = 'idle';
+    updateActionButtons();
     toast('No CorrLinks accounts with credentials', 'error');
     return;
   }
-
-  loopRunning = true;
-  loopAbort = false;
-  updateActionButtons();
-  const accountTotal = groups.length;
-  const recipientTotal = groups.reduce((n, g) => n + g.inmates.length, 0);
-  let okCount = 0;
-  let failCount = 0;
-  /** @type {Array<{ group: any, primary: string, via: 'primary'|'second'|'failed', sessionEmail: string|null, sessionPassword: string|null, recipients: number, primaryError?: string }>} */
-  const accountSummaries = [];
-
-  log(
-    `Loop start — Phase 1: probe ${accountTotal} CorrLinks account(s) for lock · then compose ${recipientTotal} recipient(s)`,
-    'info'
-  );
-  toast(`Probing ${accountTotal} CorrLinks account(s) first…`, 'info');
-
-  // ── Phase 1: test every CorrLinks account (no compose yet) ──────────────
-  for (let g = 0; g < groups.length; g += 1) {
-    if (loopAbort) {
-      log(`Probe stopped after account ${g}/${accountTotal}`, 'warn');
-      break;
+  if (templateMode === 'weekly') {
+    if (!weeklyCache.updates?.length || weeklyCache.league !== weeklyLeague) {
+      await loadWeeklyTemplate({ force: true });
     }
-    const group = groups[g];
-    const accountLabel = maskSensitive(group.email);
-    setLoopProgress(`Probe ${g + 1}/${accountTotal} · ${accountLabel} · testing login…`);
-    log(`—— Probe ${g + 1}/${accountTotal}: ${accountLabel} (${group.inmates.length} recipient(s)) ——`, 'info');
-
-    const loginStatus = await startCorrlinksAccountLogin(group, { quietToast: true });
-    const loginOk =
-      loginStatus &&
-      (loginStatus.state === 'success' || (loginStatus.state === 'locked' && loginStatus.loggedIn));
-    const viaSecond = Boolean(loginStatus?.usedSecondAccount);
-    const via = !loginOk ? 'failed' : viaSecond ? 'second' : 'primary';
-    const sessionEmail = loginOk
-      ? loginStatus.email || (viaSecond ? group.secondEmail : group.email)
-      : null;
-    const sessionPassword = loginOk
-      ? viaSecond
-        ? group.secondPassword
-        : group.password
-      : null;
-
-    accountSummaries.push({
-      group,
-      primary: group.email,
-      via,
-      sessionEmail,
-      sessionPassword,
-      recipients: group.inmates.length,
-      primaryError: loginStatus?.primaryError || undefined,
-    });
-
-    // Logout so the next probe starts clean (no leftover session / To chips).
-    await logoutCorrlinksQuiet();
-
-    if (g < groups.length - 1 && !loopAbort) {
-      const nextLabel = maskSensitive(groups[g + 1].email);
-      log(`Waiting ${LOOP_GAP_MS / 1000}s before next account probe…`, 'info');
-      const continued = await waitLoopGap(LOOP_GAP_MS, {
-        current: g + 1,
-        total: accountTotal,
-        nextLabel,
-      });
-      if (!continued) {
-        log(`Probe stopped during wait after ${g + 1}/${accountTotal}`, 'warn');
-        break;
-      }
+    if (!loopStillActive(myGeneration)) return;
+    if (!weeklyCache.updates?.length) {
+      loopRunning = false;
+      loopPhase = 'error';
+      updateActionButtons();
+      toast(`No ${weeklyLeague} weekly file available`, 'error');
+      return;
     }
   }
 
-  const viaPrimary = accountSummaries.filter((a) => a.via === 'primary').length;
-  const viaSecondCount = accountSummaries.filter((a) => a.via === 'second').length;
-  const viaFailed = accountSummaries.filter((a) => a.via === 'failed').length;
-  const accountBits = [
-    viaPrimary ? `${viaPrimary} primary` : null,
-    viaSecondCount ? `${viaSecondCount} via second` : null,
-    viaFailed ? `${viaFailed} locked/failed` : null,
-  ].filter(Boolean);
-  const probeSummary = `Account probe done · ${accountBits.join(', ') || 'none'}`;
+  const probeTotal = uniqueAccounts.length;
+  let okCount = 0;
+  let failCount = 0;
+  let viaPrimary = 0;
+  let viaSecondCount = 0;
+  let viaFailed = 0;
+
+  // ── Phase 1: reuse boot verification — do not re-check locks ──
+  /** @type {Map<string, object>} */
+  const probeByEmail = new Map();
+  uniqueAccounts.forEach((account) => {
+    const key = emailLoopKey(account.email);
+    const cached =
+      getCachedVerifiedProbe(account.email) ||
+      bootProbeByEmail.get(key) ||
+      null;
+    if (cached) probeByEmail.set(key, cached);
+    else {
+      probeByEmail.set(key, {
+        state: 'error',
+        message: 'Not verified at startup',
+        cached: false,
+      });
+    }
+  });
+  const probeOk = [...probeByEmail.values()].filter((s) => probeAccountUsable(s)).length;
+  const probeFail = probeTotal - probeOk;
+  const probeSummary = `Using startup verify · ${probeOk} usable · ${probeFail} locked/failed · skip re-check`;
+  log(`Loop start — ${probeSummary} · then regroup · then compose`, 'info');
+  toast(
+    probeOk
+      ? `Starting loop · ${probeOk} verified account(s)`
+      : 'No usable accounts from startup verify',
+    probeOk ? 'success' : 'error'
+  );
   setLoopProgress(probeSummary);
   setStatusHint(probeSummary);
-  log(probeSummary, viaFailed || viaSecondCount ? 'warn' : 'success');
-  toast(probeSummary, viaFailed || viaSecondCount ? 'warn' : 'success');
-  logAccountProbeSummary(accountSummaries);
+  setLoopInitializingOverlay(null);
 
-  const readyAccounts = accountSummaries.filter((a) => a.via === 'primary' || a.via === 'second');
-  if (loopAbort) {
-    loopRunning = false;
-    loopAbort = false;
-    setLoopCountdownOverlay();
-    updateActionButtons();
-    const stopped = `Loop stopped after probe · ${readyAccounts.length}/${accountTotal} accounts ready (not composed)`;
-    setLoopProgress(stopped);
-    setStatusHint(stopped);
-    log(stopped, 'warn');
-    toast(stopped, 'warn');
+  if (!loopStillActive(myGeneration)) {
     return;
   }
 
-  if (!readyAccounts.length) {
+  // ── Phase 2: regroup recipients onto usable accounts only ──
+  const { groups, duplicates, skipped } = regroupInmatesAfterProbe(accounts, probeByEmail);
+  log(
+    `Phase 2 — regrouped into ${groups.length} usable account(s)` +
+      (duplicates.length ? ` · ${duplicates.length} duplicate(s) skipped` : '') +
+      (skipped.length ? ` · ${skipped.length} recipient(s) with no usable account` : ''),
+    groups.length ? 'info' : 'error'
+  );
+  logLoopPlan(groups, duplicates);
+  for (const row of skipped) {
+    log(
+      `Skipped · ${row.name} (${row.key})` +
+        ` · PRIMARY ${maskSensitive(row.primary)}=${row.primaryState}` +
+        (row.second
+          ? ` · SECONDARY ${maskSensitive(row.second)}=${row.secondState}`
+          : ' · SECONDARY none'),
+      'warn',
+      row
+    );
+  }
+
+  failCount += skipped.length;
+  const recipientTotal = groups.reduce((n, g) => n + g.inmates.length, 0) + skipped.length;
+
+  if (!groups.length) {
     loopRunning = false;
     loopAbort = false;
+    loopPhase = 'error';
+    setLoopInitializingOverlay(null);
     setLoopCountdownOverlay();
     updateActionButtons();
     const none = 'No usable CorrLinks accounts after probe — skipped all recipients';
-    setLoopProgress(none);
+    setLoopProgress(none, {
+      result: true,
+      level: 'error',
+      okCount: 0,
+      failCount: skipped.length,
+      recipientTotal: skipped.length,
+    });
     setStatusHint(none);
     log(none, 'error');
     toast(none, 'error');
-    failCount = recipientTotal;
     return;
   }
 
-  // ── Phase 2: compose recipients only on accounts that passed the probe ──
+  if (!loopStillActive(myGeneration)) return;
+
+  // ── Ask user before showing CorrLinks / starting compose ──
+  const composeRecipientCount = recipientTotal - skipped.length;
+  const planLines = [
+    `========== REGROUPED LOOP PLAN ==========`,
+    `${groups.length} usable account(s) · ${composeRecipientCount} recipient(s)`,
+    '',
+  ];
+  groups.forEach((group, i) => {
+    const via = group.via === 'second' ? 'SECONDARY' : 'PRIMARY';
+    planLines.push(
+      `Account ${i + 1}/${groups.length}: ${maskSensitive(group.email)} [${via}]`
+    );
+    planLines.push(`  recipients (${group.inmates.length}):`);
+    const rows = group.assignments?.length
+      ? group.assignments
+      : group.inmates.map((inmate) => ({
+          name: inmate.name || 'Inmate',
+          key: inmate.inmate_id || inmate.id,
+          via: group.via,
+          usedEmail: group.email,
+          primary: inmate.corrlinks_account?.email || null,
+          second: inmate.second_corrlinks_account?.email || null,
+          primaryState: '—',
+          secondState: '—',
+        }));
+    rows.forEach((row, r) => {
+      planLines.push(
+        `    ${r + 1}. ${row.name} (${row.key})` +
+          `\n       use ${row.via === 'second' ? 'SECONDARY' : 'PRIMARY'} ${maskSensitive(row.usedEmail || group.email)}` +
+          `\n       PRIMARY ${maskSensitive(row.primary)} = ${row.primaryState}` +
+          `\n       SECONDARY ${row.second ? `${maskSensitive(row.second)} = ${row.secondState}` : 'none'}`
+      );
+    });
+    planLines.push('');
+  });
+  const planText = planLines.join('\n').trim();
+  log(planText, 'info');
+
+  // Verification done — open CorrLinks and start the regrouped compose plan.
+  setLoopInitializingOverlay(null);
+  setLoopCountdownOverlay();
+  syncCorrPaneBounds();
+
   log(
-    `Phase 2 — composing recipients on ${readyAccounts.length} ready account(s) (To cleared each time, no send)`,
+    `Phase 3 — one login per account, then compose ${composeRecipientCount} recipient(s) (no send)`,
     'info'
   );
-  toast(`Composing on ${readyAccounts.length} account(s)…`, 'info');
+  toast(
+    `Starting · ${groups.length} account(s) · ${composeRecipientCount} recipient(s)`,
+    'success'
+  );
 
-  for (let i = 0; i < readyAccounts.length; i += 1) {
-    if (loopAbort) {
-      log(`Compose stopped after account ${i}/${readyAccounts.length}`, 'warn');
+  for (let i = 0; i < groups.length; i += 1) {
+    if (!loopStillActive(myGeneration)) {
+      log(`Compose force-stopped after account ${i}/${groups.length}`, 'warn');
       break;
     }
-    const row = readyAccounts[i];
-    const group = row.group;
-    const viaSecond = row.via === 'second';
-    const working = {
-      email: row.sessionEmail,
-      password: row.sessionPassword,
-      secondEmail: null,
-      secondPassword: null,
-    };
-    const accountLabel = maskSensitive(row.sessionEmail || group.email);
+
+    const group = groups[i];
+    const viaSecond = group.via === 'second';
+    const accountLabel = maskSensitive(group.email);
+
+    // Skip immediate re-login — rest 30s, then login again for compose.
+    log(
+      `Resting ${LOOP_RELOGIN_REST_MS / 1000}s before login again · ${accountLabel} (${i + 1}/${groups.length})`,
+      'info'
+    );
     setLoopProgress(
-      `Compose account ${i + 1}/${readyAccounts.length} · ${accountLabel}` +
+      `Compose account ${i + 1}/${groups.length} · ${accountLabel} · resting ${LOOP_RELOGIN_REST_MS / 1000}s…`
+    );
+    const rested = await waitLoopGap(LOOP_RELOGIN_REST_MS, {
+      current: i,
+      total: groups.length,
+      nextLabel: accountLabel,
+    });
+    if (!rested || !loopStillActive(myGeneration)) {
+      log(`Compose stopped during rest before ${accountLabel}`, 'warn');
+      break;
+    }
+
+    setLoopProgress(
+      `Compose account ${i + 1}/${groups.length} · ${accountLabel}` +
         (viaSecond ? ' (2nd)' : '') +
         ' · logging in…'
     );
     log(
-      `—— Compose account ${i + 1}/${readyAccounts.length}: ${accountLabel}` +
-        (viaSecond ? ' via second' : ' via primary') +
+      `—— Compose account ${i + 1}/${groups.length}: ${accountLabel}` +
+        ` [${viaSecond ? 'SECONDARY' : 'PRIMARY'}]` +
         ` · ${group.inmates.length} recipient(s) ——`,
       viaSecond ? 'warn' : 'info'
     );
 
-    const loginStatus = await startCorrlinksAccountLogin(working, { quietToast: true });
-    const loginOk =
-      loginStatus &&
-      (loginStatus.state === 'success' || (loginStatus.state === 'locked' && loginStatus.loggedIn));
+    let loginStatus = await startCorrlinksAccountLogin(
+      {
+        email: group.email,
+        password: group.password,
+        secondEmail: null,
+        secondPassword: null,
+      },
+      { quietToast: true }
+    );
+    if (!loopStillActive(myGeneration)) break;
+
+    // If compose login soft-failed (not locked), rest 30s and try once more.
+    if (shouldRetryProbeLogin(loginStatus)) {
+      log(
+        `Compose login soft-failed for ${accountLabel} — resting ${LOOP_RELOGIN_REST_MS / 1000}s then retry…`,
+        'warn'
+      );
+      await logoutCorrlinksQuiet();
+      const retryRest = await waitLoopGap(LOOP_RELOGIN_REST_MS, {
+        current: i,
+        total: groups.length,
+        nextLabel: `${accountLabel} (retry)`,
+      });
+      if (!retryRest || !loopStillActive(myGeneration)) break;
+      loginStatus = await startCorrlinksAccountLogin(
+        {
+          email: group.email,
+          password: group.password,
+          secondEmail: null,
+          secondPassword: null,
+        },
+        { quietToast: true }
+      );
+      if (!loopStillActive(myGeneration)) break;
+    } else if (loginStatus?.state === 'locked' && !probeAccountUsable(loginStatus)) {
+      log(`Compose login locked for ${accountLabel} — not retrying`, 'warn');
+    }
+
+    const loginOk = probeAccountUsable(loginStatus);
     if (!loginOk) {
+      viaFailed += 1;
       failCount += group.inmates.length;
       log(`Skipping recipients — re-login failed for ${accountLabel}`, 'error');
     } else {
+      if (viaSecond) viaSecondCount += 1;
+      else viaPrimary += 1;
+
       for (let r = 0; r < group.inmates.length; r += 1) {
-        if (loopAbort) {
-          log(`Compose stopped during ${accountLabel} after ${r}/${group.inmates.length}`, 'warn');
+        if (!loopStillActive(myGeneration)) {
+          log(`Compose force-stopped during ${accountLabel} after ${r}/${group.inmates.length}`, 'warn');
           break;
         }
         const inmate = group.inmates[r];
         const recipLabel = `${inmate.name || 'Inmate'} (${inmate.inmate_id || inmate.id})`;
         setLoopProgress(
-          `Account ${i + 1}/${readyAccounts.length}` +
+          `Account ${i + 1}/${groups.length}` +
             (viaSecond ? ' · 2nd' : '') +
             ` · Recipient ${r + 1}/${group.inmates.length} · ${recipLabel}`
         );
         log(`—— Recipient ${r + 1}/${group.inmates.length}: ${recipLabel} ——`, 'info');
         selectInmate(inmate.id, { autoLogin: false });
         const status = await startCorrlinksCompose(inmate, { quietToast: true });
+        if (!loopStillActive(myGeneration)) break;
         if (statusLooksGood(status)) okCount += 1;
         else failCount += 1;
       }
     }
 
+    if (!loopStillActive(myGeneration)) break;
     await logoutCorrlinksQuiet();
-
-    if (i < readyAccounts.length - 1 && !loopAbort) {
-      const next = readyAccounts[i + 1];
-      const nextLabel = maskSensitive(next.sessionEmail || next.primary);
-      log(`Waiting ${LOOP_GAP_MS / 1000}s before next compose account…`, 'info');
-      const continued = await waitLoopGap(LOOP_GAP_MS, {
-        current: i + 1,
-        total: readyAccounts.length,
-        nextLabel,
-      });
-      if (!continued) {
-        log(`Compose stopped during wait after ${i + 1}/${readyAccounts.length}`, 'warn');
-        break;
-      }
-    }
   }
+
+  // Force-stop already finalized UI — don't double-toast.
+  if (myGeneration !== loopGeneration) return;
 
   const wasAborted = loopAbort;
   loopRunning = false;
   loopAbort = false;
+  loopPhase = wasAborted ? 'stopped' : failCount > 0 ? 'error' : 'done';
+  setLoopInitializingOverlay(null);
   setLoopCountdownOverlay();
   updateActionButtons();
 
+  const accountBits = [
+    viaPrimary ? `${viaPrimary} primary` : null,
+    viaSecondCount ? `${viaSecondCount} via second` : null,
+    viaFailed ? `${viaFailed} re-login failed` : null,
+    skipped.length ? `${skipped.length} no usable account` : null,
+  ].filter(Boolean);
   const accountSummaryText = accountBits.length ? ` · Accounts: ${accountBits.join(', ')}` : '';
-  const summary = wasAborted
-    ? `Loop stopped · ${okCount} ok · ${failCount} failed · ${recipientTotal} recipients${accountSummaryText} (not sent)`
-    : `Loop done · ${okCount} ok · ${failCount} failed · ${recipientTotal} recipients${accountSummaryText} (not sent)`;
-  setLoopProgress(summary);
+  const title = wasAborted ? 'Loop stopped' : 'Loop done';
+  const summary = `${title} · ${okCount} ok · ${failCount} failed · ${recipientTotal} recipients${accountSummaryText} (not sent)`;
+  const level = failCount || wasAborted || viaSecondCount ? 'warn' : 'success';
+  lastLoopResult = { okCount, failCount, recipientTotal, aborted: wasAborted, summary, level };
+  setLoopProgress(title, {
+    result: true,
+    level,
+    aborted: wasAborted,
+    okCount,
+    failCount,
+    recipientTotal,
+  });
   setStatusHint(summary);
-  log(summary, failCount || wasAborted || viaSecondCount ? 'warn' : 'success');
-  toast(summary, failCount || wasAborted || viaSecondCount ? 'warn' : 'success');
+  log(summary, level);
+  toast(summary, level);
+  showLoopDoneAlert({
+    aborted: wasAborted,
+    okCount,
+    failCount,
+    recipientTotal,
+    summary,
+  });
+}
+
+function forceStopSingleCorrlinks() {
+  if (!corrlinksLoginBusy || loopRunning) return;
+  corrlinksForceStop = true;
+  corrlinksOpGeneration += 1;
+  corrlinksLoginBusy = false;
+
+  hideCorrEmbedNow();
+  setCorrlinksConnected(false);
+  setStatusHint('Force-stopped');
+  log('Force-stop requested — aborting CorrLinks login', 'warn');
+  toast('Force-stopped', 'warn');
+  updateActionButtons();
+
+  Promise.resolve(window.api?.forceStopCorrlinks?.())
+    .catch(() => {})
+    .finally(() => {
+      hideCorrEmbedNow();
+      corrlinksLoginBusy = false;
+      updateActionButtons();
+    });
+}
+
+function stopBootVerify() {
+  if (!bootVerifyRunning) return;
+  bootVerifyAbort = true;
+  bootVerifyRunning = false;
+  corrlinksLoginBusy = false;
+  corrlinksForceStop = true;
+  corrlinksOpGeneration += 1;
+  loopInitializingActive = false;
+  setLoopInitializingOverlay(null);
+  hideCorrEmbedNow();
+  setCorrlinksConnected(false);
+  setStatusHint('Account verify force-stopped');
+  log('Force-stop — account verification aborted', 'warn');
+  toast('Verification force-stopped', 'warn');
+  updateActionButtons();
+  Promise.resolve(window.api?.forceStopCorrlinks?.())
+    .catch(() => {})
+    .finally(() => {
+      setLoopInitializingOverlay(null);
+      hideCorrEmbedNow();
+      updateActionButtons();
+    });
 }
 
 function stopInmateLoop() {
-  if (!loopRunning) return;
+  if (!loopRunning && !corrlinksLoginBusy && !bootVerifyRunning) return;
+
+  if (bootVerifyRunning && !loopRunning) {
+    stopBootVerify();
+    return;
+  }
+
+  // Single login / compose — no loop UI.
+  if (!loopRunning && corrlinksLoginBusy) {
+    forceStopSingleCorrlinks();
+    return;
+  }
+
   loopAbort = true;
+  loopGeneration += 1;
+  corrlinksForceStop = true;
+  corrlinksOpGeneration += 1;
+  corrlinksLoginBusy = false;
+  loopRunning = false;
+  loopPhase = 'stopped';
+  loopInitializingActive = false;
+
+  setLoopInitializingOverlay(null);
   setLoopCountdownOverlay();
-  setLoopProgress('Stopping…');
-  setStatusHint('Stopping loop…');
-  log('Stop requested — aborting after current step', 'warn');
-  btnStopLoop.disabled = true;
+  hideCorrEmbedNow();
+  setCorrlinksConnected(false);
+  lastLoopResult = { okCount: 0, failCount: 0, recipientTotal: 0, aborted: true, summary: 'Loop force-stopped', level: 'warn' };
+  // Brief status only — full result card is for completed runs; clear on next start.
+  setLoopProgress('Loop force-stopped', {
+    result: true,
+    level: 'warn',
+    aborted: true,
+    hideStats: true,
+  });
+  setStatusHint('Loop force-stopped');
+  log('Stop requested — force-stopping now', 'warn');
+  toast('Loop force-stopped', 'warn');
+  updateActionButtons();
+
+  // Destroy CorrLinks panel mid-login/compose so awaited IPC fails fast.
+  Promise.resolve(window.api?.forceStopCorrlinks?.())
+    .catch(() => {})
+    .finally(() => {
+      // In-flight probe awaits can try to re-show the cover — clear again.
+      setLoopInitializingOverlay(null);
+      setLoopCountdownOverlay();
+      hideCorrEmbedNow();
+      updateActionButtons();
+    });
 }
 
 function setLoginError(message, { info = false } = {}) {
@@ -1427,8 +2925,9 @@ async function signInAndVerifySportsData() {
   return { saved, verified };
 }
 
-async function refreshInmates() {
+async function refreshInmates({ verifyAccounts = true } = {}) {
   if (!btnRefresh) return;
+  if (bootVerifyRunning || loopRunning) return;
   btnRefresh.disabled = true;
   btnRefresh.classList.add('loading');
   setStatusHint('Refreshing inmates…');
@@ -1453,6 +2952,17 @@ async function refreshInmates() {
       active: 1,
     });
     inmateCard?.classList.remove('collapsed');
+    if (verifyAccounts && result.accounts.length) {
+      const uniqueAccounts = collectUniqueCorrlinksAccounts();
+      const restored = await tryRestoreVerifiedFromDisk(uniqueAccounts);
+      if (!restored) {
+        clearVerifiedAccounts();
+        bootProbeByEmail = new Map();
+        accountsVerifiedOnce = false;
+        log('CorrLinks accounts changed or no saved validation — validating…', 'info');
+        await verifyCorrlinksAccountsOnBoot({ force: true });
+      }
+    }
   } catch (error) {
     setSportsConnected(false);
     log(error.message || String(error), 'error');
@@ -1461,6 +2971,7 @@ async function refreshInmates() {
   } finally {
     btnRefresh.disabled = false;
     btnRefresh.classList.remove('loading');
+    updateActionButtons();
   }
 }
 
@@ -1468,6 +2979,7 @@ function handleLoginResult(status, { quietToast = false } = {}) {
   if (status.state === 'success') {
     const via = status.usedSecondAccount ? 'second' : status.attempt || 'primary';
     log(`Login success via ${via}: ${maskSensitive(status.email)} — ${status.message}`, 'success');
+    rememberVerifiedAccount(status.email, status);
     setCorrlinksConnected(true);
     activeCorrEmail = status.email || activeCorrEmail;
     lastLoginAt = stamp();
@@ -1479,6 +2991,7 @@ function handleLoginResult(status, { quietToast = false } = {}) {
   } else if (status.state === 'locked') {
     log(`Locked: ${status.message}`, status.loggedIn ? 'warn' : 'error');
     setCorrlinksConnected(Boolean(status.loggedIn), true);
+    if (status.loggedIn) rememberVerifiedAccount(status.email, status);
   } else {
     log(`${status.state || 'error'}: ${status.message || 'Login failed'}`, 'error');
     setCorrlinksConnected(false);
@@ -1540,6 +3053,24 @@ function handleLoginResult(status, { quietToast = false } = {}) {
 function resetWorkspaceState() {
   accounts = [];
   selectedFileKeys = [];
+  clearVerifiedAccounts();
+  bootProbeByEmail = new Map();
+  accountsVerifiedOnce = false;
+  lastAccountsFingerprint = null;
+  bootVerifyRunning = false;
+  bootVerifyAbort = false;
+  setLoopInitializingOverlay(null);
+  templateMode = 'daily';
+  weeklyLeague = 'NFL';
+  weeklyCache = {
+    league: null,
+    updates: [],
+    week_start: null,
+    week_end: null,
+    subject: null,
+    message: '',
+  };
+  weeklyLoading = false;
   composePreview = { to: '', subject: '', body: '', chars: 0, parts: 0 };
   updateComposePreview({});
   accountSelect.value = '';
@@ -1547,6 +3078,7 @@ function resetWorkspaceState() {
   inmateSearch.disabled = true;
   renderAccountMeta(null);
   renderInmateOptions([], { open: false });
+  syncTemplateControls();
   setSportsConnected(false);
   setCorrlinksConnected(false);
   setStepState({ inmateDone: false, composeDone: false, active: 1 });
@@ -1589,7 +3121,7 @@ function renderUpdateUi(status = updateStatus) {
     chipText = `v${version} · ${macDmg ? 'Open installer' : 'Restart to update'}`;
   } else if (state === 'checking') chipText = `v${version} · Checking…`;
   else if (state === 'error') chipText = `v${version} · Update failed`;
-  else if (state === 'dev') chipText = `v${version} · Dev build`;
+  else if (state === 'dev') chipText = version ? `v${version}` : 'v…';
 
   if (updateChipLabel) updateChipLabel.textContent = chipText;
   if (updateChip) {
@@ -1720,6 +3252,42 @@ function openModalDialog(dialog) {
   return true;
 }
 
+/**
+ * After init probe: ask whether to start the regrouped send loop.
+ * CorrLinks stays hidden until the user confirms.
+ * @returns {Promise<boolean>}
+ */
+/**
+ * SweetAlert-style completion popup after the send loop finishes.
+ */
+function showLoopDoneAlert({ aborted = false, okCount = 0, failCount = 0, recipientTotal = 0, summary = '' } = {}) {
+  if (!loopDoneDialog || typeof loopDoneDialog.showModal !== 'function') return;
+
+  const level = aborted ? 'warn' : failCount > 0 && okCount === 0 ? 'error' : failCount > 0 ? 'warn' : 'success';
+  loopDoneDialog.classList.toggle('is-warn', level === 'warn');
+  loopDoneDialog.classList.toggle('is-error', level === 'error');
+
+  if (loopDoneIcon) {
+    loopDoneIcon.textContent = level === 'success' ? '✓' : level === 'warn' ? '!' : '×';
+  }
+  if (loopDoneTitle) {
+    loopDoneTitle.textContent = aborted ? 'Loop stopped' : 'Loop already finished';
+  }
+  if (loopDoneMessage) {
+    loopDoneMessage.textContent = aborted
+      ? 'The send loop was stopped before it finished.'
+      : 'The send loop has already completed.';
+  }
+  if (loopDoneSummary) {
+    const counts =
+      summary ||
+      `${okCount} ok · ${failCount} failed · ${recipientTotal} recipient(s)`;
+    loopDoneSummary.textContent = `${counts}\n${formatDateTime()}`;
+  }
+
+  openModalDialog(loopDoneDialog);
+}
+
 function openUpdatesDialog() {
   if (!updatesDialog) {
     runUpdateAction(updateChip?.dataset?.updateAction || 'check');
@@ -1754,7 +3322,7 @@ function wireAppUpdates() {
     openUpdatesDialog();
   });
   btnUpdatesClose?.addEventListener('click', () => updatesDialog?.close());
-  [updatesDialog, aboutDialog, shortcutsDialog, confirmSend].forEach((dialog) => {
+  [updatesDialog, aboutDialog, shortcutsDialog, confirmSend, loopDoneDialog].forEach((dialog) => {
     dialog?.addEventListener('close', () => {
       scheduleCorrPaneBounds();
       setTimeout(syncCorrPaneBounds, 50);
@@ -1919,21 +3487,27 @@ btnLogout.addEventListener('click', async () => {
 });
 
 function inmateSearchQuery() {
-  const selected = selectedInmate();
-  const display = selected
-    ? `${selected.name || 'Inmate'} (${selected.inmate_id || selected.id})`
-    : '';
-  const value = inmateSearch.value.trim();
-  // Selected label is not a real filter query — show the full list instead.
-  if (!value || value === display) return '';
-  return value;
+  return inmateSearch?.value.trim() || '';
 }
 
 inmateSearch.addEventListener('focus', () => {
   if (!accounts.length) return;
+  syncInmateComboboxDisplay({ editing: true });
+  if (selectedInmate() && !inmateSearch.value) {
+    inmateSearch.value = selectedInmate().name || '';
+    inmateSearch.select();
+  }
   renderInmateOptions(filterAccounts(inmateSearchQuery()), { open: true });
 });
+inmateSearch.addEventListener('blur', () => {
+  // Defer so option click can select first.
+  setTimeout(() => {
+    if (document.activeElement?.closest?.('#inmateCombobox')) return;
+    syncInmateComboboxDisplay({ editing: false });
+  }, 120);
+});
 inmateSearch.addEventListener('input', () => {
+  syncInmateComboboxDisplay({ editing: true });
   renderInmateOptions(filterAccounts(inmateSearchQuery()), { open: true });
 });
 inmateSearch.addEventListener('keydown', (event) => {
@@ -1964,6 +3538,39 @@ document.addEventListener('click', (event) => {
   if (!event.target.closest('#inmateCombobox')) closeInmateOptions();
 });
 
+document.getElementById('inmateCombobox')?.addEventListener('click', (event) => {
+  if (inmateSearch?.disabled) return;
+  if (
+    !event.target.closest('.combobox-chevron') &&
+    !event.target.closest('.combobox-selected')
+  ) {
+    return;
+  }
+  event.preventDefault();
+  inmateSearch.focus();
+  renderInmateOptions(filterAccounts(inmateSearchQuery()), { open: true });
+});
+
+historyPreviewSearch?.addEventListener('input', () => {
+  applyHistoryPreviewSearch(historyPreviewSearch.value);
+});
+
+historyStatusFilter?.addEventListener('change', () => applyHistoryFilters());
+historyDateFilter?.addEventListener('input', () => applyHistoryFilters());
+
+document.getElementById('btnTemplateDaily')?.addEventListener('click', () => {
+  setTemplateMode('daily');
+});
+document.getElementById('btnTemplateWeekly')?.addEventListener('click', () => {
+  setTemplateMode('weekly');
+});
+document.getElementById('btnLeagueNfl')?.addEventListener('click', () => {
+  setWeeklyLeague('NFL');
+});
+document.getElementById('btnLeagueCfb')?.addEventListener('click', () => {
+  setWeeklyLeague('CFB');
+});
+
 btnLogin.addEventListener('click', () => {
   if (loopRunning) return;
   startCorrlinksLogin();
@@ -1975,6 +3582,10 @@ btnStartLoop.addEventListener('click', () => {
 
 btnStopLoop.addEventListener('click', () => {
   stopInmateLoop();
+});
+
+btnStopBootVerify?.addEventListener('click', () => {
+  stopBootVerify();
 });
 
 btnStatus.addEventListener('click', async () => {
@@ -2100,10 +3711,11 @@ document.addEventListener('keydown', (event) => {
 
 /** Native WebContentsView paints above HTML — hide it under modals/drawers. */
 function isCorrEmbedBlocked() {
+  if (loopInitializingActive || bootVerifyRunning) return true;
   if (loopCountdownActive) return true;
   if (activeMainTab !== 'automate') return true;
   if (document.body.classList.contains('log-open')) return true;
-  const dialogs = [updatesDialog, aboutDialog, shortcutsDialog, confirmSend];
+  const dialogs = [updatesDialog, aboutDialog, shortcutsDialog, confirmSend, loopDoneDialog];
   if (dialogs.some((dialog) => dialog && dialog.open)) return true;
   return false;
 }
@@ -2186,6 +3798,39 @@ function setMainTab(tab) {
   }
 }
 
+function renderHistoryPreviewLines(text) {
+  const content = text || '';
+  const lines = content ? content.split('\n') : [];
+  if (historyPreviewLines) {
+    historyPreviewLines.textContent = lines.length
+      ? lines.map((_, i) => String(i + 1)).join('\n')
+      : '';
+  }
+  if (historyPreviewBody) {
+    historyPreviewBody.textContent = content || (historyPreviewState.url ? '(empty file)' : 'No file selected.');
+  }
+}
+
+function applyHistoryPreviewSearch(query) {
+  const q = String(query || '').trim().toLowerCase();
+  const raw = historyPreviewState.text || '';
+  if (!historyPreviewBody) return;
+  if (!q || !raw) {
+    renderHistoryPreviewLines(raw);
+    historyPreviewBody.classList.remove('is-filtered');
+    return;
+  }
+  const matched = raw.split('\n').filter((line) => line.toLowerCase().includes(q));
+  const filtered = matched.length ? matched.join('\n') : '(no matches)';
+  if (historyPreviewLines) {
+    historyPreviewLines.textContent = matched.length
+      ? matched.map((_, i) => String(i + 1)).join('\n')
+      : '·';
+  }
+  historyPreviewBody.textContent = filtered;
+  historyPreviewBody.classList.toggle('is-filtered', true);
+}
+
 function setHistoryPreview({ url = null, text = '', date = null, filename = null } = {}) {
   historyPreviewState = { url, text: text || '', date, filename };
   if (historyPreviewMeta) {
@@ -2194,9 +3839,12 @@ function setHistoryPreview({ url = null, text = '', date = null, filename = null
       : 'Select a day to preview all.txt';
     historyPreviewMeta.title = historyPreviewMeta.textContent;
   }
-  if (historyPreviewBody) {
-    historyPreviewBody.textContent = url ? text || '(empty file)' : 'No file selected.';
+  if (historyPreviewSearch) {
+    historyPreviewSearch.disabled = !text;
+    historyPreviewSearch.value = '';
   }
+  renderHistoryPreviewLines(url ? text || '' : '');
+  if (!url && historyPreviewBody) historyPreviewBody.textContent = 'No file selected.';
   if (btnHistoryCopy) btnHistoryCopy.disabled = !text;
   if (btnHistoryDownloadPreview) btnHistoryDownloadPreview.disabled = !url;
 }
@@ -2236,16 +3884,26 @@ function renderHistoryTable(rows) {
   historyDataTable = $('#historyTable').DataTable({
     data,
     pageLength: 10,
-    lengthMenu: [10, 25, 50],
+    lengthMenu: [
+      [10, 25, 50],
+      ['10 / page', '25 / page', '50 / page'],
+    ],
     order: [[0, 'desc']],
     autoWidth: false,
+    ordering: true,
+    orderClasses: false,
+    dom: '<"history-dt-toolbar"<"history-dt-search"f><"history-dt-length"l>>rtip',
     columns: [
       { data: 'date', title: 'Date' },
       {
         data: 'filename',
         title: 'File',
         defaultContent: 'all.txt',
-        render: (value, _type, row) => escapeHtml(value || row.file || 'all.txt'),
+        orderable: true,
+        render: (value, _type, row) => {
+          const name = escapeHtml(value || row.file || 'all.txt');
+          return `<span class="history-file-name" title="${name}">${name}</span>`;
+        },
       },
       {
         data: 'characters',
@@ -2256,7 +3914,7 @@ function renderHistoryTable(rows) {
         data: null,
         title: 'Status',
         orderable: false,
-        render: () => '<span class="history-status-pill"><span class="chip-dot"></span>Ready</span>',
+        render: () => '<span class="history-status-pill"><span class="chip-dot" aria-hidden="true"></span>Ready</span>',
       },
       {
         data: null,
@@ -2275,13 +3933,31 @@ function renderHistoryTable(rows) {
       },
     ],
     language: {
-      search: 'Search:',
-      lengthMenu: 'Show _MENU_',
+      search: '',
+      searchPlaceholder: 'Search history…',
+      lengthMenu: '_MENU_',
       info: '_START_–_END_ of _TOTAL_',
       infoEmpty: 'No files',
       zeroRecords: 'No matching exchange files',
     },
+    initComplete() {
+      const toolbar = document.querySelector('.history-dt-toolbar');
+      if (toolbar && historyControls) {
+        const search = toolbar.querySelector('.history-dt-search');
+        const length = toolbar.querySelector('.history-dt-length');
+        if (search) historyControls.insertBefore(search, historyToolbarActions || null);
+        if (length) historyControls.insertBefore(length, historyToolbarActions || null);
+        toolbar.remove();
+      }
+    },
   });
+}
+
+function applyHistoryFilters() {
+  if (!historyDataTable) return;
+  const dateQ = String(historyDateFilter?.value || '').trim();
+  // Column 0 = Date. Status filter is reserved for future statuses (all rows are Ready today).
+  historyDataTable.column(0).search(dateQ, false, true).draw();
 }
 
 async function loadExchangeHistory() {
@@ -2520,6 +4196,7 @@ wireShellUi();
 
 
 init().finally(() => {
+  startStatusClock();
   scheduleCorrPaneBounds();
   setTimeout(syncCorrPaneBounds, 200);
 });

@@ -26,12 +26,45 @@ const {
   clearSportsDataCredentials,
   reloadSavedCredentials,
 } = require('./config');
-const { buildCorrlinksSubject } = require('./subject');
+const {
+  fingerprintCorrlinksAccounts,
+  loadCorrlinksVerifyCache,
+  saveCorrlinksVerifyCache,
+  clearCorrlinksVerifyCache,
+} = require('./corrlinksVerifyCache');
+const {
+  buildCorrlinksSubject,
+  resolveComposeSubject,
+  normalizeWeeklyLeague,
+  buildWeeklySubject,
+} = require('./subject');
 const { setupAutoUpdater, registerUpdateIpc } = require('./updater');
 
 let controlWindow = null;
 let cachedAccounts = [];
 const sportsData = new SportsDataClient();
+
+/** Resolve optional daily/weekly template overrides from renderer payload. */
+function resolveTemplateOptions(payload = {}) {
+  const template = payload.template || {};
+  const mode = String(template.mode || payload.mode || 'daily').toLowerCase();
+  const league = normalizeWeeklyLeague(template.league || payload.league);
+  const files = Array.isArray(template.files)
+    ? template.files
+    : Array.isArray(payload.exchangeFiles)
+      ? payload.exchangeFiles
+      : null;
+  const subject =
+    template.subject ||
+    payload.subject ||
+    (mode === 'weekly' ? resolveComposeSubject({ mode: 'weekly', league }) : null);
+  return {
+    mode,
+    league,
+    subject: subject || null,
+    exchangeFiles: files && files.length ? files : null,
+  };
+}
 
 function createControlWindow() {
   controlWindow = new BrowserWindow({
@@ -166,6 +199,7 @@ function registerIpc() {
       forceCloseCorrWindow();
       sportsData.resetSession();
       cachedAccounts = [];
+      clearCorrlinksVerifyCache();
       const cleared = clearSportsDataCredentials();
       return {
         ok: true,
@@ -182,6 +216,29 @@ function registerIpc() {
       };
     }
   });
+
+  ipcMain.handle('corrlinksVerify:fingerprint', async (_event, accounts = []) => ({
+    ok: true,
+    fingerprint: fingerprintCorrlinksAccounts(accounts),
+  }));
+
+  ipcMain.handle('corrlinksVerify:load', async () => {
+    const cache = loadCorrlinksVerifyCache();
+    return cache
+      ? { ok: true, ...cache }
+      : { ok: false, fingerprint: null, probes: {}, savedAt: 0 };
+  });
+
+  ipcMain.handle('corrlinksVerify:save', async (_event, payload = {}) => {
+    try {
+      const saved = saveCorrlinksVerifyCache(payload);
+      return { ok: true, ...saved };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to save verify cache' };
+    }
+  });
+
+  ipcMain.handle('corrlinksVerify:clear', async () => clearCorrlinksVerifyCache());
 
   ipcMain.handle('accounts:list', async () => ({
     ok: true,
@@ -210,6 +267,7 @@ function registerIpc() {
   ipcMain.handle('corrlinks:login', async (_event, payload = {}) => {
     try {
       let status;
+      const template = resolveTemplateOptions(payload);
       if (payload.inmateId != null) {
         const inmate = cachedAccounts.find((a) => String(a.id) === String(payload.inmateId));
         if (!inmate) {
@@ -220,6 +278,8 @@ function registerIpc() {
         }
         status = await loginInmate(inmate, {
           fetchFileText: (url) => sportsData.fetchExchangeFileText(url),
+          subject: template.subject,
+          exchangeFiles: template.exchangeFiles,
         });
       } else {
         status = await loginToCorrlinks({
@@ -227,6 +287,8 @@ function registerIpc() {
           password: payload.password,
           secondEmail: payload.secondEmail,
           secondPassword: payload.secondPassword,
+          subject: template.subject,
+          exchangeParts: template.exchangeFiles || [],
         });
       }
 
@@ -283,6 +345,22 @@ function registerIpc() {
     }
   });
 
+  /** Hard-stop CorrLinks (destroy panel) so a running loop can abort mid-login/compose. */
+  ipcMain.handle('corrlinks:forceStop', async () => {
+    try {
+      forceCloseCorrWindow();
+      return { ok: true, status: getStatus() };
+    } catch (error) {
+      return {
+        ok: false,
+        status: {
+          state: 'error',
+          message: error.message || 'CorrLinks force stop failed',
+        },
+      };
+    }
+  });
+
   /** Compose one recipient on the current CorrLinks session (no login). */
   ipcMain.handle('corrlinks:composeInmate', async (_event, payload = {}) => {
     try {
@@ -296,8 +374,11 @@ function registerIpc() {
           },
         };
       }
+      const template = resolveTemplateOptions(payload);
       const status = await composeForInmate(inmate, {
         fetchFileText: (url) => sportsData.fetchExchangeFileText(url),
+        subject: template.subject,
+        exchangeFiles: template.exchangeFiles,
       });
       const ok =
         status.state === 'success' ||
@@ -323,6 +404,38 @@ function registerIpc() {
   ipcMain.handle('corrlinks:clearSession', async () => clearCorrlinksPanelSession());
   ipcMain.handle('corrlinks:zoom', async (_event, payload = {}) => zoomCorrlinksPanel(payload || {}));
   ipcMain.handle('corrlinks:hasSession', async () => hasCorrlinksPanelSession());
+
+  ipcMain.handle('exchange:weekly', async (_event, payload = {}) => {
+    try {
+      const league = normalizeWeeklyLeague(payload.league);
+      const result = await sportsData.fetchInmateExchangeWeekly({
+        league: league === 'CFB' ? 'CFB' : league,
+        withCharacters: payload.withCharacters !== false,
+      });
+      if (!result.ok) {
+        return {
+          ok: false,
+          updates: [],
+          message: result.message || 'Weekly updates unavailable',
+        };
+      }
+      return {
+        ok: true,
+        league: league || null,
+        subject: league ? buildWeeklySubject(league) : null,
+        week_start: result.week_start,
+        week_end: result.week_end,
+        updates: result.updates,
+        message: result.message,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        updates: [],
+        message: error.message || 'Failed to load weekly updates',
+      };
+    }
+  });
 
   ipcMain.handle('exchange:history', async (_event, payload = {}) => {
     try {

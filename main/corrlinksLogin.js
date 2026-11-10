@@ -184,7 +184,9 @@ function getOrCreateWindow() {
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   );
   hostWindow.contentView.addChildView(corrView);
-  setCorrBounds(corrBounds.width > 0 ? corrBounds : { x: 0, y: 0, width: 800, height: 600 });
+  // Renderer owns placement via setCorrBounds. Do not invent visible defaults —
+  // zero bounds mean intentionally hidden (e.g. loop initializing overlay).
+  setCorrBounds(corrBounds);
 
   corrView.webContents.on('did-navigate', (_event, url) => {
     setStatus({ url });
@@ -618,8 +620,9 @@ async function fillAndSubmit(win, email, password) {
 function classifyAuthMessage(msg) {
   const lower = String(msg || '').toLowerCase();
   // CorrLinks: "Account locked - Message limit exceeded."
+  // Do NOT match bare "locked" — too many false positives on page copy / prior dialogs.
   if (
-    /account locked|message limit exceeded|locked|lockout|temporarily (disabled|unavailable)|account.*(disabled|suspended|blocked)/i.test(
+    /account locked|message limit exceeded|lockout|temporarily (disabled|unavailable)|account (is )?(disabled|suspended|blocked)/i.test(
       lower
     )
   ) {
@@ -644,9 +647,11 @@ async function readAuthFeedback(win) {
         messages.push(msg);
       }
 
-      // Also scan short visible error-like lines near the form.
+      // Also scan short visible lock lines near the form (require "account locked" / limit text).
       const body = (document.body && document.body.innerText) ? document.body.innerText : '';
-      const lockedMatch = body.match(/[^\\n.]{0,40}(locked|lockout|temporarily (disabled|unavailable)|account (is )?(disabled|suspended|blocked))[^\\n.]{0,40}/i);
+      const lockedMatch = body.match(
+        /[^\\n.]{0,40}(account locked|message limit exceeded|lockout|temporarily (disabled|unavailable)|account (is )?(disabled|suspended|blocked))[^\\n.]{0,40}/i
+      );
       if (lockedMatch) messages.push(lockedMatch[0].replace(/\\s+/g, ' ').trim());
 
       return messages;
@@ -656,24 +661,42 @@ async function readAuthFeedback(win) {
 }
 
 async function readLockDialogMessage(win) {
+  // Only trust a *visible* dialog — never scan full body text (stale toasts from a
+  // previous account probe were false-flagging the next login as locked).
   return win.webContents.executeJavaScript(
     `(() => {
       const dialogs = [...document.querySelectorAll('.e-dialog, .e-dlg-container, [role="dialog"]')];
       for (const dlg of dialogs) {
         const style = window.getComputedStyle(dlg);
-        if (style.display === 'none' || style.visibility === 'hidden') continue;
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+        const rect = dlg.getBoundingClientRect();
+        if (rect.width < 8 || rect.height < 8) continue;
         const text = (dlg.innerText || '').replace(/\\s+/g, ' ').trim();
-        if (/account locked|message limit exceeded|validation error/i.test(text)) {
+        if (/account locked|message limit exceeded/i.test(text)) {
           const m = text.match(/Account locked[^\\n]{0,80}|Message limit exceeded[^\\n]{0,40}/i);
           return (m ? m[0] : text).replace(/\\s+/g, ' ').trim().slice(0, 200);
         }
       }
-      const body = (document.body && document.body.innerText) ? document.body.innerText : '';
-      const m = body.match(/Account locked[^\\n.]{0,80}|Message limit exceeded[^\\n.]{0,40}/i);
-      return m ? m[0].replace(/\\s+/g, ' ').trim() : null;
+      return null;
     })()`,
     true
   );
+}
+
+async function clearAuthToasts(win) {
+  try {
+    await win.webContents.executeJavaScript(
+      `(() => {
+        for (const el of document.querySelectorAll('.e-toast-container, .e-toast, [class*="toast"]')) {
+          try { el.remove(); } catch (_) {}
+        }
+        return true;
+      })()`,
+      true
+    );
+  } catch (_) {
+    /* ignore */
+  }
 }
 
 /**
@@ -801,8 +824,15 @@ async function waitForLoginResult(win, timeoutMs = 45000) {
       };
     }
 
+    // Visible lock dialog only (body-wide scans caused cross-account false positives).
+    const visibleLock = await readLockDialogMessage(win);
+    if (visibleLock) {
+      await dismissValidationDialog(win);
+      return { ok: false, locked: true, url, message: visibleLock };
+    }
+
+    // Toast/alert messages are OK here because we clear toasts before each login submit.
     const messages = await readAuthFeedback(win).catch(() => []);
-    // Prefer locked detection over generic rejection when both appear.
     for (const msg of messages) {
       if (classifyAuthMessage(msg) === 'locked') {
         await dismissValidationDialog(win);
@@ -813,13 +843,6 @@ async function waitForLoginResult(win, timeoutMs = 45000) {
       if (classifyAuthMessage(msg) === 'rejected') {
         return { ok: false, locked: false, url, message: msg };
       }
-    }
-
-    // Body-level lock scan while still on login.
-    const bodyLock = await readLockDialogMessage(win);
-    if (bodyLock) {
-      await dismissValidationDialog(win);
-      return { ok: false, locked: true, url, message: bodyLock };
     }
 
     await new Promise((r) => setTimeout(r, 1000));
@@ -1604,6 +1627,10 @@ async function fillComposeBody(win, bodyText) {
   return result;
 }
 
+function isCorrlinksLoginUrl(url) {
+  return /\/login(?:[/?#]|$)/i.test(String(url || ''));
+}
+
 async function goToCompose(win, {
   recipientName,
   inmateId,
@@ -1631,6 +1658,27 @@ async function goToCompose(win, {
     }
   }
   await new Promise((r) => setTimeout(r, 800));
+
+  const landedUrl = win.webContents.getURL();
+  if (isCorrlinksLoginUrl(landedUrl)) {
+    return {
+      url: landedUrl,
+      recipient: { ok: false, reason: 'Session lost — landed on CorrLinks login (not logged in)' },
+      subject: composedSubject,
+      subjectResult: { ok: false, reason: 'Not on compose page' },
+      bodyResult: { ok: false, reason: 'Not on compose page' },
+      pastedPart: null,
+      pendingParts: pendingParts.map((p) => ({
+        part: p.part,
+        filename: p.filename,
+        url: p.url,
+        characters: p.characters || p.text?.length || 0,
+      })),
+      exchangeSkipped,
+      sessionLost: true,
+    };
+  }
+
   // Compose page can also show lock validation dialogs.
   await dismissValidationDialog(win);
 
@@ -1745,7 +1793,11 @@ async function attemptLogin(win, { email, password, label, clearSession = false 
     attempt: label,
   });
 
-  await loadLoginPage(win, { clearSession });
+  // Always start from a clean login page so a prior account's "Account locked"
+  // dialog/toast cannot be mis-attributed to this login.
+  await loadLoginPage(win, { clearSession: true });
+  await clearAuthToasts(win);
+  await dismissValidationDialog(win).catch(() => {});
 
   // Plan for "already logged in":
   // - same email as target → treat as success (reuse session)
@@ -1833,6 +1885,9 @@ async function attemptLogin(win, { email, password, label, clearSession = false 
     email,
     attempt: label,
   });
+
+  await clearAuthToasts(win);
+  await dismissValidationDialog(win).catch(() => {});
 
   const fillResult = await fillAndSubmit(win, email, password);
   if (!fillResult.ok) {
@@ -1950,10 +2005,19 @@ async function applyComposeToStatus(win, status, composeArgs) {
   }
 }
 
-async function downloadExchangeParts(inmate, fetchFileText) {
+async function downloadExchangeParts(inmate, fetchFileText, { exchangeFiles = null } = {}) {
   const exchange = inmate?.inmate_exchange || {};
-  const sendable = Array.isArray(exchange.sendable) ? exchange.sendable : [];
-  const skipped = Array.isArray(exchange.skipped) ? exchange.skipped : [];
+  const sendable = Array.isArray(exchangeFiles) && exchangeFiles.length
+    ? exchangeFiles
+    : Array.isArray(exchange.sendable)
+      ? exchange.sendable
+      : [];
+  const skipped =
+    Array.isArray(exchangeFiles) && exchangeFiles.length
+      ? []
+      : Array.isArray(exchange.skipped)
+        ? exchange.skipped
+        : [];
   const exchangeParts = [];
   if (typeof fetchFileText === 'function') {
     for (const file of sendable) {
@@ -1987,6 +2051,7 @@ async function loginToCorrlinks({
   exchangeParts = [],
   exchangeSkipped = [],
   skipCompose = false,
+  subject = null,
 } = {}) {
   if (!email || !password) {
     throw new Error('Primary corrlinks email and password are required');
@@ -2025,6 +2090,7 @@ async function loginToCorrlinks({
       inmateId,
       exchangeParts,
       exchangeSkipped,
+      subject,
     });
   }
 
@@ -2042,11 +2108,14 @@ async function loginToCorrlinks({
 
   if (primary.state === 'locked') {
     if (!secondEmail || !secondPassword) {
+      // Single-account probe (no fallback requested) — don't imply "missing second".
       return finishWithCompose({
         ...primary,
         message: primary.loggedIn
           ? primary.message
-          : `Primary account locked (${primary.message}) and no second_corrlinks_account available`,
+          : skipCompose
+            ? `Account locked (${primary.message})`
+            : `Primary account locked (${primary.message}) and no second_corrlinks_account available`,
       });
     }
 
@@ -2099,10 +2168,12 @@ async function loginToCorrlinks({
  * Convenience: accept a normalized inmate row from SportsData.
  * Full path: login (with lock fallback) + compose for that one recipient.
  */
-async function loginInmate(inmate, { fetchFileText } = {}) {
+async function loginInmate(inmate, { fetchFileText, subject = null, exchangeFiles = null } = {}) {
   const primary = inmate?.corrlinks_account || {};
   const second = inmate?.second_corrlinks_account || {};
-  const { exchangeParts, exchangeSkipped } = await downloadExchangeParts(inmate, fetchFileText);
+  const { exchangeParts, exchangeSkipped } = await downloadExchangeParts(inmate, fetchFileText, {
+    exchangeFiles,
+  });
 
   return loginToCorrlinks({
     email: primary.email,
@@ -2113,6 +2184,7 @@ async function loginInmate(inmate, { fetchFileText } = {}) {
     inmateId: inmate?.inmate_id || null,
     exchangeParts,
     exchangeSkipped,
+    subject,
   });
 }
 
@@ -2123,6 +2195,7 @@ async function loginAccount(
   { email, password, secondEmail, secondPassword } = {},
   _options = {}
 ) {
+  // Account-only probes must not inherit another account's lock dialog.
   return loginToCorrlinks({
     email,
     password,
@@ -2153,13 +2226,15 @@ async function logoutCorrlinksSession() {
  * Compose for one inmate on an already-logged-in CorrLinks session.
  * Does not attempt login.
  */
-async function composeForInmate(inmate, { fetchFileText } = {}) {
+async function composeForInmate(inmate, { fetchFileText, subject = null, exchangeFiles = null } = {}) {
   if (!inmate) throw new Error('Inmate is required for compose');
   const win = getOrCreateWindow();
   win.show();
   win.focus();
 
-  const { exchangeParts, exchangeSkipped } = await downloadExchangeParts(inmate, fetchFileText);
+  const { exchangeParts, exchangeSkipped } = await downloadExchangeParts(inmate, fetchFileText, {
+    exchangeFiles,
+  });
   const recipientName = inmate?.name || null;
   const inmateId = inmate?.inmate_id || null;
 
@@ -2177,7 +2252,17 @@ async function composeForInmate(inmate, { fetchFileText } = {}) {
       inmateId,
       exchangeParts,
       exchangeSkipped,
+      subject,
     });
+    if (compose.sessionLost) {
+      return setStatus({
+        state: 'error',
+        message: compose.recipient?.reason || 'Session lost — not logged in',
+        url: compose.url || null,
+        recipient: compose.recipient || null,
+        loggedIn: false,
+      });
+    }
     const { toMsg, subMsg, bodyMsg, pendingMsg } = summarizeCompose(compose);
     const composeOk =
       Boolean(compose.recipient?.ok) ||

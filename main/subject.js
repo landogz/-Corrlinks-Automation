@@ -79,10 +79,40 @@ function buildCorrlinksSubject(now = new Date(), timeZone = getAppTimezone()) {
   return todayAbbr;
 }
 
+/**
+ * Weekly update subject from selected league.
+ * NFL → "NFL"; CFB / NCAAFB → "CFB".
+ */
+function normalizeWeeklyLeague(league) {
+  const raw = String(league || '').trim().toUpperCase();
+  if (!raw) return null;
+  if (raw === 'NFL') return 'NFL';
+  if (raw === 'CFB' || raw === 'NCAAFB' || raw === 'NCAA FB' || raw === 'NCAAF') return 'CFB';
+  return raw;
+}
+
+function buildWeeklySubject(league) {
+  return normalizeWeeklyLeague(league) || 'Weekly';
+}
+
+/**
+ * Resolve compose subject from template mode.
+ * Daily → weekday subject; weekly → league name.
+ */
+function resolveComposeSubject({ mode, league, now, timeZone } = {}) {
+  if (String(mode || '').toLowerCase() === 'weekly') {
+    return buildWeeklySubject(league);
+  }
+  return buildCorrlinksSubject(now, timeZone);
+}
+
 module.exports = {
   getAppTimezone,
   zonedParts,
   weekdayAbbr,
   previousWeekday,
   buildCorrlinksSubject,
+  normalizeWeeklyLeague,
+  buildWeeklySubject,
+  resolveComposeSubject,
 };

@@ -436,6 +436,104 @@ class SportsDataClient {
   }
 
   /**
+   * GET /api/v1/insidescore/inmate-exchange/weekly
+   * Optional ?league=NFL | CFB | NCAAFB
+   */
+  async fetchInmateExchangeWeekly({ league = null, withCharacters = true } = {}, retry = true) {
+    const { baseUrl } = this.getConfig();
+    await this.ensureAuth();
+
+    const params = new URLSearchParams();
+    if (league) params.set('league', String(league).trim());
+    const qs = params.toString();
+    const url = `${baseUrl}/api/v1/insidescore/inmate-exchange/weekly${qs ? `?${qs}` : ''}`;
+
+    const response = await this.http.get(url, {
+      headers: {
+        Accept: 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        Referer: `${baseUrl}/insidescore/inmate-exchange`,
+      },
+      maxRedirects: 0,
+      validateStatus: (status) => status >= 200 && status < 500,
+    });
+
+    const isLoginRedirect =
+      [301, 302, 303].includes(response.status) ||
+      response.status === 401 ||
+      response.status === 419 ||
+      (typeof response.data === 'string' && /Login to your account/i.test(response.data));
+
+    if (isLoginRedirect) {
+      this.authenticated = false;
+      if (!retry) throw new Error('SportsData session expired and re-login failed');
+      await this.login();
+      return this.fetchInmateExchangeWeekly({ league, withCharacters }, false);
+    }
+
+    if (response.status !== 200 || !response.data?.status) {
+      const message =
+        (typeof response.data === 'object' && response.data?.message) ||
+        `Unexpected SportsData response (HTTP ${response.status})`;
+      return { ok: false, updates: [], message };
+    }
+
+    const payload = response.data.data || {};
+    const list = Array.isArray(payload.updates) ? payload.updates : [];
+    const updates = [];
+
+    for (let index = 0; index < list.length; index += 1) {
+      const item = list[index];
+      if (!item?.url || item.empty) continue;
+      let characters = null;
+      if (withCharacters) {
+        try {
+          const file = await this.fetchExchangeFileText(item.url);
+          characters = file.characters;
+        } catch (_) {
+          characters = null;
+        }
+      }
+      const leagueCode = String(item.league || league || '').toUpperCase();
+      const displayLeague =
+        leagueCode === 'NCAAFB' || leagueCode === 'CFB' ? 'CFB' : leagueCode || 'Weekly';
+      updates.push({
+        part: index + 1,
+        league: displayLeague,
+        apiLeague: leagueCode || null,
+        label: item.label || 'Weekly Update',
+        date: item.date || payload.week_start || null,
+        dates: item.dates || payload.week_dates || [],
+        week_start: item.week_start || payload.week_start || null,
+        week_end: item.week_end || payload.week_end || null,
+        filename: item.filename || String(item.file || '').split('/').pop() || 'weekly.txt',
+        file: item.file || null,
+        url: item.url,
+        characters,
+        empty: Boolean(item.empty),
+      });
+    }
+
+    if (!updates.length) {
+      return {
+        ok: false,
+        updates: [],
+        week_start: payload.week_start || null,
+        week_end: payload.week_end || null,
+        message: response.data.message || 'No weekly update files available',
+      };
+    }
+
+    return {
+      ok: true,
+      updates,
+      week_start: payload.week_start || null,
+      week_end: payload.week_end || null,
+      message: response.data.message || 'Weekly updates ready',
+    };
+  }
+
+  /**
    * History rows from /inmate-exchange/all only — no multi-day probing.
    */
   async fetchInmateExchangeHistory({ withCharacters = true } = {}) {
