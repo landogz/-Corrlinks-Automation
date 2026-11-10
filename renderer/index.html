@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Inmate Exchange Auto</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header>
+        <h1>CorrLinks Auto</h1>
+        <p class="sub">Phase 1 — inmate accounts → primary login → second if locked</p>
+      </header>
+
+      <section class="card">
+        <h2>SportsData</h2>
+        <p id="configSummary" class="muted">Loading config…</p>
+        <div class="row">
+          <button id="btnRefresh" type="button">Refresh inmates</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Inmate</h2>
+        <label for="accountSelect">Inmate account</label>
+        <select id="accountSelect" disabled>
+          <option value="">Load inmates first</option>
+        </select>
+        <p id="accountMeta" class="muted"></p>
+        <div class="row">
+          <button id="btnLogin" type="button" disabled>Login to CorrLinks</button>
+          <button id="btnStatus" type="button" class="ghost">Check status</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Status log</h2>
+        <pre id="log" class="log"></pre>
+      </section>
+    </main>
+    <script src="renderer.js"></script>
+  </body>
+</html>

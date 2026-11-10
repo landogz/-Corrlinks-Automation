@@ -1,0 +1,109 @@
+{
+  "name": "inmateexchange-auto",
+  "productName": "Inmate Exchange Auto",
+  "version": "0.1.0",
+  "description": "CorrLinks login automation via Electron",
+  "main": "main/main.js",
+  "author": "MJR",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "smoke:sportsdata": "node scripts/smoke-sportsdata.js",
+    "smoke:corrlinks": "electron scripts/smoke-corrlinks-login.js",
+    "smoke:subject": "node scripts/smoke-subject.js",
+    "smoke:exchange": "node scripts/smoke-exchange-files.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --mac --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win"
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "dotenv": "^17.2.3",
+    "tough-cookie": "^5.1.2"
+  },
+  "devDependencies": {
+    "electron": "^39.2.3",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.mjr.inmateexchange.auto",
+    "productName": "Inmate Exchange Auto",
+    "copyright": "Copyright © MJR",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main/**/*",
+      "renderer/**/*",
+      "package.json",
+      ".env.example"
+    ],
+    "extraResources": [
+      {
+        "from": ".env.example",
+        "to": ".env.example"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.business",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Inmate Exchange Auto"
+    }
+  }
+}
