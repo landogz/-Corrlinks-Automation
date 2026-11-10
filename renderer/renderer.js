@@ -1557,10 +1557,22 @@ function resetWorkspaceState() {
   setMainTab('automate');
 }
 
+function usesMacDmgUpdate(status = updateStatus) {
+  return (
+    status?.installMode === 'dmg' ||
+    (/Mac|iPhone|iPad/.test(navigator.platform || '') && status?.installMode !== 'squirrel')
+  );
+}
+
+function updateInstallLabel(status = updateStatus) {
+  return usesMacDmgUpdate(status) ? 'Open installer' : 'Restart to update';
+}
+
 function renderUpdateUi(status = updateStatus) {
   updateStatus = status || updateStatus;
   const state = String(updateStatus.state || 'idle');
   const version = updateStatus.currentVersion || '';
+  const macDmg = usesMacDmgUpdate(updateStatus);
   const action =
     state === 'available'
       ? 'download'
@@ -1575,8 +1587,9 @@ function renderUpdateUi(status = updateStatus) {
   else if (state === 'downloading') {
     chipText =
       updateStatus.percent != null ? `v${version} · ${updateStatus.percent}%` : `v${version} · Updating…`;
-  } else if (state === 'downloaded') chipText = `v${version} · Restart to update`;
-  else if (state === 'checking') chipText = `v${version} · Checking…`;
+  } else if (state === 'downloaded') {
+    chipText = `v${version} · ${macDmg ? 'Open installer' : 'Restart to update'}`;
+  } else if (state === 'checking') chipText = `v${version} · Checking…`;
   else if (state === 'error') chipText = `v${version} · Update failed`;
   else if (state === 'dev') chipText = `v${version} · Dev build`;
 
@@ -1598,7 +1611,7 @@ function renderUpdateUi(status = updateStatus) {
       (state === 'dev' ? 'Updates are available in packaged builds only.' : 'Ready to check for updates.');
   }
   if (updatesProgressWrap) {
-    updatesProgressWrap.hidden = state !== 'downloading';
+    updatesProgressWrap.hidden = state !== 'downloading' || macDmg;
   }
   if (updatesProgressBar) {
     updatesProgressBar.style.width = `${updateStatus.percent || 0}%`;
@@ -1606,9 +1619,9 @@ function renderUpdateUi(status = updateStatus) {
   if (btnUpdate) {
     btnUpdate.disabled = updateBusy || action === 'busy';
     btnUpdate.dataset.updateAction = action === 'busy' ? 'check' : action;
-    if (state === 'available') btnUpdate.textContent = 'Download update';
-    else if (state === 'downloading') btnUpdate.textContent = 'Downloading…';
-    else if (state === 'downloaded') btnUpdate.textContent = 'Restart to update';
+    if (state === 'available') btnUpdate.textContent = macDmg ? 'Get update' : 'Download update';
+    else if (state === 'downloading') btnUpdate.textContent = macDmg ? 'Opening installer…' : 'Downloading…';
+    else if (state === 'downloaded') btnUpdate.textContent = updateInstallLabel(updateStatus);
     else if (state === 'checking') btnUpdate.textContent = 'Checking…';
     else btnUpdate.textContent = 'Check for updates';
   }
@@ -1616,9 +1629,11 @@ function renderUpdateUi(status = updateStatus) {
     btnCheckUpdatesMenu.dataset.updateAction = action === 'busy' ? 'check' : action;
     btnCheckUpdatesMenu.textContent =
       state === 'available'
-        ? 'Download update'
+        ? macDmg
+          ? 'Get update'
+          : 'Download update'
         : state === 'downloaded'
-          ? 'Restart to update'
+          ? updateInstallLabel(updateStatus)
           : 'Check for updates';
   }
 }
@@ -1633,7 +1648,12 @@ function maybeToastUpdate(status) {
     log(status.message || `Update available: v${status.latestVersion}`, 'warn');
   } else if (state === 'downloaded') {
     lastUpdateToastKey = key;
-    toast('Update ready — restart to install', 'success');
+    toast(
+      usesMacDmgUpdate(status)
+        ? status.message || 'Installer ready — open the DMG to finish'
+        : 'Update ready — restart to install',
+      'success'
+    );
     log(status.message || 'Update downloaded', 'success');
   } else if (state === 'error' && status?.error) {
     lastUpdateToastKey = key;
@@ -1659,7 +1679,8 @@ async function runUpdateAction(preferredAction) {
   renderUpdateUi(updateStatus);
   try {
     if (action === 'download') {
-      toast('Downloading update…', 'info');
+      const macDmg = usesMacDmgUpdate(updateStatus);
+      toast(macDmg ? 'Opening macOS installer…' : 'Downloading update…', 'info');
       const result = await window.api.downloadUpdate();
       renderUpdateUi(result);
       maybeToastUpdate(result);
@@ -1667,8 +1688,10 @@ async function runUpdateAction(preferredAction) {
       return;
     }
     if (action === 'install') {
-      toast('Restarting to install update…', 'info');
-      await window.api.installUpdate();
+      const macDmg = usesMacDmgUpdate(updateStatus);
+      toast(macDmg ? 'Opening macOS installer…' : 'Restarting to install update…', 'info');
+      const result = await window.api.installUpdate();
+      if (result) renderUpdateUi(result);
       return;
     }
     const result = await window.api.checkForUpdates();
