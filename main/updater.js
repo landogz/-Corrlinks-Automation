@@ -284,15 +284,7 @@ function setupAutoUpdater(win) {
   updater.allowPrerelease = false;
   bindUpdaterEvents(updater);
 
-  setTimeout(() => {
-    updater.checkForUpdates().catch((error) => {
-      setState({
-        state: 'error',
-        message: 'Update check failed',
-        error: error?.message || String(error),
-      });
-    });
-  }, 8000);
+  // Renderer checks for updates on the login screen before SportsData auth.
 }
 
 function registerUpdateIpc() {

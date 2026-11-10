@@ -3297,6 +3297,67 @@ function openUpdatesDialog() {
   openModalDialog(updatesDialog);
 }
 
+function waitForDialogClose(dialog) {
+  return new Promise((resolve) => {
+    if (!dialog || !dialog.open) {
+      resolve();
+      return;
+    }
+    const onClose = () => {
+      dialog.removeEventListener('close', onClose);
+      resolve();
+    };
+    dialog.addEventListener('close', onClose);
+  });
+}
+
+/**
+ * Check for app updates on the login screen before SportsData sign-in / auto-login.
+ * If an update is available (or already downloaded), open the Updates dialog and wait.
+ */
+async function checkUpdatesBeforeLogin() {
+  setLoginError('Checking for updates…', { info: true });
+  setStatusHint('Checking for updates…');
+  if (btnSaveLogin) btnSaveLogin.disabled = true;
+  try {
+    if (!window.api?.checkForUpdates) {
+      setLoginError('');
+      return updateStatus;
+    }
+    updateBusy = true;
+    renderUpdateUi({ ...updateStatus, state: 'checking', message: 'Checking for updates…' });
+    const result = await window.api.checkForUpdates();
+    renderUpdateUi(result || updateStatus);
+    maybeToastUpdate(result);
+
+    const state = String(result?.state || '');
+    if (state === 'available' || state === 'downloaded') {
+      setLoginError(
+        state === 'downloaded'
+          ? 'Update ready — install before signing in, or close to continue'
+          : `Update available (v${result.latestVersion || '…'}) — review before signing in`,
+        { info: true }
+      );
+      openUpdatesDialog();
+      await waitForDialogClose(updatesDialog);
+    } else if (state === 'error' && result?.error) {
+      log(`Update check failed: ${result.error}`, 'warn');
+      // Don't block login on a failed check.
+    } else if (state === 'not-available' || state === 'dev') {
+      log(result?.message || `Up to date (v${result?.currentVersion || ''})`, 'info');
+    }
+    return result;
+  } catch (error) {
+    log(`Update check failed: ${error.message || String(error)}`, 'warn');
+    return null;
+  } finally {
+    updateBusy = false;
+    renderUpdateUi(updateStatus);
+    if (btnSaveLogin) btnSaveLogin.disabled = false;
+    setLoginError('');
+  }
+}
+
 function wireAppUpdates() {
   if (typeof window.api?.onUpdateStatus === 'function') {
     window.api.onUpdateStatus((status) => {
@@ -3341,6 +3402,10 @@ async function init() {
     const summary = await window.api.getConfigSummary();
     fillLoginForm(summary);
     setConfigSummary(summary);
+
+    // Always check for app updates before SportsData login / auto-login.
+    await checkUpdatesBeforeLogin();
+
     if (summary.email && summary.hasPassword) {
       if (summary.credentialsPath) {
         log(`Remembered SportsData login (${maskSensitive(summary.email)}) — verifying…`, 'info');
