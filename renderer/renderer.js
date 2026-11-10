@@ -1711,13 +1711,21 @@ async function runUpdateAction(preferredAction) {
   }
 }
 
+function openModalDialog(dialog) {
+  if (!dialog || typeof dialog.showModal !== 'function') return false;
+  hideCorrEmbedNow();
+  if (!dialog.open) dialog.showModal();
+  scheduleCorrPaneBounds();
+  return true;
+}
+
 function openUpdatesDialog() {
   if (!updatesDialog) {
     runUpdateAction(updateChip?.dataset?.updateAction || 'check');
     return;
   }
   renderUpdateUi(updateStatus);
-  if (typeof updatesDialog.showModal === 'function') updatesDialog.showModal();
+  openModalDialog(updatesDialog);
 }
 
 function wireAppUpdates() {
@@ -1745,6 +1753,12 @@ function wireAppUpdates() {
     openUpdatesDialog();
   });
   btnUpdatesClose?.addEventListener('click', () => updatesDialog?.close());
+  [updatesDialog, aboutDialog, shortcutsDialog, confirmSend].forEach((dialog) => {
+    dialog?.addEventListener('close', () => {
+      scheduleCorrPaneBounds();
+      setTimeout(syncCorrPaneBounds, 50);
+    });
+  });
 }
 
 async function init() {
@@ -1983,7 +1997,7 @@ btnSend?.addEventListener('click', () => {
     toast('Compose a message first', 'error');
     return;
   }
-  confirmSend?.showModal?.();
+  openModalDialog(confirmSend);
 });
 
 confirmSend?.addEventListener('close', () => {
@@ -1999,6 +2013,7 @@ function isLogDrawerOpen() {
 
 function setLogDrawerOpen(open) {
   if (!logDrawer) return;
+  if (open) hideCorrEmbedNow();
   logDrawer.hidden = !open;
   if (logBackdrop) logBackdrop.hidden = !open;
   if (btnOpenLog) btnOpenLog.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -2058,7 +2073,7 @@ document.addEventListener('keydown', (event) => {
   }
   if (!typing && (event.key === '?' || (event.shiftKey && event.key === '/'))) {
     event.preventDefault();
-    shortcutsDialog?.showModal?.();
+    openModalDialog(shortcutsDialog);
     return;
   }
   if (meta && event.key.toLowerCase() === 'r') {
@@ -2082,6 +2097,21 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
+/** Native WebContentsView paints above HTML — hide it under modals/drawers. */
+function isCorrEmbedBlocked() {
+  if (loopCountdownActive) return true;
+  if (activeMainTab !== 'automate') return true;
+  if (document.body.classList.contains('log-open')) return true;
+  const dialogs = [updatesDialog, aboutDialog, shortcutsDialog, confirmSend];
+  if (dialogs.some((dialog) => dialog && dialog.open)) return true;
+  return false;
+}
+
+function hideCorrEmbedNow() {
+  if (!window.api?.setCorrBounds) return;
+  window.api.setCorrBounds({ x: 0, y: 0, width: 0, height: 0 });
+}
+
 /**
  * Map #corrPane to the Electron WebContentsView.
  * Clip to the visible .app area above the status bar so a scrolled/off-screen
@@ -2090,6 +2120,11 @@ document.addEventListener('keydown', (event) => {
 function syncCorrPaneBounds() {
   const pane = document.getElementById('corrPane');
   if (!pane || !window.api?.setCorrBounds) return;
+
+  if (isCorrEmbedBlocked()) {
+    hideCorrEmbedNow();
+    return;
+  }
 
   const rect = pane.getBoundingClientRect();
   const app = document.querySelector('.app')?.getBoundingClientRect();
@@ -2115,9 +2150,7 @@ function syncCorrPaneBounds() {
   const width = Math.max(0, right - left);
   const height = Math.max(0, bottom - top);
 
-  // Hide embed when History tab, countdown overlay, or scrolled/collapsed pane.
-  const visible =
-    activeMainTab === 'automate' && !loopCountdownActive && width >= 8 && height >= 8;
+  const visible = width >= 8 && height >= 8;
   window.api.setCorrBounds({
     x: Math.round(left),
     y: Math.round(top),
@@ -2426,9 +2459,9 @@ function wireShellUi() {
   });
   btnAbout?.addEventListener('click', () => {
     setAccountMenuOpen(false);
-    aboutDialog?.showModal?.();
+    openModalDialog(aboutDialog);
   });
-  btnShortcuts?.addEventListener('click', () => shortcutsDialog?.showModal?.());
+  btnShortcuts?.addEventListener('click', () => openModalDialog(shortcutsDialog));
   logSearch?.addEventListener('input', applyLogFilter);
 
   sdConn?.addEventListener('click', () => {
