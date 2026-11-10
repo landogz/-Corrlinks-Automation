@@ -67,6 +67,8 @@
             Remember email and password on this computer
           </label>
 
+          <p id="loginError" class="login-error" hidden role="alert"></p>
+
           <div class="row">
             <button id="btnSaveLogin" type="submit">Sign in</button>
           </div>
@@ -159,15 +161,33 @@
                 </div>
 
                 <p id="loopProgress" class="loop-progress" hidden></p>
-                <div class="row actions-row" id="actionsRow">
-                  <button id="btnStartLoop" type="button" disabled title="Process each inmate: login + compose paste (no send)">
-                    Start loop
-                  </button>
-                  <button id="btnStopLoop" type="button" class="danger" disabled hidden>Stop loop</button>
-                  <button id="btnLogin" type="button" disabled title="Single inmate: login + compose paste (no send)">
+                <div class="actions-stack" id="actionsRow">
+                  <button
+                    id="btnLogin"
+                    type="button"
+                    class="action-primary"
+                    disabled
+                    title="Single inmate: login + compose paste (no send)"
+                  >
                     Login to CorrLinks
                   </button>
-                  <button id="btnStatus" type="button" class="ghost">Check status</button>
+                  <div class="actions-secondary">
+                    <button
+                      id="btnStartLoop"
+                      type="button"
+                      class="action-secondary"
+                      disabled
+                      title="Phase 1: probe each CorrLinks account for lock (primary→second). Phase 2: compose each recipient one-by-one with To cleared (no send). 10s pause between accounts."
+                    >
+                      Start loop
+                    </button>
+                    <button id="btnStopLoop" type="button" class="action-stop danger" disabled hidden>
+                      Stop loop
+                    </button>
+                    <button id="btnStatus" type="button" class="action-ghost ghost" title="Check CorrLinks status">
+                      Status
+                    </button>
+                  </div>
                 </div>
               </div>
             </section>
@@ -227,6 +247,11 @@
               <div id="corrPane" class="corr-pane">
                 <div class="corr-placeholder">
                   Select an inmate to open CorrLinks here
+                </div>
+                <div id="loopCountdown" class="loop-countdown" hidden aria-live="polite">
+                  <p class="loop-countdown-label">Next account in</p>
+                  <p id="loopCountdownNum" class="loop-countdown-num">30</p>
+                  <p id="loopCountdownNext" class="loop-countdown-next"></p>
                 </div>
               </div>
             </section>

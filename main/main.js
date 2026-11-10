@@ -4,6 +4,9 @@ const { SportsDataClient } = require('./sportsdataClient');
 const {
   loginToCorrlinks,
   loginInmate,
+  loginAccount,
+  composeForInmate,
+  logoutCorrlinksSession,
   getStatus,
   setHostWindow,
   setCorrBounds,
@@ -105,6 +108,25 @@ function registerIpc() {
     }
   });
 
+  /** Verify SportsData email/password against the live site before opening the app. */
+  ipcMain.handle('config:verifySportsData', async () => {
+    try {
+      sportsData.resetSession();
+      const result = await sportsData.login();
+      return {
+        ok: true,
+        message: 'SportsData login verified',
+        email: result.email || getSportsDataConfig().email,
+      };
+    } catch (error) {
+      sportsData.resetSession();
+      return {
+        ok: false,
+        message: error.message || 'SportsData login failed — check email/password',
+      };
+    }
+  });
+
   ipcMain.handle('config:logoutSportsData', async () => {
     try {
       forceCloseCorrWindow();
@@ -182,6 +204,78 @@ function registerIpc() {
         status: {
           state: 'error',
           message: error.message || 'CorrLinks login failed',
+        },
+      };
+    }
+  });
+
+  /** Login only (no compose) — used by grouped Start loop. */
+  ipcMain.handle('corrlinks:loginAccount', async (_event, payload = {}) => {
+    try {
+      const status = await loginAccount({
+        email: payload.email,
+        password: payload.password,
+        secondEmail: payload.secondEmail,
+        secondPassword: payload.secondPassword,
+      });
+      const ok =
+        status.state === 'success' ||
+        status.state === 'manual' ||
+        (status.state === 'locked' && status.loggedIn);
+      return { ok, status };
+    } catch (error) {
+      return {
+        ok: false,
+        status: {
+          state: 'error',
+          message: error.message || 'CorrLinks account login failed',
+        },
+      };
+    }
+  });
+
+  ipcMain.handle('corrlinks:logout', async () => {
+    try {
+      const status = await logoutCorrlinksSession();
+      return { ok: true, status };
+    } catch (error) {
+      return {
+        ok: false,
+        status: {
+          state: 'error',
+          message: error.message || 'CorrLinks logout failed',
+        },
+      };
+    }
+  });
+
+  /** Compose one recipient on the current CorrLinks session (no login). */
+  ipcMain.handle('corrlinks:composeInmate', async (_event, payload = {}) => {
+    try {
+      const inmate = cachedAccounts.find((a) => String(a.id) === String(payload.inmateId));
+      if (!inmate) {
+        return {
+          ok: false,
+          status: {
+            state: 'error',
+            message: `Inmate ${payload.inmateId} not in cache — refresh accounts`,
+          },
+        };
+      }
+      const status = await composeForInmate(inmate, {
+        fetchFileText: (url) => sportsData.fetchExchangeFileText(url),
+      });
+      const ok =
+        status.state === 'success' ||
+        Boolean(status.recipient?.ok) ||
+        Boolean(status.bodyResult?.ok);
+      return { ok, status };
+    } catch (error) {
+      return {
+        ok: false,
+        status: {
+          state: 'error',
+          message: error.message || 'CorrLinks compose failed',
         },
       };
     }

@@ -12,12 +12,16 @@ const sdEmail = document.getElementById('sdEmail');
 const sdPassword = document.getElementById('sdPassword');
 const sdRemember = document.getElementById('sdRemember');
 const btnSaveLogin = document.getElementById('btnSaveLogin');
+const loginError = document.getElementById('loginError');
 const btnRefresh = document.getElementById('btnRefresh');
 const btnLogout = document.getElementById('btnLogout');
 const btnLogin = document.getElementById('btnLogin');
 const btnStartLoop = document.getElementById('btnStartLoop');
 const btnStopLoop = document.getElementById('btnStopLoop');
 const loopProgress = document.getElementById('loopProgress');
+const loopCountdown = document.getElementById('loopCountdown');
+const loopCountdownNum = document.getElementById('loopCountdownNum');
+const loopCountdownNext = document.getElementById('loopCountdownNext');
 const actionsRow = document.getElementById('actionsRow');
 const btnStatus = document.getElementById('btnStatus');
 const btnSend = document.getElementById('btnSend');
@@ -69,6 +73,8 @@ let activeStep = 1;
 let corrlinksLoginBusy = false;
 let loopRunning = false;
 let loopAbort = false;
+/** When true, hide the CorrLinks embed so the HTML countdown can show. */
+let loopCountdownActive = false;
 /** @type {{ to: string, subject: string, body: string, chars: number }} */
 let composePreview = { to: '', subject: '', body: '', chars: 0 };
 let optionHighlight = -1;
@@ -281,17 +287,38 @@ function copyText(text) {
 function formatRecipient(value) {
   if (!value) return '—';
   if (typeof value === 'string') {
-    try {
-      return formatRecipient(JSON.parse(value));
-    } catch (_) {
-      return value;
+    const trimmed = value.trim();
+    // Full JSON object string
+    if (trimmed.startsWith('{')) {
+      try {
+        return formatRecipient(JSON.parse(trimmed));
+      } catch (_) {
+        // Truncated JSON — pull name if present
+        const nameMatch = trimmed.match(/"name"\s*:\s*"((?:\\.|[^"\\])*)"/);
+        if (nameMatch) {
+          try {
+            return JSON.parse(`"${nameMatch[1]}"`);
+          } catch (_) {
+            return nameMatch[1];
+          }
+        }
+      }
     }
+    return trimmed;
   }
   if (typeof value === 'object') {
-    const name = value.name || value.selected || value.label || '';
-    const id = value.id || value.inmate_id || '';
-    const facility = value.facility || value.type || '';
-    return [name, id ? `(${id})` : '', facility].filter(Boolean).join(' ') || summarizeDetails(value);
+    // Prefer display name only — never dump Syncfusion/inmate JSON fields.
+    const name =
+      value.name ||
+      value.Name ||
+      value.DisplayName ||
+      value.text ||
+      value.Text ||
+      value.label ||
+      value.selected ||
+      '';
+    if (name) return String(name).trim();
+    return '—';
   }
   return String(value);
 }
@@ -406,14 +433,43 @@ function inmateHasCorrlinksLogin(inmate) {
   return Boolean(inmate?.corrlinks_account?.email && inmate?.corrlinks_account?.password);
 }
 
-function eligibleLoopInmates() {
-  return accounts.filter((inmate) => inmateHasCorrlinksLogin(inmate));
+/**
+ * Group inmates by primary CorrLinks email (first-seen order).
+ * @returns {Array<{ email: string, password: string, secondEmail: string|null, secondPassword: string|null, inmates: any[] }>}
+ */
+function groupInmatesByCorrlinksAccount(list = accounts) {
+  const groups = [];
+  const indexByEmail = new Map();
+  for (const inmate of list) {
+    if (!inmateHasCorrlinksLogin(inmate)) continue;
+    const emailKey = String(inmate.corrlinks_account.email).trim().toLowerCase();
+    if (!emailKey) continue;
+    if (!indexByEmail.has(emailKey)) {
+      indexByEmail.set(emailKey, groups.length);
+      const second = inmate.second_corrlinks_account || {};
+      groups.push({
+        email: inmate.corrlinks_account.email,
+        password: inmate.corrlinks_account.password,
+        secondEmail: second.email || null,
+        secondPassword: second.password || null,
+        inmates: [inmate],
+      });
+      continue;
+    }
+    const group = groups[indexByEmail.get(emailKey)];
+    group.inmates.push(inmate);
+    if (!group.secondEmail && inmate.second_corrlinks_account?.email) {
+      group.secondEmail = inmate.second_corrlinks_account.email;
+      group.secondPassword = inmate.second_corrlinks_account.password || null;
+    }
+  }
+  return groups;
 }
 
 function updateActionButtons({ canLogin } = {}) {
   const loginOk =
     canLogin != null ? canLogin : Boolean(selectedInmate() && inmateHasCorrlinksLogin(selectedInmate()));
-  const hasLoopQueue = eligibleLoopInmates().length > 0;
+  const hasLoopQueue = groupInmatesByCorrlinksAccount().length > 0;
   btnLogin.disabled = loopRunning || corrlinksLoginBusy || !loginOk;
   btnLogin.hidden = loopRunning;
   btnStartLoop.disabled = loopRunning || corrlinksLoginBusy || !hasLoopQueue;
@@ -592,76 +648,508 @@ async function startCorrlinksLogin(options = {}) {
   }
 }
 
+/** Gap only when switching CorrLinks accounts (not between same-account recipients). */
+const LOOP_GAP_MS = 10_000;
+
 function buildLoopQueue() {
-  // Always first → last in the loaded inmate list (eligible for CorrLinks login).
-  return eligibleLoopInmates();
+  return groupInmatesByCorrlinksAccount();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function setLoopCountdownOverlay({ seconds, nextLabel, current, total } = {}) {
+  if (!loopCountdown) return;
+  if (seconds == null) {
+    loopCountdownActive = false;
+    loopCountdown.hidden = true;
+    if (loopCountdownNum) loopCountdownNum.textContent = '';
+    if (loopCountdownNext) loopCountdownNext.textContent = '';
+    syncCorrPaneBounds();
+    return;
+  }
+  loopCountdownActive = true;
+  loopCountdown.hidden = false;
+  if (loopCountdownNum) {
+    const next = String(Math.max(0, seconds));
+    if (loopCountdownNum.textContent !== next) {
+      loopCountdownNum.textContent = next;
+      loopCountdownNum.classList.remove('is-tick');
+      // Retrigger tick animation
+      void loopCountdownNum.offsetWidth;
+      loopCountdownNum.classList.add('is-tick');
+    }
+  }
+  if (loopCountdownNext) {
+    loopCountdownNext.textContent = nextLabel
+      ? `${current}/${total} accounts done · next: ${nextLabel}`
+      : '';
+  }
+  // Collapse embed bounds so this HTML overlay is not covered by WebContentsView.
+  syncCorrPaneBounds();
+}
+
+/** Wait up to `ms` between CorrLinks accounts. Returns false if aborted. */
+async function waitLoopGap(ms, { current, total, nextLabel }) {
+  const endsAt = Date.now() + ms;
+  let lastShown = -1;
+  while (Date.now() < endsAt) {
+    if (loopAbort) {
+      setLoopCountdownOverlay();
+      return false;
+    }
+    const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+    if (left !== lastShown) {
+      lastShown = left;
+      setLoopCountdownOverlay({ seconds: left, nextLabel, current, total });
+      const text = `Waiting ${left}s before next CorrLinks account · ${current}/${total} done · next: ${nextLabel}`;
+      setLoopProgress(text);
+      setStatusHint(text);
+    }
+    await sleep(Math.min(200, endsAt - Date.now()));
+  }
+  setLoopCountdownOverlay();
+  return !loopAbort;
+}
+
+function statusLooksGood(status) {
+  return Boolean(
+    status &&
+      (status.state === 'success' ||
+        (status.state === 'locked' && status.loggedIn) ||
+        status.recipient?.ok ||
+        status.bodyResult?.ok)
+  );
+}
+
+/**
+ * Login a CorrLinks account only (no compose). Used by the grouped loop.
+ */
+async function startCorrlinksAccountLogin(group, options = {}) {
+  const { quietToast = false } = options;
+  if (!group?.email || !group?.password) {
+    log('CorrLinks account missing credentials', 'error');
+    return null;
+  }
+  if (corrlinksLoginBusy) return null;
+
+  syncCorrPaneBounds();
+  corrlinksLoginBusy = true;
+  updateActionButtons({ canLogin: true });
+  setStatusHint(`Logging in ${maskSensitive(group.email)}…`);
+  setCorrlinksConnected(false, true);
+  log(
+    `Account login ${maskSensitive(group.email)}` +
+      (group.secondEmail ? ` (fallback ${maskSensitive(group.secondEmail)} if locked)` : '') +
+      ' · no compose yet',
+    'info'
+  );
+  try {
+    const result = await window.api.loginCorrlinksAccount({
+      email: group.email,
+      password: group.password,
+      secondEmail: group.secondEmail,
+      secondPassword: group.secondPassword,
+    });
+    const status = result.status || {};
+    const viaSecond = Boolean(status.usedSecondAccount);
+    const viaLabel = viaSecond ? 'second' : status.attempt || 'primary';
+    if (status.state === 'success' || (status.state === 'locked' && status.loggedIn)) {
+      setCorrlinksConnected(true);
+      if (viaSecond) {
+        log(
+          `Primary locked — using second ${maskSensitive(status.email || group.secondEmail)}` +
+            (status.primaryError ? ` (${status.primaryError})` : ''),
+          'warn'
+        );
+      }
+      if (!quietToast) {
+        toast(
+          viaSecond
+            ? `Logged in via second · ${maskSensitive(status.email || group.secondEmail)}`
+            : `Logged in ${maskSensitive(group.email)}`,
+          viaSecond ? 'warn' : 'success'
+        );
+      }
+      log(
+        status.message || `Logged in via ${viaLabel}: ${maskSensitive(status.email || group.email)}`,
+        viaSecond ? 'warn' : 'success'
+      );
+    } else if (status.state === 'manual') {
+      setCorrlinksConnected(false, true);
+      log(`Manual action needed: ${status.message}`, 'warn');
+    } else if (status.state === 'locked' && !status.loggedIn) {
+      setCorrlinksConnected(false, true);
+      log(
+        `Primary locked` +
+          (group.secondEmail ? ' and second login failed' : ' (no second account)') +
+          `: ${status.message || 'locked'}`,
+        'error'
+      );
+      if (!quietToast) toast(status.message || 'Account locked', 'error');
+    } else {
+      setCorrlinksConnected(false);
+      log(status.message || 'Account login failed', 'error');
+      if (!quietToast) toast(status.message || 'Account login failed', 'error');
+    }
+    setStatusHint(status.message || 'Account login finished');
+    return status;
+  } catch (error) {
+    log(error.message || String(error), 'error');
+    if (!quietToast) toast(error.message || String(error), 'error');
+    setCorrlinksConnected(false);
+    return { state: 'error', message: error.message || String(error) };
+  } finally {
+    corrlinksLoginBusy = false;
+    updateActionButtons();
+  }
+}
+
+/**
+ * Compose one recipient on the current CorrLinks session (no login).
+ */
+async function startCorrlinksCompose(inmate, options = {}) {
+  const { quietToast = false } = options;
+  if (!inmate) return null;
+  if (corrlinksLoginBusy) return null;
+
+  syncCorrPaneBounds();
+  corrlinksLoginBusy = true;
+  updateActionButtons({ canLogin: true });
+  const label = `${inmate.name || 'Inmate'} (${inmate.inmate_id || inmate.id})`;
+  setStatusHint(`Compose: ${label}…`);
+  log(`Compose recipient ${label} · no send`, 'info');
+  try {
+    const result = await window.api.composeCorrlinksInmate({ inmateId: inmate.id });
+    handleLoginResult(result.status || {}, { quietToast });
+    setStatusHint((result.status && result.status.message) || 'Compose finished (not sent)');
+    return result.status || null;
+  } catch (error) {
+    log(error.message || String(error), 'error');
+    if (!quietToast) toast(error.message || String(error), 'error');
+    return { state: 'error', message: error.message || String(error) };
+  } finally {
+    corrlinksLoginBusy = false;
+    updateActionButtons();
+  }
+}
+
+function logAccountProbeSummary(accountSummaries) {
+  for (const row of accountSummaries) {
+    if (row.via === 'second') {
+      log(
+        `Probe · ${maskSensitive(row.primary)} locked → second ${maskSensitive(row.sessionEmail)}` +
+          ` · ${row.recipients} recipient(s)` +
+          (row.primaryError ? ` · ${row.primaryError}` : ''),
+        'warn',
+        row
+      );
+    } else if (row.via === 'failed') {
+      log(
+        `Probe · ${maskSensitive(row.primary)} login failed · ${row.recipients} recipient(s) will be skipped`,
+        'error',
+        row
+      );
+    } else {
+      log(
+        `Probe · ${maskSensitive(row.primary)} OK via primary · ${row.recipients} recipient(s)`,
+        'info',
+        row
+      );
+    }
+  }
+}
+
+async function logoutCorrlinksQuiet() {
+  try {
+    if (window.api?.logoutCorrlinks) await window.api.logoutCorrlinks();
+  } catch (_) {
+    /* ignore */
+  }
+  setCorrlinksConnected(false);
 }
 
 async function startInmateLoop() {
   if (loopRunning || corrlinksLoginBusy) return;
-  const queue = buildLoopQueue();
-  if (!queue.length) {
-    toast('No inmates with CorrLinks credentials', 'error');
+  const groups = buildLoopQueue();
+  if (!groups.length) {
+    toast('No CorrLinks accounts with credentials', 'error');
     return;
   }
 
   loopRunning = true;
   loopAbort = false;
   updateActionButtons();
-  const total = queue.length;
+  const accountTotal = groups.length;
+  const recipientTotal = groups.reduce((n, g) => n + g.inmates.length, 0);
   let okCount = 0;
   let failCount = 0;
-  log(`Loop start — ${total} inmate(s) first→last (compose only, no send)`, 'info');
-  toast(`Loop started · ${total} inmate(s)`, 'info');
+  /** @type {Array<{ group: any, primary: string, via: 'primary'|'second'|'failed', sessionEmail: string|null, sessionPassword: string|null, recipients: number, primaryError?: string }>} */
+  const accountSummaries = [];
 
-  for (let i = 0; i < queue.length; i += 1) {
+  log(
+    `Loop start — Phase 1: probe ${accountTotal} CorrLinks account(s) for lock · then compose ${recipientTotal} recipient(s)`,
+    'info'
+  );
+  toast(`Probing ${accountTotal} CorrLinks account(s) first…`, 'info');
+
+  // ── Phase 1: test every CorrLinks account (no compose yet) ──────────────
+  for (let g = 0; g < groups.length; g += 1) {
     if (loopAbort) {
-      log(`Loop stopped by user after ${i}/${total}`, 'warn');
+      log(`Probe stopped after account ${g}/${accountTotal}`, 'warn');
       break;
     }
-    const inmate = queue[i];
-    const label = `${inmate.name || 'Inmate'} (${inmate.inmate_id || inmate.id})`;
-    setLoopProgress(`Loop ${i + 1}/${total} · ${label}`);
-    log(`—— Loop ${i + 1}/${total}: ${label} ——`, 'info');
-    selectInmate(inmate.id, { autoLogin: false });
-    const status = await startCorrlinksLogin({ quietToast: true });
-    const good =
-      status &&
-      (status.state === 'success' ||
-        (status.state === 'locked' && status.loggedIn) ||
-        status.recipient?.ok ||
-        status.bodyResult?.ok);
-    if (good) okCount += 1;
-    else failCount += 1;
+    const group = groups[g];
+    const accountLabel = maskSensitive(group.email);
+    setLoopProgress(`Probe ${g + 1}/${accountTotal} · ${accountLabel} · testing login…`);
+    log(`—— Probe ${g + 1}/${accountTotal}: ${accountLabel} (${group.inmates.length} recipient(s)) ——`, 'info');
+
+    const loginStatus = await startCorrlinksAccountLogin(group, { quietToast: true });
+    const loginOk =
+      loginStatus &&
+      (loginStatus.state === 'success' || (loginStatus.state === 'locked' && loginStatus.loggedIn));
+    const viaSecond = Boolean(loginStatus?.usedSecondAccount);
+    const via = !loginOk ? 'failed' : viaSecond ? 'second' : 'primary';
+    const sessionEmail = loginOk
+      ? loginStatus.email || (viaSecond ? group.secondEmail : group.email)
+      : null;
+    const sessionPassword = loginOk
+      ? viaSecond
+        ? group.secondPassword
+        : group.password
+      : null;
+
+    accountSummaries.push({
+      group,
+      primary: group.email,
+      via,
+      sessionEmail,
+      sessionPassword,
+      recipients: group.inmates.length,
+      primaryError: loginStatus?.primaryError || undefined,
+    });
+
+    // Logout so the next probe starts clean (no leftover session / To chips).
+    await logoutCorrlinksQuiet();
+
+    if (g < groups.length - 1 && !loopAbort) {
+      const nextLabel = maskSensitive(groups[g + 1].email);
+      log(`Waiting ${LOOP_GAP_MS / 1000}s before next account probe…`, 'info');
+      const continued = await waitLoopGap(LOOP_GAP_MS, {
+        current: g + 1,
+        total: accountTotal,
+        nextLabel,
+      });
+      if (!continued) {
+        log(`Probe stopped during wait after ${g + 1}/${accountTotal}`, 'warn');
+        break;
+      }
+    }
+  }
+
+  const viaPrimary = accountSummaries.filter((a) => a.via === 'primary').length;
+  const viaSecondCount = accountSummaries.filter((a) => a.via === 'second').length;
+  const viaFailed = accountSummaries.filter((a) => a.via === 'failed').length;
+  const accountBits = [
+    viaPrimary ? `${viaPrimary} primary` : null,
+    viaSecondCount ? `${viaSecondCount} via second` : null,
+    viaFailed ? `${viaFailed} locked/failed` : null,
+  ].filter(Boolean);
+  const probeSummary = `Account probe done · ${accountBits.join(', ') || 'none'}`;
+  setLoopProgress(probeSummary);
+  setStatusHint(probeSummary);
+  log(probeSummary, viaFailed || viaSecondCount ? 'warn' : 'success');
+  toast(probeSummary, viaFailed || viaSecondCount ? 'warn' : 'success');
+  logAccountProbeSummary(accountSummaries);
+
+  const readyAccounts = accountSummaries.filter((a) => a.via === 'primary' || a.via === 'second');
+  if (loopAbort) {
+    loopRunning = false;
+    loopAbort = false;
+    setLoopCountdownOverlay();
+    updateActionButtons();
+    const stopped = `Loop stopped after probe · ${readyAccounts.length}/${accountTotal} accounts ready (not composed)`;
+    setLoopProgress(stopped);
+    setStatusHint(stopped);
+    log(stopped, 'warn');
+    toast(stopped, 'warn');
+    return;
+  }
+
+  if (!readyAccounts.length) {
+    loopRunning = false;
+    loopAbort = false;
+    setLoopCountdownOverlay();
+    updateActionButtons();
+    const none = 'No usable CorrLinks accounts after probe — skipped all recipients';
+    setLoopProgress(none);
+    setStatusHint(none);
+    log(none, 'error');
+    toast(none, 'error');
+    failCount = recipientTotal;
+    return;
+  }
+
+  // ── Phase 2: compose recipients only on accounts that passed the probe ──
+  log(
+    `Phase 2 — composing recipients on ${readyAccounts.length} ready account(s) (To cleared each time, no send)`,
+    'info'
+  );
+  toast(`Composing on ${readyAccounts.length} account(s)…`, 'info');
+
+  for (let i = 0; i < readyAccounts.length; i += 1) {
+    if (loopAbort) {
+      log(`Compose stopped after account ${i}/${readyAccounts.length}`, 'warn');
+      break;
+    }
+    const row = readyAccounts[i];
+    const group = row.group;
+    const viaSecond = row.via === 'second';
+    const working = {
+      email: row.sessionEmail,
+      password: row.sessionPassword,
+      secondEmail: null,
+      secondPassword: null,
+    };
+    const accountLabel = maskSensitive(row.sessionEmail || group.email);
+    setLoopProgress(
+      `Compose account ${i + 1}/${readyAccounts.length} · ${accountLabel}` +
+        (viaSecond ? ' (2nd)' : '') +
+        ' · logging in…'
+    );
+    log(
+      `—— Compose account ${i + 1}/${readyAccounts.length}: ${accountLabel}` +
+        (viaSecond ? ' via second' : ' via primary') +
+        ` · ${group.inmates.length} recipient(s) ——`,
+      viaSecond ? 'warn' : 'info'
+    );
+
+    const loginStatus = await startCorrlinksAccountLogin(working, { quietToast: true });
+    const loginOk =
+      loginStatus &&
+      (loginStatus.state === 'success' || (loginStatus.state === 'locked' && loginStatus.loggedIn));
+    if (!loginOk) {
+      failCount += group.inmates.length;
+      log(`Skipping recipients — re-login failed for ${accountLabel}`, 'error');
+    } else {
+      for (let r = 0; r < group.inmates.length; r += 1) {
+        if (loopAbort) {
+          log(`Compose stopped during ${accountLabel} after ${r}/${group.inmates.length}`, 'warn');
+          break;
+        }
+        const inmate = group.inmates[r];
+        const recipLabel = `${inmate.name || 'Inmate'} (${inmate.inmate_id || inmate.id})`;
+        setLoopProgress(
+          `Account ${i + 1}/${readyAccounts.length}` +
+            (viaSecond ? ' · 2nd' : '') +
+            ` · Recipient ${r + 1}/${group.inmates.length} · ${recipLabel}`
+        );
+        log(`—— Recipient ${r + 1}/${group.inmates.length}: ${recipLabel} ——`, 'info');
+        selectInmate(inmate.id, { autoLogin: false });
+        const status = await startCorrlinksCompose(inmate, { quietToast: true });
+        if (statusLooksGood(status)) okCount += 1;
+        else failCount += 1;
+      }
+    }
+
+    await logoutCorrlinksQuiet();
+
+    if (i < readyAccounts.length - 1 && !loopAbort) {
+      const next = readyAccounts[i + 1];
+      const nextLabel = maskSensitive(next.sessionEmail || next.primary);
+      log(`Waiting ${LOOP_GAP_MS / 1000}s before next compose account…`, 'info');
+      const continued = await waitLoopGap(LOOP_GAP_MS, {
+        current: i + 1,
+        total: readyAccounts.length,
+        nextLabel,
+      });
+      if (!continued) {
+        log(`Compose stopped during wait after ${i + 1}/${readyAccounts.length}`, 'warn');
+        break;
+      }
+    }
   }
 
   const wasAborted = loopAbort;
   loopRunning = false;
   loopAbort = false;
+  setLoopCountdownOverlay();
   updateActionButtons();
+
+  const accountSummaryText = accountBits.length ? ` · Accounts: ${accountBits.join(', ')}` : '';
   const summary = wasAborted
-    ? `Loop stopped · ${okCount} ok · ${failCount} failed · ${total} queued (not sent)`
-    : `Loop done · ${okCount} ok · ${failCount} failed · ${total} queued (not sent)`;
+    ? `Loop stopped · ${okCount} ok · ${failCount} failed · ${recipientTotal} recipients${accountSummaryText} (not sent)`
+    : `Loop done · ${okCount} ok · ${failCount} failed · ${recipientTotal} recipients${accountSummaryText} (not sent)`;
   setLoopProgress(summary);
   setStatusHint(summary);
-  log(summary, failCount || wasAborted ? 'warn' : 'success');
-  toast(summary, failCount || wasAborted ? 'warn' : 'success');
+  log(summary, failCount || wasAborted || viaSecondCount ? 'warn' : 'success');
+  toast(summary, failCount || wasAborted || viaSecondCount ? 'warn' : 'success');
 }
 
 function stopInmateLoop() {
   if (!loopRunning) return;
   loopAbort = true;
-  setLoopProgress('Stopping after current inmate…');
+  setLoopCountdownOverlay();
+  setLoopProgress('Stopping…');
   setStatusHint('Stopping loop…');
-  log('Stop requested — finishing current inmate, then pausing', 'warn');
+  log('Stop requested — aborting after current step', 'warn');
   btnStopLoop.disabled = true;
 }
 
-async function ensureCredentialsSaved() {
+function setLoginError(message, { info = false } = {}) {
+  if (!loginError) return;
+  if (!message) {
+    loginError.hidden = true;
+    loginError.textContent = '';
+    loginError.classList.remove('is-info');
+    sdEmail?.classList.remove('is-invalid');
+    sdPassword?.classList.remove('is-invalid');
+    return;
+  }
+  loginError.hidden = false;
+  loginError.textContent = message;
+  loginError.classList.toggle('is-info', Boolean(info));
+}
+
+function validateSportsDataForm() {
   const email = sdEmail.value.trim();
   const password = sdPassword.value;
+  sdEmail.classList.remove('is-invalid');
+  sdPassword.classList.remove('is-invalid');
+
+  if (!email && !password) {
+    sdEmail.classList.add('is-invalid');
+    sdPassword.classList.add('is-invalid');
+    throw new Error('Enter SportsData email and password');
+  }
+  if (!email) {
+    sdEmail.classList.add('is-invalid');
+    sdEmail.focus();
+    throw new Error('Email is required');
+  }
+  // Practical email check (HTML5 type=email alone is not enough for empty/partial cases).
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    sdEmail.classList.add('is-invalid');
+    sdEmail.focus();
+    throw new Error('Enter a valid email address');
+  }
+  if (!password) {
+    sdPassword.classList.add('is-invalid');
+    sdPassword.focus();
+    throw new Error('Password is required');
+  }
+  if (password.length < 4) {
+    sdPassword.classList.add('is-invalid');
+    sdPassword.focus();
+    throw new Error('Password looks too short');
+  }
+  return { email, password };
+}
+
+async function ensureCredentialsSaved() {
+  const { email, password } = validateSportsDataForm();
   const baseUrl = sdBaseUrl.value.trim() || 'https://sportsdata.com';
-  if (!email || !password) throw new Error('Enter SportsData email and password');
   const result = await window.api.saveSportsDataLogin({
     email,
     password,
@@ -670,6 +1158,18 @@ async function ensureCredentialsSaved() {
   });
   if (!result.ok) throw new Error(result.message || 'Failed to save login');
   return result;
+}
+
+/** Save credentials then verify against SportsData before opening the main UI. */
+async function signInAndVerifySportsData() {
+  setLoginError('');
+  const saved = await ensureCredentialsSaved();
+  const verified = await window.api.verifySportsDataLogin();
+  if (!verified?.ok) {
+    sdPassword.classList.add('is-invalid');
+    throw new Error(verified?.message || 'SportsData login failed — check email/password');
+  }
+  return { saved, verified };
 }
 
 async function refreshInmates() {
@@ -797,6 +1297,7 @@ function resetWorkspaceState() {
 async function init() {
   resetWorkspaceState();
   showLoginScreen();
+  setLoginError('');
 
   try {
     const summary = await window.api.getConfigSummary();
@@ -804,10 +1305,19 @@ async function init() {
     setConfigSummary(summary);
     if (summary.email && summary.hasPassword) {
       if (summary.credentialsPath) {
-        log(`Remembered SportsData login (${maskSensitive(summary.email)})`, 'info');
+        log(`Remembered SportsData login (${maskSensitive(summary.email)}) — verifying…`, 'info');
       } else if (summary.envPath) {
-        log(`Loaded SportsData credentials from .env`, 'info');
+        log(`Loaded SportsData credentials from .env — verifying…`, 'info');
       }
+      setLoginError('Verifying SportsData login…', { info: true });
+      const verified = await window.api.verifySportsDataLogin();
+      if (!verified?.ok) {
+        setLoginError(verified?.message || 'Saved login failed — sign in again');
+        log(verified?.message || 'Remembered SportsData login invalid', 'error');
+        sdPassword.focus();
+        return;
+      }
+      setLoginError('');
       showMainApp(summary.email);
       log('Control UI ready', 'info');
       await refreshInmates();
@@ -821,6 +1331,7 @@ async function init() {
       configSummary.hidden = true;
       configSummary.textContent = '';
     }
+    setLoginError(error.message || String(error));
     log(error.message || String(error), 'error');
   }
 }
@@ -835,22 +1346,39 @@ btnToggleCompose.addEventListener('click', () => {
 sportsdataForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   btnSaveLogin.disabled = true;
+  btnSaveLogin.classList.add('loading');
+  btnSaveLogin.textContent = 'Signing in…';
+  setLoginError('');
+  showLoginScreen();
   try {
-    const saved = await ensureCredentialsSaved();
+    const { saved, verified } = await signInAndVerifySportsData();
     const summary = await window.api.getConfigSummary();
     fillLoginForm(summary);
     setConfigSummary(summary);
-    log(`Signed in as ${maskSensitive(saved.email)}`, 'success');
+    log(`Signed in as ${maskSensitive(verified.email || saved.email)}`, 'success');
     toast('Signed in to SportsData', 'success');
-    showMainApp(saved.email || summary.email);
+    showMainApp(verified.email || saved.email || summary.email);
     await refreshInmates();
   } catch (error) {
-    log(error.message || String(error), 'error');
-    toast(error.message || String(error), 'error');
+    const message = error.message || String(error);
+    setLoginError(message);
+    log(message, 'error');
+    toast(message, 'error');
     showLoginScreen();
   } finally {
     btnSaveLogin.disabled = false;
+    btnSaveLogin.classList.remove('loading');
+    btnSaveLogin.textContent = 'Sign in';
   }
+});
+
+sdEmail?.addEventListener('input', () => {
+  sdEmail.classList.remove('is-invalid');
+  if (loginError && !loginError.hidden) setLoginError('');
+});
+sdPassword?.addEventListener('input', () => {
+  sdPassword.classList.remove('is-invalid');
+  if (loginError && !loginError.hidden) setLoginError('');
 });
 
 btnRefresh.addEventListener('click', () => refreshInmates());
@@ -1075,8 +1603,8 @@ function syncCorrPaneBounds() {
   const width = Math.max(0, right - left);
   const height = Math.max(0, bottom - top);
 
-  // Hide embed when the pane is scrolled away or collapsed to a sliver.
-  const visible = width >= 8 && height >= 8;
+  // Hide embed when scrolled away, collapsed, or a loop countdown overlay is up.
+  const visible = !loopCountdownActive && width >= 8 && height >= 8;
   window.api.setCorrBounds({
     x: Math.round(left),
     y: Math.round(top),

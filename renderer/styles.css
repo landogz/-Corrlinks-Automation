@@ -149,6 +149,38 @@ body {
   min-height: 44px;
 }
 
+.login-form button[type='submit'].loading {
+  opacity: 0.75;
+  cursor: wait;
+}
+
+.login-error {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.12);
+  color: #fecaca;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.login-error.is-info {
+  border-color: rgba(42, 157, 143, 0.4);
+  background: rgba(42, 157, 143, 0.12);
+  color: var(--teal-bright);
+}
+
+.login-error[hidden] {
+  display: none !important;
+}
+
+.login-form input.is-invalid {
+  border-color: rgba(239, 68, 68, 0.65);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+}
+
 .login-meta {
   margin: 8px 0 0;
   text-align: center;
@@ -397,6 +429,62 @@ body.is-login .toast-host {
   pointer-events: none;
 }
 
+.loop-countdown {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  padding: clamp(16px, 4vw, 32px);
+  text-align: center;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(42, 157, 143, 0.28) 0%, transparent 55%),
+    rgba(5, 11, 18, 0.94);
+  backdrop-filter: blur(2px);
+}
+
+.loop-countdown[hidden] {
+  display: none !important;
+}
+
+.loop-countdown-label {
+  margin: 0;
+  color: var(--teal-bright);
+  font-size: clamp(13px, 1.6vw, 18px);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.loop-countdown-num {
+  margin: 0;
+  color: #fff;
+  font-family: var(--mono);
+  font-size: clamp(72px, 18vw, 160px);
+  font-weight: 700;
+  line-height: 0.95;
+  letter-spacing: -0.04em;
+  text-shadow: 0 12px 40px rgba(42, 157, 143, 0.35);
+  font-variant-numeric: tabular-nums;
+  transition: transform 0.15s ease;
+}
+
+.loop-countdown-num.is-tick {
+  transform: scale(1.06);
+}
+
+.loop-countdown-next {
+  margin: 8px 0 0;
+  max-width: 36ch;
+  color: var(--muted);
+  font-size: clamp(12px, 1.4vw, 15px);
+  font-weight: 500;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
 .card {
   background: var(--card);
   border: 1px solid var(--border);
@@ -626,32 +714,90 @@ button:focus-visible,
   display: none !important;
 }
 
-.actions-row {
+.actions-stack {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  margin-top: 12px;
-  align-items: stretch;
+  margin-top: 14px;
+  min-width: 0;
 }
 
-.actions-row button {
-  width: 100%;
+.actions-stack button {
+  min-width: 0;
   min-height: 40px;
   justify-content: center;
-  white-space: nowrap;
+  line-height: 1.2;
 }
 
-/* While looping: Stop + Check status side by side (Login is hidden) */
-.actions-row.is-looping {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.actions-stack .action-primary {
+  width: 100%;
+  padding: 11px 14px;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  border-radius: 9px;
+  background: linear-gradient(180deg, #34b3a3 0%, var(--primary) 100%);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset, 0 6px 16px rgba(42, 157, 143, 0.22);
 }
 
-.actions-row #btnStopLoop.danger {
+.actions-stack .action-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #3dc4b3 0%, var(--primary-hover) 100%);
+}
+
+.actions-stack .action-primary:disabled {
+  box-shadow: none;
+}
+
+.actions-secondary {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+
+.actions-stack .action-secondary,
+.actions-stack .action-stop,
+.actions-stack .action-ghost {
+  width: 100%;
+  padding: 9px 10px;
+  font-size: 12.5px;
+  border-radius: 8px;
+}
+
+.actions-stack .action-secondary {
+  background: color-mix(in srgb, var(--navy) 55%, var(--primary));
+  border: 1px solid rgba(42, 157, 143, 0.45);
+}
+
+.actions-stack .action-secondary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--navy) 35%, var(--primary));
+}
+
+.actions-stack .action-ghost {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--text);
+}
+
+.actions-stack .action-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.actions-stack .action-stop.danger {
   background: color-mix(in srgb, var(--danger) 88%, #7f1d1d);
+  border: 1px solid transparent;
 }
 
-.actions-row #btnStopLoop.danger:hover:not(:disabled) {
+.actions-stack .action-stop.danger:hover:not(:disabled) {
   background: var(--danger);
+}
+
+/* While looping: Login hidden — Stop + Status share the secondary row */
+.actions-stack.is-looping .action-primary {
+  display: none;
+}
+
+.actions-stack.is-looping .actions-secondary {
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
 }
 
 button {
@@ -936,15 +1082,11 @@ button.tiny {
     grid-template-columns: 1fr auto;
   }
 
-  .actions-row {
+  .actions-secondary {
     grid-template-columns: 1fr;
   }
 
-  .actions-row.is-looping {
-    grid-template-columns: 1fr;
-  }
-
-  .actions-row button {
+  .actions-stack button {
     min-height: 44px;
   }
 }

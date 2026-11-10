@@ -1078,7 +1078,8 @@ async function trySyncfusionSelectRecipient(win, { recipientName, inmateId }) {
                 if (match) values = [match[valueField] ?? match[textField] ?? match];
               }
               if (values.length) {
-                multi.value = values;
+                // Exactly one recipient — never stack prior To chips.
+                multi.value = [values[0]];
                 multi.dataBind?.();
                 multi.updateValue?.();
                 multi.hidePopup?.();
@@ -1110,11 +1111,63 @@ async function trySyncfusionSelectRecipient(win, { recipientName, inmateId }) {
           multi.value = [value];
           multi.dataBind?.();
           multi.hidePopup?.();
-          return { ok: true, method: 'multiselect-api', selected: JSON.stringify(best).slice(0, 160), score: bestScore };
+          const textField = fields.text || 'text';
+          const selectedName =
+            best[textField] ||
+            best.name ||
+            best.Name ||
+            best.DisplayName ||
+            best.label ||
+            best.Text ||
+            (typeof best === 'string' ? best : '') ||
+            String(value);
+          return { ok: true, method: 'multiselect-api', selected: String(selectedName).trim(), score: bestScore };
         } catch (_) {}
       }
 
       return { ok: false, reason: 'api-miss', gridCount: grids.length, multiCount: multis.length };
+    })()`,
+    true
+  );
+}
+
+/**
+ * Clear all recipients from the CorrLinks compose To multiselect.
+ * Prevents stacking previous inmates onto the next compose.
+ */
+async function clearComposeToField(win) {
+  return win.webContents.executeJavaScript(
+    `(() => {
+      const multis = [];
+      const seen = new Set();
+      const push = (inst) => {
+        if (!inst || seen.has(inst)) return;
+        seen.add(inst);
+        multis.push(inst);
+      };
+      try {
+        if (window.ej?.base?.getInstance) {
+          document.querySelectorAll('.e-multiselect, .e-multi-select-wrapper, input.e-dropdownbase').forEach((el) => {
+            try { push(window.ej.base.getInstance(el, 'multiselect') || window.ej.base.getInstance(el)); } catch (_) {}
+          });
+        }
+      } catch (_) {}
+      for (const multi of multis) {
+        try {
+          multi.value = [];
+          multi.text = '';
+          multi.dataBind?.();
+          multi.updateValue?.();
+          multi.clearAll?.();
+          multi.clear?.();
+        } catch (_) {}
+      }
+      document.querySelectorAll(
+        '.e-multiselect .e-chips-close, .e-multi-select-wrapper .e-chips-close, .e-chip-delete, .e-chips .e-chips-close'
+      ).forEach((btn) => {
+        try { btn.click(); } catch (_) {}
+      });
+      return { ok: true, cleared: multis.length };
     })()`,
     true
   );
@@ -1149,6 +1202,9 @@ async function selectComposeRecipient(win, { recipientName, inmateId } = {}) {
   }
 
   win.focus();
+  // Always start from an empty To field so prior recipients never stack.
+  await clearComposeToField(win);
+  await new Promise((r) => setTimeout(r, 250));
 
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     const filterText = filterTokens[(attempt - 1) % filterTokens.length] || filterTokens[0] || '';
@@ -1739,9 +1795,84 @@ async function attemptLogin(win, { email, password, label, clearSession = false 
   };
 }
 
+function summarizeCompose(compose) {
+  const toMsg = compose.recipient?.ok
+    ? `To=${compose.recipient.selected}`
+    : compose.recipient
+      ? `To failed (${compose.recipient.reason || 'n/a'})`
+      : 'To skipped';
+  const subMsg = compose.subjectResult?.ok
+    ? `Subject=${compose.subject}`
+    : `Subject failed (${compose.subject || 'n/a'})`;
+  const bodyMsg = compose.bodyResult?.ok
+    ? `Pasted ${compose.pastedPart?.filename || 'body'} (${compose.pastedPart?.characters || 0} chars)`
+    : compose.bodyResult?.skipped
+      ? compose.bodyResult.reason
+      : `Body paste failed (${compose.bodyResult?.reason || 'n/a'})`;
+  const pendingMsg = compose.pendingParts?.length
+    ? ` · ${compose.pendingParts.length} more file(s) queued (no send yet)`
+    : ' · no send yet';
+  return { toMsg, subMsg, bodyMsg, pendingMsg };
+}
+
+async function applyComposeToStatus(win, status, composeArgs) {
+  const canCompose = status.state === 'success' || (status.state === 'locked' && status.loggedIn);
+  if (!canCompose) {
+    return setStatus(status);
+  }
+  try {
+    const compose = await goToCompose(win, composeArgs);
+    const { toMsg, subMsg, bodyMsg, pendingMsg } = summarizeCompose(compose);
+    return setStatus({
+      ...status,
+      state: status.state === 'success' ? 'success' : status.state,
+      message:
+        status.state === 'success'
+          ? `Logged in — ${toMsg} · ${subMsg} · ${bodyMsg}${pendingMsg}`
+          : `${status.message} — ${toMsg} · ${subMsg} · ${bodyMsg}${pendingMsg}`,
+      url: compose.url || CORRLINKS.composeUrl,
+      recipient: compose.recipient || null,
+      subject: compose.subject || null,
+      subjectResult: compose.subjectResult || null,
+      bodyResult: compose.bodyResult || null,
+      pastedPart: compose.pastedPart || null,
+      pendingParts: compose.pendingParts || [],
+      exchangeSkipped: compose.exchangeSkipped || [],
+    });
+  } catch (error) {
+    return setStatus({
+      ...status,
+      message: `${status.message || 'Logged in'} — failed to open compose: ${error.message}`,
+    });
+  }
+}
+
+async function downloadExchangeParts(inmate, fetchFileText) {
+  const exchange = inmate?.inmate_exchange || {};
+  const sendable = Array.isArray(exchange.sendable) ? exchange.sendable : [];
+  const skipped = Array.isArray(exchange.skipped) ? exchange.skipped : [];
+  const exchangeParts = [];
+  if (typeof fetchFileText === 'function') {
+    for (const file of sendable) {
+      setStatus({
+        state: 'exchange',
+        message: `Downloading exchange file part ${file.part}: ${file.filename}`,
+      });
+      const got = await fetchFileText(file.url);
+      exchangeParts.push({
+        ...file,
+        text: got.text || '',
+        characters: got.characters ?? (got.text || '').length,
+      });
+    }
+  }
+  return { exchangeParts, exchangeSkipped: skipped };
+}
+
 /**
  * Login with primary corrlinks_account first.
  * If CorrLinks reports the account is locked, retry with second_corrlinks_account.
+ * Pass skipCompose:true to leave a logged-in session for later composeForInmate calls.
  */
 async function loginToCorrlinks({
   email,
@@ -1752,6 +1883,7 @@ async function loginToCorrlinks({
   inmateId,
   exchangeParts = [],
   exchangeSkipped = [],
+  skipCompose = false,
 } = {}) {
   if (!email || !password) {
     throw new Error('Primary corrlinks email and password are required');
@@ -1769,59 +1901,28 @@ async function loginToCorrlinks({
     recipientName: recipientName || null,
     inmateId: inmateId || null,
     exchangePartCount: Array.isArray(exchangeParts) ? exchangeParts.length : 0,
+    skipCompose: Boolean(skipCompose),
   });
 
   async function finishWithCompose(status) {
-    // Open compose only for a usable logged-in session.
-    const canCompose = status.state === 'success' || (status.state === 'locked' && status.loggedIn);
-    if (!canCompose) {
-      return setStatus(status);
-    }
-    try {
-      const compose = await goToCompose(win, {
-        recipientName,
-        inmateId,
-        exchangeParts,
-        exchangeSkipped,
-      });
-      const toMsg = compose.recipient?.ok
-        ? `To=${compose.recipient.selected}`
-        : compose.recipient
-          ? `To failed (${compose.recipient.reason || 'n/a'})`
-          : 'To skipped';
-      const subMsg = compose.subjectResult?.ok
-        ? `Subject=${compose.subject}`
-        : `Subject failed (${compose.subject || 'n/a'})`;
-      const bodyMsg = compose.bodyResult?.ok
-        ? `Pasted ${compose.pastedPart?.filename || 'body'} (${compose.pastedPart?.characters || 0} chars)`
-        : compose.bodyResult?.skipped
-          ? compose.bodyResult.reason
-          : `Body paste failed (${compose.bodyResult?.reason || 'n/a'})`;
-      const pendingMsg = compose.pendingParts?.length
-        ? ` · ${compose.pendingParts.length} more file(s) queued (no send yet)`
-        : ' · no send yet';
+    if (skipCompose) {
+      const canStay =
+        status.state === 'success' || (status.state === 'locked' && status.loggedIn);
       return setStatus({
         ...status,
-        state: status.state === 'success' ? 'success' : status.state,
-        message:
-          status.state === 'success'
-            ? `Logged in — ${toMsg} · ${subMsg} · ${bodyMsg}${pendingMsg}`
-            : `${status.message} — ${toMsg} · ${subMsg} · ${bodyMsg}${pendingMsg}`,
-        url: compose.url || CORRLINKS.composeUrl,
-        recipient: compose.recipient || null,
-        subject: compose.subject || null,
-        subjectResult: compose.subjectResult || null,
-        bodyResult: compose.bodyResult || null,
-        pastedPart: compose.pastedPart || null,
-        pendingParts: compose.pendingParts || [],
-        exchangeSkipped: compose.exchangeSkipped || [],
-      });
-    } catch (error) {
-      return setStatus({
-        ...status,
-        message: `${status.message || 'Logged in'} — failed to open compose: ${error.message}`,
+        message: canStay
+          ? status.state === 'success'
+            ? `Logged in as ${status.email || email} — ready for recipients`
+            : `${status.message} — session usable for recipients`
+          : status.message,
       });
     }
+    return applyComposeToStatus(win, status, {
+      recipientName,
+      inmateId,
+      exchangeParts,
+      exchangeSkipped,
+    });
   }
 
   const primary = await attemptLogin(win, {
@@ -1893,29 +1994,12 @@ async function loginToCorrlinks({
 
 /**
  * Convenience: accept a normalized inmate row from SportsData.
+ * Full path: login (with lock fallback) + compose for that one recipient.
  */
 async function loginInmate(inmate, { fetchFileText } = {}) {
   const primary = inmate?.corrlinks_account || {};
   const second = inmate?.second_corrlinks_account || {};
-  const exchange = inmate?.inmate_exchange || {};
-  const sendable = Array.isArray(exchange.sendable) ? exchange.sendable : [];
-  const skipped = Array.isArray(exchange.skipped) ? exchange.skipped : [];
-
-  const exchangeParts = [];
-  if (typeof fetchFileText === 'function') {
-    for (const file of sendable) {
-      setStatus({
-        state: 'exchange',
-        message: `Downloading exchange file part ${file.part}: ${file.filename}`,
-      });
-      const got = await fetchFileText(file.url);
-      exchangeParts.push({
-        ...file,
-        text: got.text || '',
-        characters: got.characters ?? (got.text || '').length,
-      });
-    }
-  }
+  const { exchangeParts, exchangeSkipped } = await downloadExchangeParts(inmate, fetchFileText);
 
   return loginToCorrlinks({
     email: primary.email,
@@ -1925,19 +2009,113 @@ async function loginInmate(inmate, { fetchFileText } = {}) {
     recipientName: inmate?.name || null,
     inmateId: inmate?.inmate_id || null,
     exchangeParts,
-    exchangeSkipped: skipped,
+    exchangeSkipped,
   });
+}
+
+/**
+ * Account login only — no compose. Used by the grouped loop before recipients.
+ */
+async function loginAccount(
+  { email, password, secondEmail, secondPassword } = {},
+  _options = {}
+) {
+  return loginToCorrlinks({
+    email,
+    password,
+    secondEmail,
+    secondPassword,
+    skipCompose: true,
+  });
+}
+
+/** Logout / clear CorrLinks session so the next account probe starts clean. */
+async function logoutCorrlinksSession() {
+  if (!hostWindow || hostWindow.isDestroyed()) {
+    return setStatus({ state: 'idle', message: 'No CorrLinks host window' });
+  }
+  if (!corrView?.webContents || corrView.webContents.isDestroyed()) {
+    return setStatus({ state: 'idle', message: 'No CorrLinks session' });
+  }
+  const win = getOrCreateWindow();
+  await forceLogoutExistingSession(win);
+  return setStatus({
+    state: 'idle',
+    message: 'Logged out of CorrLinks — ready for next account',
+    loggedIn: false,
+  });
+}
+
+/**
+ * Compose for one inmate on an already-logged-in CorrLinks session.
+ * Does not attempt login.
+ */
+async function composeForInmate(inmate, { fetchFileText } = {}) {
+  if (!inmate) throw new Error('Inmate is required for compose');
+  const win = getOrCreateWindow();
+  win.show();
+  win.focus();
+
+  const { exchangeParts, exchangeSkipped } = await downloadExchangeParts(inmate, fetchFileText);
+  const recipientName = inmate?.name || null;
+  const inmateId = inmate?.inmate_id || null;
+
+  setStatus({
+    state: 'compose',
+    message: `Composing for ${recipientName || inmateId || inmate.id}…`,
+    recipientName,
+    inmateId,
+    exchangePartCount: exchangeParts.length,
+  });
+
+  try {
+    const compose = await goToCompose(win, {
+      recipientName,
+      inmateId,
+      exchangeParts,
+      exchangeSkipped,
+    });
+    const { toMsg, subMsg, bodyMsg, pendingMsg } = summarizeCompose(compose);
+    const composeOk =
+      Boolean(compose.recipient?.ok) ||
+      Boolean(compose.subjectResult?.ok) ||
+      Boolean(compose.bodyResult?.ok);
+    return setStatus({
+      state: composeOk ? 'success' : 'error',
+      message: `${toMsg} · ${subMsg} · ${bodyMsg}${pendingMsg}`,
+      url: compose.url || CORRLINKS.composeUrl,
+      recipient: compose.recipient || null,
+      subject: compose.subject || null,
+      subjectResult: compose.subjectResult || null,
+      bodyResult: compose.bodyResult || null,
+      pastedPart: compose.pastedPart || null,
+      pendingParts: compose.pendingParts || [],
+      exchangeSkipped: compose.exchangeSkipped || [],
+      loggedIn: true,
+    });
+  } catch (error) {
+    return setStatus({
+      state: 'error',
+      message: `Compose failed: ${error.message || String(error)}`,
+      recipientName,
+      inmateId,
+    });
+  }
 }
 
 module.exports = {
   loginToCorrlinks,
   loginInmate,
+  loginAccount,
+  composeForInmate,
+  logoutCorrlinksSession,
   getStatus,
   getOrCreateWindow,
   forceCloseCorrWindow,
   setHostWindow,
   setCorrBounds,
   selectComposeRecipient,
+  clearComposeToField,
   fillComposeSubject,
   fillComposeBody,
   goToCompose,
