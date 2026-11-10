@@ -4,13 +4,15 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the files from the [latest release](https://gitlab.com/sportsdata1/corrlinks-automation/-/releases/permalink/latest):
+Get the files from the [v0.1.0 release](https://gitlab.com/sportsdata1/corrlinks-automation/-/releases/v0.1.0) (or the [Releases](https://gitlab.com/sportsdata1/corrlinks-automation/-/releases) page):
 
 | Platform | File |
 | --- | --- |
 | macOS (Apple Silicon) | `Inmate Exchange Auto-0.1.0-arm64.dmg` or `Inmate Exchange Auto-0.1.0-arm64-mac.zip` |
 | macOS (Intel) | `Inmate Exchange Auto-0.1.0.dmg` or `Inmate Exchange Auto-0.1.0-mac.zip` |
 | Windows | `Inmate Exchange Auto Setup 0.1.0.exe` or `Inmate Exchange Auto 0.1.0.exe` (portable) |
+
+Tag `v0.1.0` is already on the repo. Publish that tag as a GitLab Release and attach the files from local `release/` (DMG/ZIP/EXE only — skip `.blockmap`). After the first release exists, [permalink/latest](https://gitlab.com/sportsdata1/corrlinks-automation/-/releases/permalink/latest) will work too.
 
 ## Install on macOS
 

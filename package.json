@@ -15,7 +15,8 @@
     "pack": "electron-builder --dir",
     "dist": "electron-builder --mac --win",
     "dist:mac": "electron-builder --mac",
-    "dist:win": "electron-builder --win"
+    "dist:win": "electron-builder --win",
+    "publish:release": "bash scripts/publish-gitlab-release.sh"
   },
   "dependencies": {
     "axios": "^1.13.2",
@@ -29,7 +30,7 @@
   "build": {
     "appId": "com.mjr.inmateexchange.auto",
     "productName": "Inmate Exchange Auto",
-    "copyright": "Copyright © MJR",
+    "copyright": "Copyright \u00a9 MJR",
     "directories": {
       "output": "release",
       "buildResources": "build"
