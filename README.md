@@ -1,18 +1,18 @@
-# Inmate Exchange Auto (CorrLinks Automation)
+# CorrLinks Automation (Inmate Exchange Auto)
 
 Desktop app that loads CorrLinks inmate accounts from SportsData, logs into CorrLinks, opens compose, and pastes Inmate Exchange report text.
 
+**Repository:** [github.com/landogz/-Corrlinks-Automation](https://github.com/landogz/-Corrlinks-Automation)
+
 ## Download
 
-Get the files from the [v0.1.0 release](https://gitlab.com/sportsdata1/corrlinks-automation/-/releases/v0.1.0) (or the [Releases](https://gitlab.com/sportsdata1/corrlinks-automation/-/releases) page):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.2**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inmate Exchange Auto-0.1.0-arm64.dmg` or `Inmate Exchange Auto-0.1.0-arm64-mac.zip` |
-| macOS (Intel) | `Inmate Exchange Auto-0.1.0.dmg` or `Inmate Exchange Auto-0.1.0-mac.zip` |
-| Windows | `Inmate Exchange Auto Setup 0.1.0.exe` or `Inmate Exchange Auto 0.1.0.exe` (portable) |
-
-Tag `v0.1.0` is already on the repo. Publish that tag as a GitLab Release and attach the files from local `release/` (DMG/ZIP/EXE only — skip `.blockmap`). After the first release exists, [permalink/latest](https://gitlab.com/sportsdata1/corrlinks-automation/-/releases/permalink/latest) will work too.
+| macOS (Apple Silicon) | `Inmate Exchange Auto-0.1.2-arm64.dmg` or `Inmate Exchange Auto-0.1.2-arm64-mac.zip` |
+| macOS (Intel) | `Inmate Exchange Auto-0.1.2.dmg` or `Inmate Exchange Auto-0.1.2-mac.zip` |
+| Windows | `Inmate Exchange Auto Setup 0.1.2.exe` or `Inmate Exchange Auto 0.1.2.exe` (portable) |
 
 ## Install on macOS
 
@@ -26,19 +26,19 @@ xattr -dr com.apple.quarantine "/Applications/Inmate Exchange Auto.app"
 ```
 
 3. Open **Inmate Exchange Auto** from Applications or Launchpad.
-4. Create a `.env` file (see [Configuration](#configuration)).
+4. Sign in with SportsData email/password in the app (or use a `.env` — see [Configuration](#configuration)).
 
 ## Install on Windows
 
-1. Run `Inmate Exchange Auto Setup 0.1.0.exe`.
+1. Run `Inmate Exchange Auto Setup 0.1.2.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inmate Exchange Auto** from the Start menu.
 
-`Inmate Exchange Auto 0.1.0.exe` (portable) runs without installing — put `.env` in the same folder as the `.exe`.
+`Inmate Exchange Auto 0.1.2.exe` (portable) runs without installing — put `.env` in the same folder as the `.exe` if you use one.
 
 ## Configuration
 
-In the app: enter SportsData **email** / **password** → **Save login** (remembered on this computer).
+In the app: enter SportsData **email** / **password** → **Sign in** (validated against SportsData, then remembered on this computer).
 
 Optional `.env` (still supported; in-app login overrides it):
 
@@ -60,23 +60,25 @@ Do not commit a filled `.env` or `sportsdata-credentials.json`.
 
 ## Usage
 
-1. Open the app and save SportsData login (remembered for next launch).
-2. Click **Refresh inmates**.
+1. Open the app and sign in to SportsData.
+2. Inmates load automatically (or click **Refresh**).
 3. Select an inmate.
-4. Click **Login to CorrLinks**.
+4. Click **Login to CorrLinks** (single inmate), or **Start loop** (grouped by CorrLinks account).
 
 The app will:
 
 - log in with the primary CorrLinks account (fallback to second if locked)
 - open compose
-- set subject from the current day in `APP_TIMEZONE` (`mon`, or `mon & tue` between 1am–6am)
+- set subject from `APP_TIMEZONE` (today’s short day e.g. `tue`; between 1am and 6am → `mon & tue`)
 - paste Inmate Exchange TXT file contents (skips `*_empty.txt`; part 1 only for now — no Send yet)
+
+**Start loop:** probes each CorrLinks account for lock first, then composes recipients one-by-one (To cleared each time). 10s pause only when switching accounts.
 
 ## Develop from source
 
 ```bash
-git clone https://gitlab.com/sportsdata1/corrlinks-automation.git
-cd corrlinks-automation
+git clone https://github.com/landogz/-Corrlinks-Automation.git
+cd -- -Corrlinks-Automation
 cp .env.example .env
 npm install
 npm start
@@ -90,7 +92,7 @@ npm run dist:win
 npm run dist
 ```
 
-Outputs are written to `release/`. Upload those files to a [GitLab Release](https://gitlab.com/sportsdata1/corrlinks-automation/-/releases).
+Outputs are written to `release/`. Upload those files to a [GitHub Release](https://github.com/landogz/-Corrlinks-Automation/releases).
 
 ### Smoke tests
 
