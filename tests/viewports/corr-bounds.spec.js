@@ -58,7 +58,6 @@ for (const vp of VIEWPORTS) {
 
       // Visible pane → non-zero bounds inside app, above footer
       await page.evaluate(() => {
-        document.querySelector('#composeCard')?.classList.remove('collapsed');
         document.querySelector('#corrPane')?.scrollIntoView({ block: 'end' });
         window.__syncCorrPaneBounds();
       });
@@ -99,27 +98,21 @@ for (const vp of VIEWPORTS) {
       // Short landscape: expanding compose keeps header above statusbar
       if (vp.height <= 420) {
         await page.evaluate(() => {
-          document.getElementById('btnToggleCompose').click();
-          document.getElementById('btnToggleCompose').click();
-        });
-        // ensure expanded
-        await page.evaluate(() => {
-          document.querySelector('#composeCard')?.classList.remove('collapsed');
-          document.querySelector('#composeCard')?.scrollIntoView({ block: 'nearest' });
+          document.querySelector('#corrPane')?.scrollIntoView({ block: 'nearest' });
         });
         const land = await page.evaluate(() => {
-          const btn = document.getElementById('btnToggleCompose').getBoundingClientRect();
+          const head = document.querySelector('.corr-head').getBoundingClientRect();
           const footer = document.querySelector('.statusbar').getBoundingClientRect();
           const credit = document.querySelector('#mainShell .status-credit');
           return {
-            btnBottom: btn.bottom,
+            headBottom: head.bottom,
             footerTop: footer.top,
             creditHidden: !credit || getComputedStyle(credit).display === 'none',
-            covered: btn.bottom > footer.top + 2 && btn.top < footer.bottom,
+            covered: head.bottom > footer.top + 2 && head.top < footer.bottom,
           };
         });
         expect(land.creditHidden, 'credit should hide on short height').toBe(true);
-        expect(land.covered, 'compose toggle covered by footer').toBe(false);
+        expect(land.covered, 'corr head covered by footer').toBe(false);
       }
     });
   });

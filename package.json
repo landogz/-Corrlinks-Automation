@@ -20,7 +20,6 @@
     "publish:release": "bash scripts/publish-gitlab-release.sh",
     "test:viewports": "playwright test tests/viewports",
     "test:viewports:shell": "playwright test tests/viewports/control-shell.spec.js",
-    "test:viewports:compose": "playwright test tests/viewports/compose-preview.spec.js",
     "test:viewports:log": "playwright test tests/viewports/status-log.spec.js"
   },
   "dependencies": {
@@ -38,7 +37,7 @@
   "build": {
     "appId": "com.mjr.inmateexchange.auto",
     "productName": "Inmate Exchange Auto",
-    "copyright": "Copyright © MJR",
+    "copyright": "Copyright \u00a9 MJR",
     "directories": {
       "output": "release",
       "buildResources": "build"

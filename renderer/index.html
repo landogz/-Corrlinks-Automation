@@ -89,8 +89,8 @@
     </div>
 
     <div id="mainShell" class="shell" hidden>
-      <header class="topbar" id="appTopbar">
-        <div class="topbar-left brand drag-region">
+      <header class="topbar drag-region" id="appTopbar">
+        <div class="topbar-left brand">
           <img
             class="brand-mark"
             src="assets/logo-mark-ui.png"
@@ -210,24 +210,15 @@
           <div class="workspace">
             <div class="col col-controls">
               <section class="card step-card" id="inmateCard" data-step="1">
-                <div class="collapse-header">
-                  <button
-                    id="btnToggleInmate"
-                    class="collapse-toggle"
-                    type="button"
-                    aria-expanded="true"
-                    aria-controls="inmateBody"
-                  >
-                    <span class="step-badge" aria-hidden="true">1</span>
-                    <span class="collapse-title">Inmate</span>
-                    <span id="inmateCollapsedSummary" class="collapse-summary truncate" title=""></span>
-                    <span class="step-check" aria-hidden="true">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    </span>
-                    <span class="chevron" aria-hidden="true"></span>
-                  </button>
+                <div class="card-header-static">
+                  <span class="step-badge" aria-hidden="true">1</span>
+                  <h2 class="collapse-title">Inmate</h2>
+                  <span id="inmateCollapsedSummary" class="collapse-summary truncate" title=""></span>
+                  <span class="step-check" aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </span>
                 </div>
-                <div id="inmateBody" class="collapse-body">
+                <div id="inmateBody" class="card-body">
                   <div class="field-head">
                     <label for="inmateSearch">Inmate account</label>
                     <span id="inmateCount" class="field-meta tabular">0 inmates</span>
@@ -319,84 +310,6 @@
             </div>
 
             <div class="col col-corrlinks">
-              <section class="card step-card compose-card" id="composeCard" data-step="2">
-                <div class="collapse-header">
-                  <button
-                    id="btnToggleCompose"
-                    class="collapse-toggle"
-                    type="button"
-                    aria-expanded="true"
-                    aria-controls="composeBody"
-                  >
-                    <span class="step-badge" aria-hidden="true">2</span>
-                    <span class="collapse-title">Compose preview</span>
-                    <span id="composeCollapsedSummary" class="collapse-summary truncate" title="">Waiting for CorrLinks…</span>
-                    <span class="step-check" aria-hidden="true">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    </span>
-                    <span class="chevron" aria-hidden="true"></span>
-                  </button>
-                </div>
-                <div id="composeBody" class="collapse-body">
-                  <div id="composeEmpty" class="compose-empty">
-                    <svg class="empty-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path d="M4 6h16v12H4zM4 6l8 7 8-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                    <p>Select an inmate to preview</p>
-                  </div>
-                  <div id="composeFilled" class="compose-filled" hidden>
-                    <div class="preview-grid preview-inline">
-                      <div>
-                        <span class="kv-label">Recipient</span>
-                        <p id="previewTo" class="kv-value truncate" title="">—</p>
-                      </div>
-                      <div>
-                        <span class="kv-label">Subject</span>
-                        <p id="previewSubject" class="kv-value truncate" title="">—</p>
-                      </div>
-                      <div>
-                        <span class="kv-label">Body preview</span>
-                        <p id="previewBody" class="kv-value truncate" title="">—</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="char-meter">
-                    <div class="char-meter-top">
-                      <span>Characters</span>
-                      <span id="charPartsLabel" class="char-parts muted" hidden></span>
-                      <span id="charCountLabel" class="tabular">0 / 12,750</span>
-                    </div>
-                    <div
-                      class="progress"
-                      role="progressbar"
-                      aria-valuemin="0"
-                      aria-valuemax="12750"
-                      aria-valuenow="0"
-                      id="charProgressBar"
-                    >
-                      <div id="charProgress" class="progress-bar" style="width: 0%"></div>
-                    </div>
-                    <p id="charMeterLive" class="sr-only" aria-live="polite"></p>
-                  </div>
-                  <div class="row compose-actions">
-                    <button
-                      id="btnSend"
-                      type="button"
-                      class="action-send"
-                      disabled
-                      title="Sending is not available in this version"
-                      aria-disabled="true"
-                    >
-                      <svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <rect x="5" y="11" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.5"/>
-                        <path d="M8 11V8a4 4 0 118 0v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                      </svg>
-                      Send
-                    </button>
-                  </div>
-                </div>
-              </section>
-
               <section class="card corr-card">
                 <div class="corr-head">
                   <div class="corr-title-row">

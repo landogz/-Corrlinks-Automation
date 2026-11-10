@@ -374,11 +374,10 @@ function setStepState({ inmateDone, composeDone, active, inmateError = false, co
     el.classList.toggle('is-error', err);
   });
 
-  Object.entries(map).forEach(([n, item]) => {
-    const num = Number(n);
+  Object.entries(map).forEach(([, item]) => {
+    if (!item.card) return;
     item.card.classList.toggle('done', Boolean(item.done));
-    if (num === active) item.card.classList.remove('collapsed');
-    else if (item.done) item.card.classList.add('collapsed');
+    item.card.classList.remove('collapsed');
   });
 }
 
@@ -500,6 +499,7 @@ function updateComposePreview({ to, subject, body, chars, parts } = {}) {
     previewTo.textContent = composePreview.to || '—';
     previewTo.title = composePreview.to || '';
   }
+  // Compose preview card removed — keep state for logs/session only.
   if (previewSubject) {
     previewSubject.textContent = composePreview.subject || '—';
     previewSubject.title = composePreview.subject || '';
@@ -824,7 +824,7 @@ function selectInmate(id, { autoLogin = false } = {}) {
     // Stay on Inmate until CorrLinks compose succeeds — collapsing here hid files/meta.
     active: 1,
   });
-  setCardCollapsed(inmateCard, btnToggleInmate, false);
+  inmateCard?.classList.remove('collapsed');
   updateActionButtons();
   if (autoLogin && inmate && !loopRunning) {
     // Defer so checkboxes/UI settle, then start CorrLinks automatically.
@@ -1452,7 +1452,7 @@ async function refreshInmates() {
       composeDone: Boolean(composePreview.to || composePreview.subject),
       active: 1,
     });
-    setCardCollapsed(inmateCard, btnToggleInmate, false);
+    inmateCard?.classList.remove('collapsed');
   } catch (error) {
     setSportsConnected(false);
     log(error.message || String(error), 'error');
@@ -1531,9 +1531,9 @@ function handleLoginResult(status, { quietToast = false } = {}) {
     active: composeReady || loginOk ? 2 : 1,
   });
   if (composeReady || loginOk) {
-    setCardCollapsed(composeCard, btnToggleCompose, false);
+    composeCard?.classList.remove('collapsed');
   } else {
-    setCardCollapsed(inmateCard, btnToggleInmate, false);
+    inmateCard?.classList.remove('collapsed');
   }
 }
 
@@ -1791,12 +1791,6 @@ async function init() {
   }
 }
 
-btnToggleInmate.addEventListener('click', () => {
-  setCardCollapsed(inmateCard, btnToggleInmate, !inmateCard.classList.contains('collapsed'));
-});
-btnToggleCompose.addEventListener('click', () => {
-  setCardCollapsed(composeCard, btnToggleCompose, !composeCard.classList.contains('collapsed'));
-});
 
 sportsdataForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1984,15 +1978,15 @@ btnStatus.addEventListener('click', async () => {
   }
 });
 
-btnSend.addEventListener('click', () => {
+btnSend?.addEventListener('click', () => {
   if (!composePreview.to || !composePreview.subject) {
     toast('Compose a message first', 'error');
     return;
   }
-  confirmSend.showModal();
+  confirmSend?.showModal?.();
 });
 
-confirmSend.addEventListener('close', () => {
+confirmSend?.addEventListener('close', () => {
   if (confirmSend.returnValue === 'confirm') {
     toast('Send is not implemented yet', 'warn');
     log('Send blocked — feature not enabled yet', 'warn');

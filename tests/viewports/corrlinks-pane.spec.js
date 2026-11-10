@@ -35,7 +35,7 @@ async function stubApi(page) {
       logoutSportsData: async () => ({ ok: true, baseUrl: 'https://sportsdata.com', email: '', hasPassword: false }),
       listAccounts: async () => ({ ok: true, accounts: [] }),
       verifySportsDataLogin: async () => ({ ok: true, email: 'operator@example.com' }),
-      getUpdateStatus: async () => ({ state: 'dev', currentVersion: '0.1.4', message: 'dev' }),
+      getUpdateStatus: async () => ({ state: 'dev', currentVersion: '0.1.6', message: 'dev' }),
       onUpdateStatus: () => () => {},
     };
   });
@@ -49,12 +49,6 @@ for (const vp of VIEWPORTS) {
       await page.goto(FILE_URL);
       await page.waitForSelector('#corrPane');
 
-      // Ensure compose open so pane shares column with preview
-      await page.evaluate(() => {
-        document.querySelector('#composeCard')?.classList.remove('collapsed');
-      });
-
-      // Scroll pane into view — on stacked layouts it starts below the fold
       await page.evaluate(() => {
         document.querySelector('#corrPane')?.scrollIntoView({ block: 'end' });
       });
@@ -65,7 +59,6 @@ for (const vp of VIEWPORTS) {
         const pane = document.querySelector('#corrPane');
         const head = document.querySelector('.corr-head');
         const ph = document.querySelector('.corr-placeholder');
-        const compose = document.querySelector('#composeCard');
         const footer = document.querySelector('.statusbar');
         const app = document.querySelector('.app');
         const cr = card.getBoundingClientRect();
@@ -74,7 +67,6 @@ for (const vp of VIEWPORTS) {
         const phr = ph.getBoundingClientRect();
         const fr = footer.getBoundingClientRect();
         const ar = app.getBoundingClientRect();
-        const cor = compose.getBoundingClientRect();
         const paintsOverFooter = pr.bottom > fr.top + 2 && pr.top < fr.bottom - 2;
         return {
           cardClipped: cr.right > vw + 2 || cr.left < -2,
@@ -83,17 +75,17 @@ for (const vp of VIEWPORTS) {
           placeholderClipped: phr.right > vw + 2,
           paneW: Math.round(pr.width),
           paneH: Math.round(pr.height),
-          paneTop: Math.round(pr.top),
-          composeBottom: Math.round(cor.bottom),
           paintsOverFooter,
           paneInsideApp: pr.bottom <= ar.bottom + 3,
           placeholderText: ph.textContent.trim(),
           twoCol: getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns
             .trim()
             .split(/\s+/).length >= 2,
+          composeGone: !document.querySelector('#composeCard'),
         };
       });
 
+      expect(m.composeGone, 'compose preview should be removed').toBe(true);
       expect(m.cardClipped, 'corr card clipped').toBe(false);
       expect(m.paneClipped, 'corr pane clipped').toBe(false);
       expect(m.headClipped, 'corr head clipped').toBe(false);
@@ -106,10 +98,8 @@ for (const vp of VIEWPORTS) {
       expect(m.placeholderText.length).toBeGreaterThan(10);
       await expect(page.locator('#corrPlaceholder')).toContainText('No active CorrLinks session');
 
-      // Desktop: compose + pane share right column (pane below compose)
       if (vp.width >= 1024) {
         expect(m.twoCol).toBe(true);
-        expect(m.paneTop, 'pane should sit below compose').toBeGreaterThanOrEqual(m.composeBottom - 4);
       }
     });
   });
