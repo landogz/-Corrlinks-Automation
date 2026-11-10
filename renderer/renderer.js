@@ -1558,14 +1558,12 @@ function resetWorkspaceState() {
 }
 
 function usesMacDmgUpdate(status = updateStatus) {
-  return (
-    status?.installMode === 'dmg' ||
-    (/Mac|iPhone|iPad/.test(navigator.platform || '') && status?.installMode !== 'squirrel')
-  );
+  return status?.installMode === 'dmg';
 }
 
 function updateInstallLabel(status = updateStatus) {
-  return usesMacDmgUpdate(status) ? 'Open installer' : 'Restart to update';
+  if (usesMacDmgUpdate(status)) return 'Open installer';
+  return 'Restart to update';
 }
 
 function renderUpdateUi(status = updateStatus) {
@@ -1679,8 +1677,7 @@ async function runUpdateAction(preferredAction) {
   renderUpdateUi(updateStatus);
   try {
     if (action === 'download') {
-      const macDmg = usesMacDmgUpdate(updateStatus);
-      toast(macDmg ? 'Opening macOS installer…' : 'Downloading update…', 'info');
+      toast('Downloading update…', 'info');
       const result = await window.api.downloadUpdate();
       renderUpdateUi(result);
       maybeToastUpdate(result);
@@ -1688,8 +1685,12 @@ async function runUpdateAction(preferredAction) {
       return;
     }
     if (action === 'install') {
-      const macDmg = usesMacDmgUpdate(updateStatus);
-      toast(macDmg ? 'Opening macOS installer…' : 'Restarting to install update…', 'info');
+      toast(
+        usesMacDmgUpdate(updateStatus)
+          ? 'Opening macOS installer…'
+          : 'Installing update — app will relaunch…',
+        'info'
+      );
       const result = await window.api.installUpdate();
       if (result) renderUpdateUi(result);
       return;

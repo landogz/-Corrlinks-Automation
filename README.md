@@ -6,13 +6,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.7**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.8**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inmate Exchange Auto-0.1.7-arm64.dmg` or `Inmate Exchange Auto-0.1.7-arm64-mac.zip` |
-| macOS (Intel) | `Inmate Exchange Auto-0.1.7.dmg` or `Inmate Exchange Auto-0.1.7-mac.zip` |
-| Windows | `Inmate Exchange Auto Setup 0.1.7.exe` or `Inmate Exchange Auto 0.1.7.exe` (portable) |
+| macOS (Apple Silicon) | `Inmate Exchange Auto-0.1.8-arm64.dmg` or `Inmate Exchange Auto-0.1.8-arm64-mac.zip` |
+| macOS (Intel) | `Inmate Exchange Auto-0.1.8.dmg` or `Inmate Exchange Auto-0.1.8-mac.zip` |
+| Windows | `Inmate Exchange Auto Setup 0.1.8.exe` or `Inmate Exchange Auto 0.1.8.exe` (portable) |
 
 ## Install on macOS
 
@@ -30,11 +30,11 @@ xattr -dr com.apple.quarantine "/Applications/Inmate Exchange Auto.app"
 
 ## Install on Windows
 
-1. Run `Inmate Exchange Auto Setup 0.1.7.exe`.
+1. Run `Inmate Exchange Auto Setup 0.1.8.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inmate Exchange Auto** from the Start menu.
 
-`Inmate Exchange Auto 0.1.7.exe` (portable) runs without installing — put `.env` in the same folder as the `.exe` if you use one.
+`Inmate Exchange Auto 0.1.8.exe` (portable) runs without installing — put `.env` in the same folder as the `.exe` if you use one.
 
 ## Configuration
 
@@ -103,7 +103,7 @@ npm run publish:github
 Packaged builds check GitHub Releases on startup and via the **Updates** button.
 
 - **Windows (Setup/NSIS):** downloads and restarts to install automatically.
-- **macOS:** builds are currently **unsigned**, so macOS cannot apply silent ShipIt updates. The app opens the matching `.dmg` from the release instead — drag into Applications, then relaunch. (A paid Apple Developer ID certificate is required for fully automatic macOS updates.)
+- **macOS (unsigned):** downloads the release zip, then replaces the `.app` and relaunches (bypasses ShipIt code-signature checks). If replace fails, the matching `.dmg` is opened as a fallback.
 - **Windows portable `.exe`:** not an auto-update target — use the Setup installer.
 
 Release assets must keep the hyphenated names from `latest.yml` / `latest-mac.yml` (the publish script uploads them that way).
