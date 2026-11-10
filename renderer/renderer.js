@@ -83,7 +83,7 @@ let historyLoaded = false;
 /** @type {{ url: string|null, text: string, date: string|null, filename: string|null }} */
 let historyPreviewState = { url: null, text: '', date: null, filename: null };
 /** @type {{ to: string, subject: string, body: string, chars: number }} */
-let composePreview = { to: '', subject: '', body: '', chars: 0 };
+let composePreview = { to: '', subject: '', body: '', chars: 0, parts: 0 };
 let optionHighlight = -1;
 
 const mainTabs = document.getElementById('mainTabs');
@@ -95,9 +95,54 @@ const historyPreviewBody = document.getElementById('historyPreviewBody');
 const btnHistoryRefresh = document.getElementById('btnHistoryRefresh');
 const btnHistoryCopy = document.getElementById('btnHistoryCopy');
 const btnHistoryDownloadPreview = document.getElementById('btnHistoryDownloadPreview');
-const btnUpdate = document.getElementById('btnUpdate');
-const updatePill = document.getElementById('updatePill');
-const appVersionPill = document.getElementById('appVersionPill');
+const btnHistoryExport = document.getElementById('btnHistoryExport');
+const btnUpdate = document.getElementById('btnUpdatesAction');
+const updateChip = document.getElementById('updateChip');
+const updateChipLabel = document.getElementById('updateChipLabel');
+const btnAccountMenu = document.getElementById('btnAccountMenu');
+const accountDropdown = document.getElementById('accountDropdown');
+const accountAvatar = document.getElementById('accountAvatar');
+const accountMenuEmail = document.getElementById('accountMenuEmail');
+const btnCopyEmail = document.getElementById('btnCopyEmail');
+const btnCheckUpdatesMenu = document.getElementById('btnCheckUpdatesMenu');
+const btnAbout = document.getElementById('btnAbout');
+const btnShortcuts = document.getElementById('btnShortcuts');
+const shortcutsDialog = document.getElementById('shortcutsDialog');
+const aboutDialog = document.getElementById('aboutDialog');
+const aboutVersion = document.getElementById('aboutVersion');
+const updatesDialog = document.getElementById('updatesDialog');
+const updatesCurrent = document.getElementById('updatesCurrent');
+const updatesMessage = document.getElementById('updatesMessage');
+const updatesProgressWrap = document.getElementById('updatesProgressWrap');
+const updatesProgressBar = document.getElementById('updatesProgressBar');
+const btnUpdatesClose = document.getElementById('btnUpdatesClose');
+const logBadge = document.getElementById('logBadge');
+const logSearch = document.getElementById('logSearch');
+const inmateCount = document.getElementById('inmateCount');
+const filesEmpty = document.getElementById('filesEmpty');
+const filesBlock = document.getElementById('filesBlock');
+const composeEmpty = document.getElementById('composeEmpty');
+const composeFilled = document.getElementById('composeFilled');
+const charPartsLabel = document.getElementById('charPartsLabel');
+const charProgressBar = document.getElementById('charProgressBar');
+const charMeterLive = document.getElementById('charMeterLive');
+const sessionLastLogin = document.getElementById('sessionLastLogin');
+const sessionLoopState = document.getElementById('sessionLoopState');
+const sessionNextRun = document.getElementById('sessionNextRun');
+const sessionLive = document.getElementById('sessionLive');
+const corrPlaceholder = document.getElementById('corrPlaceholder');
+const corrPanelStatus = document.getElementById('corrPanelStatus');
+const corrErrorBanner = document.getElementById('corrErrorBanner');
+const corrErrorMessage = document.getElementById('corrErrorMessage');
+const btnCorrLoginCta = document.getElementById('btnCorrLoginCta');
+const btnCorrReload = document.getElementById('btnCorrReload');
+const btnCorrOpen = document.getElementById('btnCorrOpen');
+const btnCorrZoomIn = document.getElementById('btnCorrZoomIn');
+const btnCorrZoomOut = document.getElementById('btnCorrZoomOut');
+const btnCorrClear = document.getElementById('btnCorrClear');
+const btnCorrRetry = document.getElementById('btnCorrRetry');
+const btnCorrViewLog = document.getElementById('btnCorrViewLog');
+const modKey = /Mac|iPhone|iPad/.test(navigator.platform || '') ? '⌘' : 'Ctrl';
 
 /** @type {any} */
 let updateStatus = {
@@ -110,10 +155,67 @@ let updateStatus = {
 };
 let updateBusy = false;
 let lastUpdateToastKey = '';
+let logErrorUnread = 0;
+let activeCorrEmail = '';
+let lastLoginAt = null;
+let historyRowsCache = [];
 
 function stamp() {
   return new Date().toLocaleTimeString([], { hour12: true });
 }
+
+function platformShortcutLabel(key) {
+  return `${modKey}${key}`;
+}
+
+function setLoginShortcutHint() {
+  const kbd = btnLogin?.querySelector('.btn-shortcut');
+  if (kbd) kbd.textContent = platformShortcutLabel('L');
+  if (btnRefresh) btnRefresh.title = `Refresh (${platformShortcutLabel('R')})`;
+  if (btnOpenLog) btnOpenLog.title = `Open status log (${platformShortcutLabel('J')})`;
+}
+
+function initialsFromEmail(email) {
+  const local = String(email || '').split('@')[0] || '?';
+  const parts = local.replace(/[^a-zA-Z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return local.slice(0, 2).toUpperCase() || '?';
+}
+
+function setAccountMenuOpen(open) {
+  if (!accountDropdown || !btnAccountMenu) return;
+  accountDropdown.hidden = !open;
+  btnAccountMenu.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function setCorrPlaceholderVisible(visible) {
+  if (corrPlaceholder) corrPlaceholder.classList.toggle('is-hidden', !visible);
+}
+
+function setCorrPanelConnection(on, warn = false) {
+  if (!corrPanelStatus) return;
+  corrPanelStatus.classList.toggle('is-on', Boolean(on) && !warn);
+  corrPanelStatus.classList.toggle('is-warn', Boolean(warn) || !on);
+  const label = corrPanelStatus.querySelector('.status-label');
+  if (label) {
+    label.textContent = on ? (warn ? 'Attention' : 'Connected') : 'No session';
+  }
+  setCorrPlaceholderVisible(!on);
+}
+
+function updateSessionPanel() {
+  if (sessionLastLogin) sessionLastLogin.textContent = lastLoginAt || '—';
+  if (sessionLoopState) sessionLoopState.textContent = loopRunning ? 'Running' : 'Idle';
+  if (sessionLive) sessionLive.hidden = !loopRunning;
+  if (sessionNextRun && !loopCountdownActive) sessionNextRun.textContent = loopRunning ? '…' : '—';
+}
+
+function refreshLogBadge() {
+  if (!logBadge) return;
+  const show = logErrorUnread > 0 && !isLogDrawerOpen();
+  logBadge.hidden = !show;
+}
+
 
 function truncateMiddle(value, max = 36) {
   const text = String(value || '');
@@ -193,15 +295,22 @@ function log(message, level = 'info', details = null) {
 
   line.append(time, msg);
   logEl.appendChild(line);
+  if (normalized === 'error' && !isLogDrawerOpen()) {
+    logErrorUnread += 1;
+    refreshLogBadge();
+  }
   applyLogFilter();
   if (logAutoScroll.checked) logEl.scrollTop = logEl.scrollHeight;
 }
 
 function applyLogFilter() {
-  const mode = logFilter.value;
+  const mode = logFilter?.value || 'all';
+  const q = String(logSearch?.value || '').trim().toLowerCase();
   [...logEl.children].forEach((line) => {
-    const show = mode === 'all' || line.dataset.level === 'error';
-    line.hidden = !show;
+    const levelOk = mode === 'all' || line.dataset.level === mode;
+    const text = (line.querySelector('.log-msg')?.innerText || '').toLowerCase();
+    const searchOk = !q || text.includes(q);
+    line.hidden = !(levelOk && searchOk);
   });
 }
 
@@ -223,33 +332,46 @@ function setSportsConnected(on) {
   sdConn.classList.toggle('on', sportsConnected);
   sdConn.classList.toggle('warn', !sportsConnected);
   sdConn.title = sportsConnected ? 'SportsData connected' : 'SportsData not connected';
-  sdConn.querySelector('.status-label').textContent = sportsConnected
-    ? 'SportsData connected'
-    : 'SportsData offline';
+  const sdLabel = sdConn.querySelector('.status-label');
+  if (sdLabel) {
+    sdLabel.textContent = sportsConnected ? 'SportsData connected' : 'SportsData offline';
+  }
 }
 
 function setCorrlinksConnected(on, warn = false) {
   corrlinksConnected = Boolean(on);
   clConn.classList.toggle('on', corrlinksConnected && !warn);
   clConn.classList.toggle('warn', Boolean(warn) || !corrlinksConnected);
-  clConn.querySelector('.status-label').textContent = corrlinksConnected
-    ? 'CorrLinks logged in'
-    : warn
-      ? 'CorrLinks attention'
-      : 'CorrLinks not logged in';
+  const clLabel = clConn.querySelector('.status-label');
+  if (clLabel) {
+    clLabel.textContent = corrlinksConnected
+      ? 'CorrLinks: logged in'
+      : warn
+        ? 'CorrLinks: attention'
+        : 'CorrLinks: not logged in';
+  }
+  setCorrPanelConnection(corrlinksConnected, warn);
 }
 
-function setStepState({ inmateDone, composeDone, active }) {
+function setStepState({ inmateDone, composeDone, active, inmateError = false, composeError = false }) {
   activeStep = active;
   const map = {
-    1: { done: inmateDone, card: inmateCard },
-    2: { done: composeDone, card: composeCard },
+    1: { done: inmateDone, error: inmateError, card: inmateCard },
+    2: { done: composeDone, error: composeError, card: composeCard },
   };
 
-  [...stepIndicator.querySelectorAll('.step')].forEach((el) => {
+  const steps = stepIndicator
+    ? [...stepIndicator.querySelectorAll('.wf-step, .step')]
+    : [];
+  steps.forEach((el) => {
     const n = Number(el.dataset.step);
+    const done = Boolean(map[n]?.done);
+    const err = Boolean(map[n]?.error);
     el.classList.toggle('active', n === active);
-    el.classList.toggle('done', Boolean(map[n]?.done) && n !== active);
+    el.classList.toggle('done', done && n !== active);
+    el.classList.toggle('is-current', n === active && !err);
+    el.classList.toggle('is-complete', done && n !== active);
+    el.classList.toggle('is-error', err);
   });
 
   Object.entries(map).forEach(([n, item]) => {
@@ -267,9 +389,17 @@ function setCardCollapsed(card, button, collapsed) {
 
 function updateSignedInChip(email) {
   const value = String(email || '').trim();
-  signedInEmail.textContent = value ? value : '';
-  signedInEmail.title = value;
-  signedInEmail.hidden = !value;
+  if (signedInEmail) {
+    signedInEmail.textContent = value || '';
+    signedInEmail.title = value;
+    signedInEmail.hidden = !value;
+  }
+  if (btnAccountMenu) btnAccountMenu.title = value || 'Account menu';
+  if (accountAvatar) accountAvatar.textContent = initialsFromEmail(value);
+  if (accountMenuEmail) {
+    accountMenuEmail.textContent = value || 'Not signed in';
+    accountMenuEmail.title = value;
+  }
 }
 
 function showLoginScreen() {
@@ -355,32 +485,66 @@ function formatRecipient(value) {
   return String(value);
 }
 
-function updateComposePreview({ to, subject, body, chars } = {}) {
+function updateComposePreview({ to, subject, body, chars, parts } = {}) {
   if (to != null) composePreview.to = formatRecipient(to);
   if (subject != null) composePreview.subject = String(subject || '');
   if (body != null) composePreview.body = String(body || '');
   if (chars != null) composePreview.chars = Number(chars) || 0;
+  if (parts != null) composePreview.parts = Number(parts) || 0;
 
-  previewTo.textContent = composePreview.to || '—';
-  previewTo.title = composePreview.to || '';
-  previewSubject.textContent = composePreview.subject || '—';
-  previewBody.textContent = composePreview.body || '—';
+  const hasPreview = Boolean(composePreview.to || composePreview.subject || composePreview.body);
+  if (composeEmpty) composeEmpty.hidden = hasPreview;
+  if (composeFilled) composeFilled.hidden = !hasPreview;
+
+  if (previewTo) {
+    previewTo.textContent = composePreview.to || '—';
+    previewTo.title = composePreview.to || '';
+  }
+  if (previewSubject) {
+    previewSubject.textContent = composePreview.subject || '—';
+    previewSubject.title = composePreview.subject || '';
+  }
+  if (previewBody) {
+    previewBody.textContent = composePreview.body || '—';
+    previewBody.title = composePreview.body || '';
+  }
 
   const count = composePreview.chars || 0;
-  charCountLabel.textContent = `${count.toLocaleString()} / ${CHAR_MAX.toLocaleString()}`;
+  const warn = count >= CHAR_WARN && count < CHAR_MAX;
+  const over = count >= CHAR_MAX;
+  if (charCountLabel) charCountLabel.textContent = `${count.toLocaleString()} / ${CHAR_MAX.toLocaleString()}`;
   const pct = Math.min(100, Math.round((count / CHAR_MAX) * 100));
-  charProgress.style.width = `${pct}%`;
-  charProgress.classList.toggle('warn', count >= CHAR_WARN && count < CHAR_MAX);
-  charProgress.classList.toggle('danger', count >= CHAR_MAX);
+  if (charProgress) {
+    charProgress.style.width = `${pct}%`;
+    charProgress.classList.toggle('warn', warn);
+    charProgress.classList.toggle('danger', over);
+  }
+  if (charProgressBar) {
+    charProgressBar.setAttribute('aria-valuenow', String(count));
+  }
+  if (charPartsLabel) {
+    const partCount = composePreview.parts || 0;
+    charPartsLabel.hidden = partCount <= 1;
+    charPartsLabel.textContent = partCount > 1 ? `${partCount} parts` : '';
+  }
+  if (charMeterLive) {
+    charMeterLive.textContent = over
+      ? `Character limit exceeded: ${count.toLocaleString()} of ${CHAR_MAX.toLocaleString()}`
+      : warn
+        ? `Approaching character limit: ${count.toLocaleString()} of ${CHAR_MAX.toLocaleString()}`
+        : '';
+  }
 
-  composeCollapsedSummary.textContent = composePreview.to
-    ? `To ${truncateMiddle(composePreview.to, 42)} · ${composePreview.subject || 'no subject'}`
-    : 'Waiting for CorrLinks…';
-  composeCollapsedSummary.title = composeCollapsedSummary.textContent;
+  if (composeCollapsedSummary) {
+    composeCollapsedSummary.textContent = composePreview.to
+      ? `To ${truncateMiddle(composePreview.to, 42)} · ${composePreview.subject || 'no subject'}`
+      : 'Waiting for CorrLinks…';
+    composeCollapsedSummary.title = composeCollapsedSummary.textContent;
+  }
 
-  confirmTo.textContent = composePreview.to || '—';
-  confirmSubject.textContent = composePreview.subject || '—';
-  confirmChars.textContent = `${count.toLocaleString()} / ${CHAR_MAX.toLocaleString()}`;
+  if (confirmTo) confirmTo.textContent = composePreview.to || '—';
+  if (confirmSubject) confirmSubject.textContent = composePreview.subject || '—';
+  if (confirmChars) confirmChars.textContent = `${count.toLocaleString()} / ${CHAR_MAX.toLocaleString()}`;
 }
 
 function renderAccountMeta(inmate) {
@@ -425,11 +589,12 @@ function renderAccountMeta(inmate) {
 
   accountRows.innerHTML = '';
   [
-    { label: 'Primary', email: primary?.email, ready: Boolean(primary?.password) },
-    { label: 'Second', email: second?.email, ready: Boolean(second?.password) },
+    { label: 'Primary', email: primary?.email, ready: Boolean(primary?.password), key: 'primary' },
+    { label: 'Second', email: second?.email, ready: Boolean(second?.password), key: 'second' },
   ].forEach((row) => {
     const el = document.createElement('div');
-    el.className = 'kv-row';
+    const isActive = Boolean(row.email && activeCorrEmail && row.email.toLowerCase() === String(activeCorrEmail).toLowerCase());
+    el.className = `kv-row${isActive ? ' is-active' : ''}`;
     const label = document.createElement('span');
     label.className = 'kv-label';
     label.textContent = row.label;
@@ -438,24 +603,63 @@ function renderAccountMeta(inmate) {
     value.textContent = row.email || 'none';
     value.title = row.email || 'none';
     if (row.email && !row.ready) value.textContent += ' (no password)';
+    if (isActive) value.title = `${row.email} · Active account`;
     const copy = document.createElement('button');
     copy.type = 'button';
-    copy.className = 'ghost tiny copy-btn';
-    copy.textContent = 'Copy';
+    copy.className = 'copy-btn icon-copy';
+    copy.title = row.email ? 'Copy email' : 'No email';
+    copy.setAttribute('aria-label', row.email ? `Copy ${row.label} email` : 'No email to copy');
+    copy.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M4 16V6a2 2 0 012-2h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
     copy.disabled = !row.email;
-    copy.addEventListener('click', () => copyText(row.email));
+    copy.addEventListener('click', async () => {
+      await copyText(row.email);
+      copy.classList.add('is-copied');
+      copy.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12l5 5L20 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      setTimeout(() => {
+        copy.classList.remove('is-copied');
+        copy.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M4 16V6a2 2 0 012-2h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+      }, 1200);
+    });
     el.append(label, value, copy);
     accountRows.appendChild(el);
   });
 
-  // All sendable parts stay selected; file list UI is hidden for now.
   selectedFileKeys = sendable.map((file, index) => `${file.part}:${file.filename || index}`);
   if (filesHint) {
     filesHint.textContent = sendable.length
-      ? `${sendable.length} auto-selected` + (skipped.length ? ` · ${skipped.length} empty skipped` : '')
-      : 'No files';
+      ? `${sendable.length} selected` + (skipped.length ? ` · ${skipped.length} empty skipped` : '')
+      : '';
   }
-  if (filesList) filesList.innerHTML = '';
+  if (filesList) {
+    filesList.innerHTML = '';
+    sendable.forEach((file, index) => {
+      const key = `${file.part}:${file.filename || index}`;
+      const li = document.createElement('li');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = selectedFileKeys.includes(key);
+      cb.addEventListener('change', () => {
+        if (cb.checked) {
+          if (!selectedFileKeys.includes(key)) selectedFileKeys.push(key);
+        } else {
+          selectedFileKeys = selectedFileKeys.filter((k) => k !== key);
+        }
+        if (filesHint) filesHint.textContent = `${selectedFileKeys.length} selected`;
+      });
+      const name = document.createElement('span');
+      name.className = 'file-name';
+      name.textContent = file.filename || `part-${file.part || index + 1}.txt`;
+      name.title = name.textContent;
+      const meta = document.createElement('span');
+      meta.className = 'file-meta';
+      const chars = file.characters != null ? Number(file.characters).toLocaleString() : '—';
+      meta.textContent = `${chars} chars`;
+      li.append(cb, name, meta);
+      filesList.appendChild(li);
+    });
+  }
+  if (filesEmpty) filesEmpty.hidden = sendable.length > 0;
+  if (filesBlock) filesBlock.hidden = false;
 
   const canLogin = Boolean(primary?.email && primary?.password);
   updateActionButtons({ canLogin });
@@ -504,12 +708,25 @@ function updateActionButtons({ canLogin } = {}) {
   const hasLoopQueue = groupInmatesByCorrlinksAccount().length > 0;
   btnLogin.disabled = loopRunning || corrlinksLoginBusy || !loginOk;
   btnLogin.hidden = loopRunning;
+  btnLogin.title = corrlinksLoginBusy
+    ? 'Logging in…'
+    : loginOk
+      ? `Login to CorrLinks (${platformShortcutLabel('L')})`
+      : selectedInmate()
+        ? 'Selected inmate is missing CorrLinks credentials'
+        : 'Select an inmate with CorrLinks credentials';
+  const loginLabel = btnLogin.querySelector('.btn-main-label');
+  if (loginLabel) loginLabel.textContent = corrlinksLoginBusy ? 'Logging in…' : 'Login to CorrLinks';
   btnStartLoop.disabled = loopRunning || corrlinksLoginBusy || !hasLoopQueue;
   btnStartLoop.hidden = loopRunning;
+  btnStartLoop.title = hasLoopQueue
+    ? 'Probe accounts then compose recipients (no send)'
+    : 'Load inmates with CorrLinks credentials first';
   btnStopLoop.disabled = !loopRunning;
   btnStopLoop.hidden = !loopRunning;
   actionsRow?.classList.toggle('is-looping', loopRunning);
   if (inmateSearch) inmateSearch.disabled = loopRunning || !accounts.length;
+  updateSessionPanel();
 }
 
 function setLoopProgress(text) {
@@ -559,15 +776,20 @@ function renderInmateOptions(list, { open = true } = {}) {
       li.role = 'option';
       li.dataset.id = String(inmate.id);
       li.setAttribute('aria-selected', String(inmate.id) === String(accountSelect.value) ? 'true' : 'false');
+      const dot = document.createElement('span');
+      dot.className = `option-dot${/active|ok|ready/i.test(String(inmate.status || '')) ? ' is-active' : ''}`;
+      const textWrap = document.createElement('span');
+      textWrap.className = 'option-text';
       const name = document.createElement('span');
       name.className = 'option-name';
       name.textContent = inmate.name || 'Inmate';
       const meta = document.createElement('span');
       meta.className = 'option-meta truncate';
       const email = inmate.corrlinks_account?.email || 'no email';
-      meta.textContent = `${inmate.inmate_id || inmate.id} · ${email}`;
+      meta.textContent = `${inmate.inmate_id || inmate.id}`;
       meta.title = email;
-      li.append(name, meta);
+      textWrap.append(name, meta);
+      li.append(dot, textWrap);
       li.addEventListener('mousedown', (event) => {
         event.preventDefault();
         selectInmate(inmate.id, { autoLogin: true });
@@ -712,6 +934,7 @@ function setLoopCountdownOverlay({ seconds, nextLabel, current, total } = {}) {
       void loopCountdownNum.offsetWidth;
       loopCountdownNum.classList.add('is-tick');
     }
+    if (sessionNextRun) sessionNextRun.textContent = `${next}s`;
   }
   if (loopCountdownNext) {
     loopCountdownNext.textContent = nextLabel
@@ -1221,6 +1444,7 @@ async function refreshInmates() {
     setSportsConnected(true);
     renderAccounts(result.accounts);
     log(`Loaded ${result.accounts.length} inmate(s)`, 'success');
+    if (inmateCount) inmateCount.textContent = `${result.accounts.length} inmate${result.accounts.length === 1 ? '' : 's'}`;
     toast(`Loaded ${result.accounts.length} inmates`, 'success');
     setStatusHint(`${result.accounts.length} inmates ready`);
     setStepState({
@@ -1245,6 +1469,9 @@ function handleLoginResult(status, { quietToast = false } = {}) {
     const via = status.usedSecondAccount ? 'second' : status.attempt || 'primary';
     log(`Login success via ${via}: ${maskSensitive(status.email)} — ${status.message}`, 'success');
     setCorrlinksConnected(true);
+    activeCorrEmail = status.email || activeCorrEmail;
+    lastLoginAt = stamp();
+    updateSessionPanel();
     if (!quietToast) toast('CorrLinks login success', 'success');
   } else if (status.state === 'manual') {
     log(`Manual action needed (${status.attempt || 'n/a'}): ${status.message}`, 'warn');
@@ -1313,7 +1540,7 @@ function handleLoginResult(status, { quietToast = false } = {}) {
 function resetWorkspaceState() {
   accounts = [];
   selectedFileKeys = [];
-  composePreview = { to: '', subject: '', body: '', chars: 0 };
+  composePreview = { to: '', subject: '', body: '', chars: 0, parts: 0 };
   updateComposePreview({});
   accountSelect.value = '';
   inmateSearch.value = '';
@@ -1334,12 +1561,6 @@ function renderUpdateUi(status = updateStatus) {
   updateStatus = status || updateStatus;
   const state = String(updateStatus.state || 'idle');
   const version = updateStatus.currentVersion || '';
-  if (appVersionPill) {
-    const label = appVersionPill.querySelector('.status-label');
-    if (label) label.textContent = version ? `v${version}` : 'v…';
-    appVersionPill.title = version ? `App version ${version}` : 'App version';
-  }
-
   const action =
     state === 'available'
       ? 'download'
@@ -1349,42 +1570,56 @@ function renderUpdateUi(status = updateStatus) {
           ? 'busy'
           : 'check';
 
+  let chipText = version ? `v${version} · Up to date` : 'v…';
+  if (state === 'available') chipText = `v${version} · Update available`;
+  else if (state === 'downloading') {
+    chipText =
+      updateStatus.percent != null ? `v${version} · ${updateStatus.percent}%` : `v${version} · Updating…`;
+  } else if (state === 'downloaded') chipText = `v${version} · Restart to update`;
+  else if (state === 'checking') chipText = `v${version} · Checking…`;
+  else if (state === 'error') chipText = `v${version} · Update failed`;
+  else if (state === 'dev') chipText = `v${version} · Dev build`;
+
+  if (updateChipLabel) updateChipLabel.textContent = chipText;
+  if (updateChip) {
+    updateChip.dataset.updateAction = action === 'busy' ? 'check' : action;
+    updateChip.classList.toggle('is-available', state === 'available');
+    updateChip.classList.toggle('is-downloading', state === 'downloading');
+    updateChip.classList.toggle('is-downloaded', state === 'downloaded');
+    updateChip.title = updateStatus.error || updateStatus.message || 'Check for updates';
+    updateChip.disabled = updateBusy || action === 'busy';
+  }
+
+  if (aboutVersion) aboutVersion.textContent = version ? `v${version}` : 'v…';
+  if (updatesCurrent) updatesCurrent.textContent = version ? `v${version}` : 'v…';
+  if (updatesMessage) {
+    updatesMessage.textContent =
+      updateStatus.message ||
+      (state === 'dev' ? 'Updates are available in packaged builds only.' : 'Ready to check for updates.');
+  }
+  if (updatesProgressWrap) {
+    updatesProgressWrap.hidden = state !== 'downloading';
+  }
+  if (updatesProgressBar) {
+    updatesProgressBar.style.width = `${updateStatus.percent || 0}%`;
+  }
   if (btnUpdate) {
     btnUpdate.disabled = updateBusy || action === 'busy';
     btnUpdate.dataset.updateAction = action === 'busy' ? 'check' : action;
-    btnUpdate.classList.toggle('is-attention', state === 'available' || state === 'downloaded');
     if (state === 'available') btnUpdate.textContent = 'Download update';
-    else if (state === 'downloading') {
-      btnUpdate.textContent =
-        updateStatus.percent != null ? `Updating ${updateStatus.percent}%` : 'Updating…';
-    } else if (state === 'downloaded') btnUpdate.textContent = 'Restart to update';
+    else if (state === 'downloading') btnUpdate.textContent = 'Downloading…';
+    else if (state === 'downloaded') btnUpdate.textContent = 'Restart to update';
     else if (state === 'checking') btnUpdate.textContent = 'Checking…';
-    else btnUpdate.textContent = 'Updates';
+    else btnUpdate.textContent = 'Check for updates';
   }
-
-  if (updatePill) {
-    const show =
-      state === 'available' ||
-      state === 'downloading' ||
-      state === 'downloaded' ||
-      state === 'error';
-    updatePill.hidden = !show;
-    updatePill.classList.toggle('is-available', state === 'available');
-    updatePill.classList.toggle('is-downloading', state === 'downloading');
-    updatePill.classList.toggle('is-downloaded', state === 'downloaded');
-    updatePill.classList.toggle('warn', state === 'available' || state === 'downloaded' || state === 'error');
-    const pillLabel = updatePill.querySelector('.status-label');
-    if (pillLabel) {
-      if (state === 'available') pillLabel.textContent = `Update v${updateStatus.latestVersion || ''}`;
-      else if (state === 'downloading') {
-        pillLabel.textContent =
-          updateStatus.percent != null ? `Update ${updateStatus.percent}%` : 'Updating…';
-      } else if (state === 'downloaded') pillLabel.textContent = 'Restart to update';
-      else if (state === 'error') pillLabel.textContent = 'Update failed';
-      else pillLabel.textContent = 'Update';
-    }
-    updatePill.title = updateStatus.error || updateStatus.message || 'App update';
-    updatePill.dataset.updateAction = action === 'busy' ? 'check' : action;
+  if (btnCheckUpdatesMenu) {
+    btnCheckUpdatesMenu.dataset.updateAction = action === 'busy' ? 'check' : action;
+    btnCheckUpdatesMenu.textContent =
+      state === 'available'
+        ? 'Download update'
+        : state === 'downloaded'
+          ? 'Restart to update'
+          : 'Check for updates';
   }
 }
 
@@ -1453,6 +1688,15 @@ async function runUpdateAction(preferredAction) {
   }
 }
 
+function openUpdatesDialog() {
+  if (!updatesDialog) {
+    runUpdateAction(updateChip?.dataset?.updateAction || 'check');
+    return;
+  }
+  renderUpdateUi(updateStatus);
+  if (typeof updatesDialog.showModal === 'function') updatesDialog.showModal();
+}
+
 function wireAppUpdates() {
   if (typeof window.api?.onUpdateStatus === 'function') {
     window.api.onUpdateStatus((status) => {
@@ -1468,11 +1712,16 @@ function wireAppUpdates() {
     .then((status) => renderUpdateUi(status))
     .catch(() => {});
 
-  btnUpdate?.addEventListener('click', () => runUpdateAction());
-  updatePill?.addEventListener('click', () => {
-    const action = updatePill.dataset.updateAction || 'check';
-    runUpdateAction(action);
+  btnUpdate?.addEventListener('click', (event) => {
+    event.preventDefault();
+    runUpdateAction(btnUpdate.dataset.updateAction || 'check');
   });
+  updateChip?.addEventListener('click', () => openUpdatesDialog());
+  btnCheckUpdatesMenu?.addEventListener('click', () => {
+    setAccountMenuOpen(false);
+    openUpdatesDialog();
+  });
+  btnUpdatesClose?.addEventListener('click', () => updatesDialog?.close());
 }
 
 async function init() {
@@ -1480,6 +1729,7 @@ async function init() {
   showLoginScreen();
   setLoginError('');
   wireAppUpdates();
+  setLoginShortcutHint();
 
   try {
     const summary = await window.api.getConfigSummary();
@@ -1736,10 +1986,16 @@ function setLogDrawerOpen(open) {
   if (logBackdrop) logBackdrop.hidden = !open;
   if (btnOpenLog) btnOpenLog.setAttribute('aria-expanded', open ? 'true' : 'false');
   document.body.classList.toggle('log-open', open);
-  if (open && logAutoScroll?.checked) {
-    requestAnimationFrame(() => {
-      logEl.scrollTop = logEl.scrollHeight;
-    });
+  if (open) {
+    logErrorUnread = 0;
+    refreshLogBadge();
+    if (logAutoScroll?.checked) {
+      requestAnimationFrame(() => {
+        logEl.scrollTop = logEl.scrollHeight;
+      });
+    }
+  } else {
+    refreshLogBadge();
   }
   scheduleCorrPaneBounds();
 }
@@ -1768,9 +2024,24 @@ logBackdrop?.addEventListener('click', () => setLogDrawerOpen(false));
 
 document.addEventListener('keydown', (event) => {
   const meta = event.metaKey || event.ctrlKey;
-  if (event.key === 'Escape' && isLogDrawerOpen()) {
+  const tag = String(event.target?.tagName || '').toLowerCase();
+  const typing = tag === 'input' || tag === 'textarea' || event.target?.isContentEditable;
+
+  if (event.key === 'Escape') {
+    if (accountDropdown && !accountDropdown.hidden) {
+      event.preventDefault();
+      setAccountMenuOpen(false);
+      return;
+    }
+    if (isLogDrawerOpen()) {
+      event.preventDefault();
+      setLogDrawerOpen(false);
+      return;
+    }
+  }
+  if (!typing && (event.key === '?' || (event.shiftKey && event.key === '/'))) {
     event.preventDefault();
-    setLogDrawerOpen(false);
+    shortcutsDialog?.showModal?.();
     return;
   }
   if (meta && event.key.toLowerCase() === 'r') {
@@ -1788,6 +2059,8 @@ document.addEventListener('keydown', (event) => {
   if (meta && event.key.toLowerCase() === 'k') {
     event.preventDefault();
     logEl.innerHTML = '';
+    logErrorUnread = 0;
+    refreshLogBadge();
     if (!isLogDrawerOpen()) setLogDrawerOpen(true);
   }
 });
@@ -1930,6 +2203,12 @@ function renderHistoryTable(rows) {
       },
       {
         data: null,
+        title: 'Status',
+        orderable: false,
+        render: () => '<span class="history-status-pill"><span class="chip-dot"></span>Ready</span>',
+      },
+      {
+        data: null,
         title: 'Actions',
         orderable: false,
         searchable: false,
@@ -1972,7 +2251,9 @@ async function loadExchangeHistory() {
           ? `${count} file(s) from /inmate-exchange/all`
           : result.message || 'No files returned';
     }
-    renderHistoryTable(result.rows || []);
+    historyRowsCache = result.rows || [];
+    if (btnHistoryExport) btnHistoryExport.disabled = historyRowsCache.length === 0;
+    renderHistoryTable(historyRowsCache);
     log(`History loaded · ${count} file(s)`, 'success');
     toast(`History · ${count} file(s)`, 'success');
     setStatusHint(`${count} exchange file(s) ready`);
@@ -2081,6 +2362,111 @@ document.querySelectorAll('.collapse-toggle').forEach((btn) => {
 
 // Allow main process to force a relayout after OS window chrome changes.
 window.__syncCorrPaneBounds = syncCorrPaneBounds;
+
+function exportHistoryCsv() {
+  const rows = historyRowsCache || [];
+  if (!rows.length) {
+    toast('No history rows to export', 'warn');
+    return;
+  }
+  const header = ['date', 'filename', 'characters', 'url'];
+  const lines = [header.join(',')];
+  rows.forEach((row) => {
+    const vals = [
+      row.date || '',
+      row.filename || row.file || 'all.txt',
+      row.characters == null ? '' : String(row.characters),
+      row.url || '',
+    ].map((v) => `"${String(v).replace(/"/g, '""')}"`);
+    lines.push(vals.join(','));
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'inmate-exchange-history.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('CSV exported', 'success');
+}
+
+function wireShellUi() {
+  setLoginShortcutHint();
+  setCorrPlaceholderVisible(true);
+  updateSessionPanel();
+
+  btnAccountMenu?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setAccountMenuOpen(Boolean(accountDropdown?.hidden));
+  });
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('#accountMenu')) setAccountMenuOpen(false);
+  });
+  btnCopyEmail?.addEventListener('click', async () => {
+    const email = accountMenuEmail?.title || accountMenuEmail?.textContent || '';
+    if (!email || email === 'Not signed in') return;
+    await copyText(email);
+    setAccountMenuOpen(false);
+  });
+  btnAbout?.addEventListener('click', () => {
+    setAccountMenuOpen(false);
+    aboutDialog?.showModal?.();
+  });
+  btnShortcuts?.addEventListener('click', () => shortcutsDialog?.showModal?.());
+  logSearch?.addEventListener('input', applyLogFilter);
+
+  sdConn?.addEventListener('click', () => {
+    if (!sportsConnected) {
+      showLoginScreen();
+      sdEmail?.focus();
+      return;
+    }
+    toast(sportsConnected ? 'SportsData connected' : 'SportsData offline', 'info');
+  });
+  clConn?.addEventListener('click', async () => {
+    try {
+      const status = await window.api.getCorrlinksStatus();
+      log(`Status: ${status.state} — ${status.message}`, 'info');
+      toast(status.message || status.state || 'CorrLinks status', 'info');
+    } catch (error) {
+      toast(error.message || String(error), 'error');
+    }
+  });
+
+  btnCorrLoginCta?.addEventListener('click', () => {
+    if (!btnLogin.disabled) startCorrlinksLogin();
+    else toast(btnLogin.title || 'Select an inmate first', 'warn');
+  });
+  btnCorrReload?.addEventListener('click', async () => {
+    const result = await window.api.reloadCorrlinksPanel?.();
+    toast(result?.message || (result?.ok ? 'Reloaded' : 'No session'), result?.ok ? 'info' : 'warn');
+  });
+  btnCorrOpen?.addEventListener('click', async () => {
+    const result = await window.api.openCorrlinksExternal?.();
+    if (!result?.ok) toast(result?.message || 'Nothing to open', 'warn');
+  });
+  btnCorrZoomIn?.addEventListener('click', async () => {
+    await window.api.zoomCorrlinksPanel?.({ delta: 0.1 });
+  });
+  btnCorrZoomOut?.addEventListener('click', async () => {
+    await window.api.zoomCorrlinksPanel?.({ delta: -0.1 });
+  });
+  btnCorrClear?.addEventListener('click', async () => {
+    const result = await window.api.clearCorrlinksPanel?.();
+    setCorrlinksConnected(false);
+    activeCorrEmail = '';
+    toast(result?.message || 'Session cleared', 'info');
+    scheduleCorrPaneBounds();
+  });
+  btnCorrRetry?.addEventListener('click', async () => {
+    if (corrErrorBanner) corrErrorBanner.hidden = true;
+    await window.api.reloadCorrlinksPanel?.();
+  });
+  btnCorrViewLog?.addEventListener('click', () => setLogDrawerOpen(true));
+  btnHistoryExport?.addEventListener('click', exportHistoryCsv);
+}
+
+wireShellUi();
+
 
 init().finally(() => {
   scheduleCorrPaneBounds();
