@@ -1,4 +1,4 @@
-const { WebContentsView } = require('electron');
+const { WebContentsView, shell } = require('electron');
 const { CORRLINKS } = require('./config');
 const { buildCorrlinksSubject } = require('./subject');
 
@@ -38,6 +38,109 @@ function setCorrBounds(bounds = {}) {
 
 function getStatus() {
   return { ...lastStatus };
+}
+
+const CORR_ZOOM_MIN = 0.7;
+const CORR_ZOOM_MAX = 1.5;
+
+function getCorrWebContents() {
+  if (!corrView?.webContents || corrView.webContents.isDestroyed()) return null;
+  return corrView.webContents;
+}
+
+function clampCorrZoom(factor) {
+  const n = Number(factor);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(CORR_ZOOM_MAX, Math.max(CORR_ZOOM_MIN, n));
+}
+
+function reloadCorrlinksPanel() {
+  const wc = getCorrWebContents();
+  if (!wc) {
+    return { ok: false, message: 'No CorrLinks panel is open' };
+  }
+  try {
+    wc.reload();
+    return { ok: true, message: 'CorrLinks panel reloaded' };
+  } catch (error) {
+    return { ok: false, message: error.message || 'Failed to reload CorrLinks panel' };
+  }
+}
+
+async function openCorrlinksExternal() {
+  const wc = getCorrWebContents();
+  if (!wc) {
+    return { ok: false, message: 'No CorrLinks panel is open' };
+  }
+  const url = wc.getURL();
+  if (!url || url === 'about:blank') {
+    const fromStatus = getStatus().url;
+    if (!fromStatus) {
+      return { ok: false, message: 'No URL loaded in CorrLinks panel' };
+    }
+    try {
+      await shell.openExternal(fromStatus);
+      return { ok: true, message: `Opened ${fromStatus} in browser` };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to open URL externally' };
+    }
+  }
+  try {
+    await shell.openExternal(url);
+    return { ok: true, message: `Opened ${url} in browser` };
+  } catch (error) {
+    return { ok: false, message: error.message || 'Failed to open URL externally' };
+  }
+}
+
+function clearCorrlinksPanelSession() {
+  const hadPanel = Boolean(getCorrWebContents());
+  forceCloseCorrWindow();
+  return {
+    ok: true,
+    message: hadPanel ? 'CorrLinks panel closed and session view cleared' : 'CorrLinks panel was not open',
+  };
+}
+
+function zoomCorrlinksPanel(payload = {}) {
+  const wc = getCorrWebContents();
+  if (!wc) {
+    return { ok: false, message: 'No CorrLinks panel is open', zoomFactor: null };
+  }
+  let factor;
+  if (payload.level != null && Number.isFinite(Number(payload.level))) {
+    factor = clampCorrZoom(payload.level);
+  } else if (payload.delta != null && Number.isFinite(Number(payload.delta))) {
+    const current = wc.getZoomFactor();
+    factor = clampCorrZoom(current + Number(payload.delta));
+  } else {
+    return {
+      ok: false,
+      message: 'Provide { delta: number } or { level: number }',
+      zoomFactor: wc.getZoomFactor(),
+    };
+  }
+  try {
+    wc.setZoomFactor(factor);
+    return { ok: true, zoomFactor: wc.getZoomFactor() };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error.message || 'Failed to set zoom',
+      zoomFactor: wc.getZoomFactor(),
+    };
+  }
+}
+
+function hasCorrlinksPanelSession() {
+  const wc = getCorrWebContents();
+  const status = getStatus();
+  const url = wc ? wc.getURL() : status.url || null;
+  return {
+    ok: true,
+    active: Boolean(wc),
+    url: url && url !== 'about:blank' ? url : status.url || null,
+  };
 }
 
 function setStatus(partial) {
@@ -2119,4 +2222,9 @@ module.exports = {
   fillComposeSubject,
   fillComposeBody,
   goToCompose,
+  reloadCorrlinksPanel,
+  openCorrlinksExternal,
+  clearCorrlinksPanelSession,
+  zoomCorrlinksPanel,
+  hasCorrlinksPanelSession,
 };

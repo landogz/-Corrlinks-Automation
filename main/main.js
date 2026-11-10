@@ -12,6 +12,11 @@ const {
   setHostWindow,
   setCorrBounds,
   forceCloseCorrWindow,
+  reloadCorrlinksPanel,
+  openCorrlinksExternal,
+  clearCorrlinksPanelSession,
+  zoomCorrlinksPanel,
+  hasCorrlinksPanelSession,
 } = require('./corrlinksLogin');
 const {
   getSportsDataConfig,
@@ -32,11 +37,17 @@ function createControlWindow() {
   controlWindow = new BrowserWindow({
     width: 1440,
     height: 900,
-    minWidth: 800,
-    minHeight: 600,
+    minWidth: 960,
+    minHeight: 640,
     title: 'CorrLinks Automation',
-    backgroundColor: '#07131c',
+    backgroundColor: '#0a0f16',
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset',
+          trafficLightPosition: { x: 14, y: 18 },
+        }
+      : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -47,6 +58,13 @@ function createControlWindow() {
 
   setHostWindow(controlWindow);
   setupAutoUpdater(controlWindow);
+  controlWindow.webContents.on('did-finish-load', () => {
+    if (process.platform === 'darwin') {
+      controlWindow.webContents
+        .executeJavaScript('document.body.classList.add("has-traffic-inset")', true)
+        .catch(() => {});
+    }
+  });
   controlWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
   const relayout = () => {
@@ -286,6 +304,12 @@ function registerIpc() {
 
   ipcMain.handle('corrlinks:status', async () => getStatus());
   ipcMain.handle('corrlinks:setBounds', async (_event, bounds) => setCorrBounds(bounds || {}));
+
+  ipcMain.handle('corrlinks:reload', async () => reloadCorrlinksPanel());
+  ipcMain.handle('corrlinks:openExternal', async () => openCorrlinksExternal());
+  ipcMain.handle('corrlinks:clearSession', async () => clearCorrlinksPanelSession());
+  ipcMain.handle('corrlinks:zoom', async (_event, payload = {}) => zoomCorrlinksPanel(payload || {}));
+  ipcMain.handle('corrlinks:hasSession', async () => hasCorrlinksPanelSession());
 
   ipcMain.handle('exchange:history', async (_event, payload = {}) => {
     try {
