@@ -1,6 +1,6 @@
 const path = require('path');
 const fs = require('fs/promises');
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const { SportsDataClient } = require('./sportsdataClient');
 const {
   loginToCorrlinks,
@@ -58,6 +58,19 @@ function createControlWindow() {
 
   setHostWindow(controlWindow);
   setupAutoUpdater(controlWindow);
+  controlWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) {
+      shell.openExternal(url).catch(() => {});
+    }
+    return { action: 'deny' };
+  });
+  controlWindow.webContents.on('will-navigate', (event, url) => {
+    // Keep the shell on the local UI; open outbound http(s) in the browser.
+    if (/^https?:\/\//i.test(url)) {
+      event.preventDefault();
+      shell.openExternal(url).catch(() => {});
+    }
+  });
   controlWindow.webContents.on('did-finish-load', () => {
     if (process.platform === 'darwin') {
       controlWindow.webContents

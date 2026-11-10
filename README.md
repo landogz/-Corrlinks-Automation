@@ -6,13 +6,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.8**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.9**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inmate Exchange Auto-0.1.8-arm64.dmg` or `Inmate Exchange Auto-0.1.8-arm64-mac.zip` |
-| macOS (Intel) | `Inmate Exchange Auto-0.1.8.dmg` or `Inmate Exchange Auto-0.1.8-mac.zip` |
-| Windows | `Inmate Exchange Auto Setup 0.1.8.exe` or `Inmate Exchange Auto 0.1.8.exe` (portable) |
+| macOS (Apple Silicon) | `Inmate Exchange Auto-0.1.9-arm64.dmg` or `Inmate Exchange Auto-0.1.9-arm64-mac.zip` |
+| macOS (Intel) | `Inmate Exchange Auto-0.1.9.dmg` or `Inmate Exchange Auto-0.1.9-mac.zip` |
+| Windows | `Inmate Exchange Auto Setup 0.1.9.exe` or `Inmate Exchange Auto 0.1.9.exe` (portable) |
 
 ## Install on macOS
 
@@ -30,11 +30,11 @@ xattr -dr com.apple.quarantine "/Applications/Inmate Exchange Auto.app"
 
 ## Install on Windows
 
-1. Run `Inmate Exchange Auto Setup 0.1.8.exe`.
+1. Run `Inmate Exchange Auto Setup 0.1.9.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inmate Exchange Auto** from the Start menu.
 
-`Inmate Exchange Auto 0.1.8.exe` (portable) runs without installing — put `.env` in the same folder as the `.exe` if you use one.
+`Inmate Exchange Auto 0.1.9.exe` (portable) runs without installing — put `.env` in the same folder as the `.exe` if you use one.
 
 ## Configuration
 
