@@ -145,6 +145,11 @@ function hasCorrlinksPanelSession() {
 
 function setStatus(partial) {
   lastStatus = { ...lastStatus, ...partial, updatedAt: new Date().toISOString() };
+  try {
+    if (hostWindow && !hostWindow.isDestroyed() && hostWindow.webContents) {
+      hostWindow.webContents.send('corrlinks:status', getStatus());
+    }
+  } catch (_) {}
   return getStatus();
 }
 
@@ -267,7 +272,7 @@ async function waitForLoginForm(win, timeoutMs = 90000) {
       });
 
       if (info.hasLoginForm) {
-        await new Promise((r) => setTimeout(r, 400));
+        await new Promise((r) => setTimeout(r, 25));
         return { ok: true, info };
       }
 
@@ -283,7 +288,7 @@ async function waitForLoginForm(win, timeoutMs = 90000) {
       // ignore mid-navigation
     }
 
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 40));
   }
 
   const finalInfo = await inspectPage(win).catch(() => null);
@@ -514,14 +519,14 @@ async function fillAndSubmit(win, email, password) {
       return { ok: false, reason: 'Could not find email field' };
     }
     await cdpTypeIntoFocused(win, wantEmail);
-    await new Promise((r) => setTimeout(r, 120));
+    await new Promise((r) => setTimeout(r, 15));
 
     const passFocus = await focusLoginField(win, 'password');
     if (!passFocus?.ok) {
       return { ok: false, reason: 'Could not find password field' };
     }
     await cdpTypeIntoFocused(win, wantPassword);
-    await new Promise((r) => setTimeout(r, 120));
+    await new Promise((r) => setTimeout(r, 15));
 
     filled = await syncEj2LoginFields(win, wantEmail, wantPassword);
     if (credentialsMatch(filled, wantEmail, wantPassword)) break;
@@ -531,7 +536,7 @@ async function fillAndSubmit(win, email, password) {
     filled = { ...filled, ...snap };
     if (credentialsMatch(filled, wantEmail, wantPassword)) break;
 
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, 25));
   }
 
   if (!credentialsMatch(filled, wantEmail, wantPassword)) {
@@ -580,10 +585,10 @@ async function fillAndSubmit(win, email, password) {
 
   // Re-assert values one last time immediately before submit (validators were rejecting empty model).
   await syncEj2LoginFields(win, wantEmail, wantPassword);
-  await new Promise((r) => setTimeout(r, 200));
+  await new Promise((r) => setTimeout(r, 20));
 
   await cdpClick(win, target.x, target.y);
-  await new Promise((r) => setTimeout(r, 350));
+  await new Promise((r) => setTimeout(r, 30));
 
   const stillLogin = await win.webContents.executeJavaScript(
     ` /\\/login/i.test(location.pathname || location.href) `,
@@ -597,7 +602,7 @@ async function fillAndSubmit(win, email, password) {
       await focusLoginField(win, 'password');
       await cdpTypeIntoFocused(win, wantPassword);
       await syncEj2LoginFields(win, wantEmail, wantPassword);
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 20));
     }
     clickAt(win, target.x, target.y);
     await cdpClick(win, target.x, target.y);
@@ -702,9 +707,11 @@ async function clearAuthToasts(win) {
 /**
  * Close Syncfusion "Validation Error" / Account locked modal (Close button or X).
  */
-async function dismissValidationDialog(win) {
-  // Give the dialog a moment to render after dashboard load.
-  for (let i = 0; i < 8; i += 1) {
+async function dismissValidationDialog(win, { waitMs = 120 } = {}) {
+  // Fast path: most compose opens have no lock dialog — don't spin for seconds.
+  const started = Date.now();
+  const budget = Math.max(0, Number(waitMs) || 0);
+  do {
     const target = await win.webContents.executeJavaScript(
       `(() => {
         const dialogs = [...document.querySelectorAll('.e-dialog, [role="dialog"]')].filter((dlg) => {
@@ -733,13 +740,14 @@ async function dismissValidationDialog(win) {
     );
 
     if (!target) {
-      await new Promise((r) => setTimeout(r, 250));
+      if (Date.now() - started >= budget) return { dismissed: false };
+      await new Promise((r) => setTimeout(r, 25));
       continue;
     }
 
     if (target.hasButton && target.x != null) {
       clickAt(win, target.x, target.y);
-      await new Promise((r) => setTimeout(r, 150));
+      await new Promise((r) => setTimeout(r, 15));
     }
 
     await win.webContents.executeJavaScript(
@@ -754,7 +762,6 @@ async function dismissValidationDialog(win) {
             btn.click();
             return true;
           }
-          // Fallback: hide overlay if Syncfusion instance exists.
           const inst = dlg.ej2_instances && dlg.ej2_instances[0];
           if (inst && typeof inst.hide === 'function') {
             inst.hide();
@@ -766,21 +773,178 @@ async function dismissValidationDialog(win) {
       true
     );
 
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 25));
     const stillOpen = await readLockDialogMessage(win);
     if (!stillOpen) {
       return { dismissed: true };
     }
-  }
+  } while (Date.now() - started < Math.max(budget, 2000));
 
   return { dismissed: false };
 }
 
 async function settlePostLogin(win) {
-  await new Promise((r) => setTimeout(r, 800));
-  const lockMessage = await readLockDialogMessage(win);
-  const dismiss = await dismissValidationDialog(win);
+  await new Promise((r) => setTimeout(r, 40));
+  let lockMessage = await readLockDialogMessage(win);
+  // Detect lock quickly so we can fall back to the second account without downtime.
+  const dismiss = await dismissValidationDialog(win, { waitMs: lockMessage ? 250 : 120 });
+  if (!lockMessage) {
+    lockMessage = await readLockDialogMessage(win);
+  }
   return { lockMessage, dismiss };
+}
+
+const SEND_SUCCESS_DIALOG_JS = `(() => {
+  function isReallyVisible(el) {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    if (el.getAttribute('aria-hidden') === 'true') return false;
+    if (el.classList.contains('e-popup-close') || el.classList.contains('e-dlg-close')) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 40 || r.height < 40) return false;
+    if (r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth) return false;
+    return true;
+  }
+  const dialogs = [...document.querySelectorAll('.e-dialog, [role="dialog"]')].filter((dlg) => {
+    if (!isReallyVisible(dlg)) return false;
+    const text = String(dlg.innerText || dlg.textContent || '');
+    return /message successfully sent/i.test(text);
+  });
+  const dlg = dialogs[0];
+  if (!dlg) return null;
+  const okBtn =
+    [...dlg.querySelectorAll('button, input[type="button"], a.e-btn, .e-btn, [role="button"]')].find((b) =>
+      /^\\s*ok\\s*$/i.test(String(b.innerText || b.value || '').trim())
+    ) ||
+    dlg.querySelector('.e-footer-content button, .e-dlg-footer button, button.e-primary');
+  if (!okBtn || !isReallyVisible(okBtn)) {
+    return { found: true, hasButton: false, text: (dlg.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 120) };
+  }
+  const r = okBtn.getBoundingClientRect();
+  return {
+    found: true,
+    hasButton: true,
+    text: (dlg.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 120),
+    btn: String(okBtn.innerText || okBtn.value || 'OK').trim(),
+    x: r.left + r.width / 2,
+    y: r.top + r.height / 2,
+  };
+})()`;
+
+/**
+ * CorrLinks shows Syncfusion dialog: "Send Message" / "Message successfully sent." + OK.
+ * waitMs=0 → single peek (no downtime). After Send, pass a short wait budget.
+ */
+async function dismissSendSuccessDialog(win, { waitMs = 0 } = {}) {
+  const started = Date.now();
+  const budget = Math.max(0, Number(waitMs) || 0);
+  do {
+    const target = await win.webContents.executeJavaScript(SEND_SUCCESS_DIALOG_JS, true).catch(() => null);
+
+    if (!target?.found) {
+      if (Date.now() - started >= budget) break;
+      await new Promise((r) => setTimeout(r, 25));
+      continue;
+    }
+
+    if (target.hasButton && target.x != null) {
+      clickAt(win, target.x, target.y);
+      await cdpClick(win, target.x, target.y).catch(() => {});
+    }
+
+    await win.webContents.executeJavaScript(
+      `(() => {
+        function isReallyVisible(el) {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+          if (el.getAttribute('aria-hidden') === 'true') return false;
+          const r = el.getBoundingClientRect();
+          return r.width >= 40 && r.height >= 40;
+        }
+        const dialogs = [...document.querySelectorAll('.e-dialog, [role="dialog"]')];
+        for (const dlg of dialogs) {
+          if (!isReallyVisible(dlg)) continue;
+          const text = String(dlg.innerText || dlg.textContent || '');
+          if (!/message successfully sent/i.test(text)) continue;
+          const okBtn =
+            [...dlg.querySelectorAll('button, input[type="button"], a.e-btn, .e-btn')].find((b) =>
+              /^\\s*ok\\s*$/i.test(String(b.innerText || b.value || '').trim())
+            ) ||
+            dlg.querySelector('.e-footer-content button, .e-dlg-footer button, button.e-primary');
+          if (okBtn) {
+            try { okBtn.focus(); } catch (_) {}
+            okBtn.click();
+            return { ok: true, via: 'click' };
+          }
+          const inst = dlg.ej2_instances && dlg.ej2_instances[0];
+          if (inst && typeof inst.hide === 'function') {
+            inst.hide();
+            return { ok: true, via: 'hide' };
+          }
+        }
+        return { ok: false };
+      })()`,
+      true
+    ).catch(() => ({ ok: false }));
+
+    await new Promise((r) => setTimeout(r, 30));
+    return { dismissed: true, success: true, text: target.text || 'Message successfully sent.' };
+  } while (Date.now() - started < budget);
+
+  return { dismissed: false, success: false };
+}
+
+/** First meaningful line of body — used to confirm which file was sent. */
+function bodyFingerprint(text) {
+  const line = String(text || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => l.length > 0) || '';
+  return line.slice(0, 80);
+}
+
+async function readComposeBodyState(win) {
+  return win.webContents.executeJavaScript(
+    `(() => {
+      const body = document.querySelector(
+        'textarea, .e-richtexteditor [contenteditable="true"], [contenteditable="true"]'
+      );
+      if (!body) return { length: 0, head: '', via: 'missing' };
+      const text = String(body.value != null && body.value !== '' ? body.value : (body.innerText || ''));
+      const trimmed = text.trim();
+      const head = trimmed.split(/\\r?\\n/).find((l) => l.trim()) || '';
+      return { length: trimmed.length, head: head.slice(0, 80), via: body.tagName.toLowerCase() };
+    })()`,
+    true
+  ).catch(() => ({ length: 0, head: '', via: 'error' }));
+}
+
+/**
+ * Do not click Send until the compose body actually holds the pasted file.
+ * Prevents “part 1 missed” when Send fires before Angular binds the text.
+ */
+async function waitForComposeBodyReady(win, expectedText, timeoutMs = 6000) {
+  const expected = String(expectedText || '');
+  const need = Math.max(1, Math.floor(expected.trim().length * 0.92));
+  const expectHead = bodyFingerprint(expected);
+  const started = Date.now();
+  let last = null;
+  while (Date.now() - started < timeoutMs) {
+    last = await readComposeBodyState(win);
+    const headOk = !expectHead || !last?.head || last.head.startsWith(expectHead.slice(0, 24));
+    if (last?.length >= need && headOk) {
+      return { ok: true, ...last, expected: expected.trim().length };
+    }
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  return {
+    ok: false,
+    reason: `Body not ready before Send (have ${last?.length || 0}, need ~${need})`,
+    ...last,
+    expected: expected.trim().length,
+  };
 }
 
 async function waitForLoginResult(win, timeoutMs = 45000) {
@@ -845,7 +1009,7 @@ async function waitForLoginResult(win, timeoutMs = 45000) {
       }
     }
 
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 50));
   }
 
   return {
@@ -867,60 +1031,87 @@ async function clearCorrlinksSession(win) {
   }
 }
 
+function withTimeout(promise, ms, label = 'timeout') {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise).finally(() => {
+      if (timer) clearTimeout(timer);
+    }),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(label)), ms);
+    }),
+  ]);
+}
+
 /**
  * Detect CorrLinks "You are already logged in as email@…" interstitial.
+ * Always time-bounded — blank/unloaded webContents must not hang the app.
  */
 async function detectAlreadyLoggedIn(win) {
-  return win.webContents.executeJavaScript(
-    `(() => {
-      const text = (document.body && document.body.innerText) ? document.body.innerText : '';
-      const m = text.match(/already logged in as\\s*([^\\n.]+)/i);
-      if (!m) {
-        // Also detect via URL already being an authenticated area without login form
-        const hasLoginFields = !!document.querySelector('input[type="password"], #textbox_1');
-        const onAuthArea = /\\/(dashboard|mailbox)\\b/i.test(location.href);
-        if (onAuthArea && !hasLoginFields) {
-          return { already: true, email: null, via: 'url', url: location.href };
-        }
-        return { already: false };
-      }
-      const email = (m[1] || '').trim().replace(/\\s+/g, '');
-      return { already: true, email, via: 'message', url: location.href, snippet: text.replace(/\\s+/g, ' ').trim().slice(0, 180) };
-    })()`,
-    true
-  );
+  try {
+    if (!win?.webContents || win.webContents.isDestroyed()) {
+      return { already: false };
+    }
+    const url = win.webContents.getURL();
+    if (!url || url === 'about:blank' || url.startsWith('data:')) {
+      return { already: false, via: 'blank' };
+    }
+    return await withTimeout(
+      win.webContents.executeJavaScript(
+        `(() => {
+          const text = (document.body && document.body.innerText) ? document.body.innerText : '';
+          const m = text.match(/already logged in as\\s*([^\\n.]+)/i);
+          if (!m) {
+            const hasLoginFields = !!document.querySelector('input[type="password"], #textbox_1');
+            const onAuthArea = /\\/(dashboard|mailbox)\\b/i.test(location.href);
+            if (onAuthArea && !hasLoginFields) {
+              return { already: true, email: null, via: 'url', url: location.href };
+            }
+            return { already: false };
+          }
+          const email = (m[1] || '').trim().replace(/\\s+/g, '');
+          return { already: true, email, via: 'message', url: location.href, snippet: text.replace(/\\s+/g, ' ').trim().slice(0, 180) };
+        })()`,
+        true
+      ),
+      8000,
+      'detectAlreadyLoggedIn timeout'
+    );
+  } catch (_) {
+    return { already: false };
+  }
 }
 
 /**
  * Leave an existing CorrLinks session so we can log in as the target account.
- * Prefer UI logout, then always clear cookies/storage.
+ * Clear storage first (fast), then brief UI logout attempt — no multi-second sleeps.
  */
 async function forceLogoutExistingSession(win) {
-  setStatus({ state: 'logout', message: 'Existing CorrLinks session found — logging out…' });
+  setStatus({ state: 'logout', message: 'Switching CorrLinks account — clearing session…' });
 
-  // Try UI logout paths first.
+  // Clear cookies/storage first so we don't wait on slow UI logout.
+  await clearCorrlinksSession(win);
+
+  // Best-effort UI logout (non-blocking delay).
   await win.webContents.executeJavaScript(
     `(() => {
-      // Open user menu if present, then click Logout.
       const menuBtn =
         document.querySelector('#e-dropdown-btn_2') ||
         document.querySelector('button[aria-label="dropdownbutton"]') ||
         [...document.querySelectorAll('button')].find((b) => /account|profile|user/i.test(b.innerText || b.getAttribute('aria-label') || ''));
       if (menuBtn) menuBtn.click();
-
       const links = [...document.querySelectorAll('a, button, span, li')];
       const logout = links.find((el) => /^\\s*log\\s*out\\s*$/i.test((el.innerText || '').trim()));
       if (logout) {
         logout.click();
         return 'ui-logout';
       }
-      // Dashboard link only keeps the same session — not used for switch.
       return 'no-ui-logout';
     })()`,
     true
-  );
+  ).catch(() => 'no-ui-logout');
 
-  await new Promise((r) => setTimeout(r, 800));
+  await new Promise((r) => setTimeout(r, 30));
   await clearCorrlinksSession(win);
 
   try {
@@ -929,7 +1120,7 @@ async function forceLogoutExistingSession(win) {
     const msg = String(error?.message || error);
     if (!/ERR_ABORTED|-3/.test(msg)) throw error;
   }
-  await new Promise((r) => setTimeout(r, 700));
+  await new Promise((r) => setTimeout(r, 40));
 
   // If still "already logged in", clear again and hard-reload login.
   const again = await detectAlreadyLoggedIn(win).catch(() => null);
@@ -938,7 +1129,7 @@ async function forceLogoutExistingSession(win) {
     try {
       await win.loadURL(CORRLINKS.loginUrl);
     } catch (_) {}
-    await new Promise((r) => setTimeout(r, 700));
+    await new Promise((r) => setTimeout(r, 40));
   }
 
   return { ok: true };
@@ -958,7 +1149,7 @@ async function loadLoginPage(win, { clearSession = false } = {}) {
       throw error;
     }
   }
-  await new Promise((r) => setTimeout(r, 500));
+  await new Promise((r) => setTimeout(r, 40));
 }
 
 function normalizeRecipientNeedle(value) {
@@ -1316,21 +1507,21 @@ async function selectComposeRecipient(win, { recipientName, inmateId } = {}) {
     message: `Selecting To recipient: ${recipientName || inmateId}`,
   });
 
-  // Wait for To control.
+  // Wait for To control (poll fast).
   const waitStart = Date.now();
-  while (Date.now() - waitStart < 20000) {
+  while (Date.now() - waitStart < 12000) {
     const ready = await win.webContents.executeJavaScript(
       `!!(document.querySelector('.e-multiselect, .e-multi-select-wrapper'))`,
       true
     );
     if (ready) break;
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 30));
   }
 
   win.focus();
   // Always start from an empty To field so prior recipients never stack.
   await clearComposeToField(win);
-  await new Promise((r) => setTimeout(r, 250));
+  await new Promise((r) => setTimeout(r, 15));
 
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     const filterText = filterTokens[(attempt - 1) % filterTokens.length] || filterTokens[0] || '';
@@ -1344,7 +1535,7 @@ async function selectComposeRecipient(win, { recipientName, inmateId } = {}) {
       attempts.push({ attempt, opened });
       continue;
     }
-    await new Promise((r) => setTimeout(r, 900));
+    await new Promise((r) => setTimeout(r, 60));
 
     // Strategy A: Syncfusion APIs
     const api = await trySyncfusionSelectRecipient(win, { recipientName, inmateId });
@@ -1368,7 +1559,7 @@ async function selectComposeRecipient(win, { recipientName, inmateId } = {}) {
         } catch (_) {
           clickAt(win, point.x, point.y);
         }
-        await new Promise((r) => setTimeout(r, 220));
+        await new Promise((r) => setTimeout(r, 25));
         verified = await verifyToRecipientSelected(win, { recipientName, inmateId });
         if (verified?.ok) {
           return {
@@ -1389,17 +1580,17 @@ async function selectComposeRecipient(win, { recipientName, inmateId } = {}) {
         } catch (_) {
           clickAt(win, again.points[0].x, again.points[0].y);
         }
-        await new Promise((r) => setTimeout(r, 250));
+        await new Promise((r) => setTimeout(r, 25));
       }
     }
 
     // Commit keys / confirm buttons.
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
-    await new Promise((r) => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, 15));
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, 25));
 
     await win.webContents.executeJavaScript(
       `(() => {
@@ -1411,11 +1602,11 @@ async function selectComposeRecipient(win, { recipientName, inmateId } = {}) {
       })()`,
       true
     );
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 30));
 
     // Click outside To control to commit chips.
     clickAt(win, 40, 40);
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 25));
 
     verified = await verifyToRecipientSelected(win, { recipientName, inmateId });
     attempts.push({
@@ -1519,6 +1710,310 @@ async function fillComposeSubject(win, subject) {
   );
 
   return result;
+}
+
+/** Inspect compose page readiness for Send (To settled, Send enabled). */
+async function readComposeSendReady(win) {
+  try {
+    return await win.webContents.executeJavaScript(
+      `(() => {
+        try {
+          function isSendButton(el) {
+            const text = String(el.innerText || el.value || el.getAttribute('aria-label') || '')
+              .replace(/\\s+/g, ' ')
+              .trim()
+              .toLowerCase();
+            return text === 'send' || text === 'send message' || /^send\\b/.test(text);
+          }
+          function isVisible(el) {
+            if (!el) return false;
+            const r = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0';
+          }
+          // Only count VISIBLE To/multiselect spinners — Syncfusion leaves hidden panes in the DOM.
+          const spinnerNodes = [...document.querySelectorAll(
+            '.e-multiselect .e-spinner-pane, .e-dropdownbase .e-spinner-pane, .e-spinner-pane, .e-spin-show'
+          )];
+          const spinning = spinnerNodes.some((el) => {
+            if (el.classList.contains('e-spin-hide')) return false;
+            return isVisible(el);
+          });
+          const chips = [...document.querySelectorAll(
+            '.e-multiselect .e-chip-content, .e-multi-select-wrapper .e-chip-content, .e-chip .e-chip-content, .e-chips .e-chip-content'
+          )]
+            .map((el) => (el.textContent || '').trim())
+            .filter((t) => t && !/^\\+\\d+$/.test(t));
+          let toInput = null;
+          try {
+            toInput = document.querySelector(
+              '.e-multiselect input, .e-multi-select-wrapper input, #to input, [formcontrolname="to"] input'
+            );
+          } catch (_) {}
+          const toHasValue = Boolean(
+            chips.length ||
+            (toInput && String(toInput.value || '').trim()) ||
+            document.querySelector('.e-multiselect .e-chip, .e-chips-close, .e-chip-item')
+          );
+          const nodes = [...document.querySelectorAll('button, input[type="submit"], a.e-btn, .e-btn, [role="button"]')];
+          const candidates = nodes
+            .filter((el) => isSendButton(el) && isVisible(el))
+            .map((el) => {
+              const r = el.getBoundingClientRect();
+              const disabled =
+                Boolean(el.disabled) ||
+                el.getAttribute('disabled') != null ||
+                el.getAttribute('aria-disabled') === 'true' ||
+                el.classList.contains('e-disabled');
+              return {
+                text: String(el.innerText || el.value || 'Send').trim(),
+                disabled,
+                x: r.left + r.width / 2,
+                y: r.top + r.height / 2,
+                w: r.width,
+                h: r.height,
+                className: String(el.className || ''),
+              };
+            });
+          const enabled = candidates.find((c) => !c.disabled) || null;
+          return {
+            spinning,
+            chipCount: chips.length,
+            toHasValue,
+            chips: chips.slice(0, 3),
+            candidateCount: candidates.length,
+            send: enabled,
+            url: location.href,
+          };
+        } catch (err) {
+          return {
+            spinning: false,
+            chipCount: 0,
+            toHasValue: false,
+            chips: [],
+            candidateCount: 0,
+            send: null,
+            url: location.href,
+            scriptError: String(err && err.message || err),
+          };
+        }
+      })()`,
+      true
+    );
+  } catch (error) {
+    return {
+      spinning: false,
+      chipCount: 0,
+      toHasValue: false,
+      chips: [],
+      candidateCount: 0,
+      send: null,
+      scriptError: error.message || String(error),
+    };
+  }
+}
+
+/**
+ * Wait until To settles and an enabled Send button is available.
+ * Phantom Syncfusion spinners must not block forever — if To+Send look ready, proceed.
+ */
+async function waitForComposeSendReady(win, timeoutMs = 8000) {
+  const started = Date.now();
+  let last = null;
+  let readySince = 0;
+  while (Date.now() - started < timeoutMs) {
+    last = await readComposeSendReady(win);
+    const toReady = Boolean(last?.chipCount > 0 || last?.toHasValue);
+    const elapsed = Date.now() - started;
+    const sendReady = Boolean(last?.send);
+    const looksReady = sendReady && (toReady || elapsed > 400);
+
+    if (looksReady && !last.spinning) {
+      return { ok: true, ...last };
+    }
+
+    // To already selected + Send enabled, but a sticky/phantom spinner remains:
+    // brief settle then send anyway.
+    if (looksReady && last.spinning) {
+      if (!readySince) readySince = Date.now();
+      if (Date.now() - readySince >= 80) {
+        return { ok: true, ignoredSpinner: true, ...last };
+      }
+    } else {
+      readySince = 0;
+    }
+
+    await new Promise((r) => setTimeout(r, 25));
+  }
+
+  // Last chance: Send enabled and To present — click even if spinner flag stuck.
+  if (last?.send && (last.chipCount > 0 || last.toHasValue)) {
+    return { ok: true, forced: true, ...last };
+  }
+
+  return {
+    ok: false,
+    reason: last?.scriptError
+      ? `Send ready script error: ${last.scriptError}`
+      : last?.spinning
+        ? 'To field still loading (spinner)'
+        : !(last?.chipCount || last?.toHasValue)
+          ? 'No To recipient before Send'
+          : last?.candidateCount
+            ? 'Send button still disabled'
+            : 'Send button not found',
+    ...last,
+  };
+}
+
+/**
+ * Click the CorrLinks compose Send button with a trusted CDP click (Syncfusion-safe).
+ * Success = ONLY a visible “Message successfully sent” dialog (then OK).
+ * Never treat navigation alone as success — that was skipping part 1.
+ */
+async function clickComposeSend(win, { expectedFingerprint = '', expectedBodyLength = 0 } = {}) {
+  try {
+    setStatus({
+      state: 'sending',
+      message: 'Waiting for Send to become ready…',
+    });
+
+    // Quick peek only — do not burn seconds waiting for a dialog that is not there.
+    await dismissSendSuccessDialog(win, { waitMs: 0 }).catch(() => {});
+
+    // Body must already be on the page before we trust Send.
+    if (expectedBodyLength > 0) {
+      const bodyCheck = await readComposeBodyState(win);
+      if ((bodyCheck?.length || 0) < Math.floor(expectedBodyLength * 0.9)) {
+        return {
+          ok: false,
+          reason: `Refusing Send — body too short (${bodyCheck?.length || 0}/${expectedBodyLength})`,
+          bodyLength: bodyCheck?.length || 0,
+          bodyHead: bodyCheck?.head || '',
+        };
+      }
+    }
+
+    const ready = await waitForComposeSendReady(win, 8000);
+    if (!ready.ok || !ready.send) {
+      return { ok: false, reason: ready.reason || 'Send not ready' };
+    }
+
+    const beforeBody = await readComposeBodyState(win);
+    if (expectedBodyLength > 0 && (beforeBody?.length || 0) < Math.floor(expectedBodyLength * 0.9)) {
+      return {
+        ok: false,
+        reason: `Refusing Send — body disappeared (${beforeBody?.length || 0}/${expectedBodyLength})`,
+        bodyLength: beforeBody?.length || 0,
+        bodyHead: beforeBody?.head || '',
+      };
+    }
+
+    setStatus({
+      state: 'sending',
+      message:
+        `Clicking Send (${ready.send.text})…` +
+        ` · ${beforeBody?.length || 0} chars` +
+        (beforeBody?.head ? ` · “${String(beforeBody.head).slice(0, 40)}…”` : '') +
+        (expectedFingerprint ? ` · expect “${expectedFingerprint.slice(0, 40)}”` : ''),
+    });
+
+    // Extra settle once Send is enabled — Angular needs a moment after large paste.
+    await new Promise((r) => setTimeout(r, 500));
+
+    win.focus();
+    clickAt(win, ready.send.x, ready.send.y);
+    await cdpClick(win, ready.send.x, ready.send.y).catch(() => {});
+    await win.webContents.executeJavaScript(
+      `(() => {
+        const nodes = [...document.querySelectorAll('button, input[type="submit"], a.e-btn, .e-btn')];
+        const send = nodes.find((el) => {
+          const text = String(el.innerText || el.value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+          const disabled =
+            Boolean(el.disabled) ||
+            el.getAttribute('disabled') != null ||
+            el.getAttribute('aria-disabled') === 'true';
+          return !disabled && (text === 'send' || text === 'send message' || /^send\\b/.test(text));
+        });
+        if (!send) return false;
+        try { send.focus(); } catch (_) {}
+        send.click();
+        return true;
+      })()`,
+      true
+    ).catch(() => false);
+
+    // Give CorrLinks a beat to process before polling for the success dialog.
+    await new Promise((r) => setTimeout(r, 350));
+    setStatus({
+      state: 'sending',
+      message: 'Waiting for “Message successfully sent”…',
+    });
+    let successDlg = await dismissSendSuccessDialog(win, { waitMs: 10000 });
+    if (successDlg.success) {
+      setStatus({
+        state: 'sending',
+        message: `Send confirmed (OK) · ${beforeBody?.length || 0} chars` +
+          (beforeBody?.head ? ` · “${String(beforeBody.head).slice(0, 48)}”` : ''),
+      });
+      return {
+        ok: true,
+        text: ready.send.text,
+        via: 'success-dialog',
+        url: win.webContents.getURL(),
+        successDialog: successDlg,
+        bodyLength: beforeBody?.length || 0,
+        bodyHead: beforeBody?.head || '',
+      };
+    }
+
+    await dismissValidationDialog(win).catch(() => {});
+    let url = win.webContents.getURL();
+    let stillOnCompose = /mailbox\/compose/i.test(String(url || ''));
+
+    // One retry only — still require the real success dialog afterward.
+    if (stillOnCompose) {
+      const again = await readComposeSendReady(win);
+      if (again?.send) {
+        setStatus({
+          state: 'sending',
+          message: 'No success dialog yet — retrying Send click…',
+        });
+        clickAt(win, again.send.x, again.send.y);
+        await cdpClick(win, again.send.x, again.send.y).catch(() => {});
+        await new Promise((r) => setTimeout(r, 350));
+        successDlg = await dismissSendSuccessDialog(win, { waitMs: 10000 });
+        if (successDlg.success) {
+          return {
+            ok: true,
+            text: ready.send.text,
+            via: 'success-dialog-retry',
+            url: win.webContents.getURL(),
+            successDialog: successDlg,
+            bodyLength: beforeBody?.length || 0,
+            bodyHead: beforeBody?.head || '',
+          };
+        }
+        url = win.webContents.getURL();
+        stillOnCompose = /mailbox\/compose/i.test(String(url || ''));
+      }
+    }
+
+    return {
+      ok: false,
+      reason: 'Send click did not show “Message successfully sent” dialog',
+      text: ready.send.text,
+      url,
+      stillOnCompose,
+      bodyLength: beforeBody?.length || 0,
+      bodyHead: beforeBody?.head || '',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error.message || String(error),
+    };
+  }
 }
 
 /**
@@ -1637,6 +2132,8 @@ async function goToCompose(win, {
   subject,
   exchangeParts = [],
   exchangeSkipped = [],
+  send = false,
+  skipNavigate = false,
 } = {}) {
   const composedSubject = subject || buildCorrlinksSubject();
   const parts = Array.isArray(exchangeParts) ? exchangeParts : [];
@@ -1645,19 +2142,24 @@ async function goToCompose(win, {
 
   setStatus({
     state: 'compose',
-    message: 'Opening mailbox compose…',
+    message: skipNavigate ? 'Filling next compose…' : 'Opening mailbox compose…',
     url: CORRLINKS.composeUrl,
     subject: composedSubject,
   });
-  try {
-    await win.loadURL(CORRLINKS.composeUrl);
-  } catch (error) {
-    const msg = String(error?.message || error);
-    if (!/ERR_ABORTED|-3/.test(msg)) {
-      throw error;
+  if (!skipNavigate) {
+    try {
+      await win.loadURL(CORRLINKS.composeUrl);
+    } catch (error) {
+      const msg = String(error?.message || error);
+      if (!/ERR_ABORTED|-3/.test(msg)) {
+        throw error;
+      }
     }
+    // First compose after login needs a short settle for Syncfusion To/body controls.
+    await new Promise((r) => setTimeout(r, 200));
+  } else {
+    await new Promise((r) => setTimeout(r, 80));
   }
-  await new Promise((r) => setTimeout(r, 800));
 
   const landedUrl = win.webContents.getURL();
   if (isCorrlinksLoginUrl(landedUrl)) {
@@ -1744,24 +2246,125 @@ async function goToCompose(win, {
       bodyResult,
     });
   } else {
-    bodyResult = await fillComposeBody(win, currentPart.text || '');
+    // Part 2+ (and later): put CONT.. on the first line so the inmate sees continuation.
+    const rawBody = currentPart.text || '';
+    const isContinuation =
+      Boolean(currentPart.continuation) || Number(currentPart.part) > 1;
+    const bodyText =
+      isContinuation && !/^\s*CONT\.\./i.test(rawBody)
+        ? `CONT..\n\n${rawBody}`
+        : rawBody;
+    bodyResult = await fillComposeBody(win, bodyText);
+    if (bodyResult?.ok) {
+      // Critical: wait until the textarea actually holds this file before Send.
+      const bodyReady = await waitForComposeBodyReady(win, bodyText, 6000);
+      if (!bodyReady.ok) {
+        bodyResult = {
+          ...bodyResult,
+          ok: false,
+          reason: bodyReady.reason || 'Body paste did not stick',
+          bodyReady,
+        };
+      } else {
+        bodyResult = { ...bodyResult, length: bodyReady.length, bodyReady };
+      }
+    }
     bodyResult = {
       ...bodyResult,
       filename: currentPart.filename,
       part: currentPart.part,
       url: currentPart.url,
       pendingCount: pendingParts.length,
-      // Do not send yet — paste only.
-      send: false,
+      send: Boolean(send),
+      continuation: isContinuation,
+      pastedTextLength: bodyText.length,
     };
     setStatus({
       state: 'compose',
       message: bodyResult.ok
-        ? `Pasted part ${currentPart.part}/${parts.length}: ${currentPart.filename} (${currentPart.text?.length || 0} chars)` +
-          (pendingParts.length ? ` · ${pendingParts.length} more part(s) pending (no send yet)` : ' · no send yet')
+        ? `Pasted part ${currentPart.part}/${parts.length}: ${currentPart.filename} (${bodyText.length} chars)` +
+          (send
+            ? ' · sending…'
+            : pendingParts.length
+              ? ` · ${pendingParts.length} more part(s) pending (no send yet)`
+              : ' · no send yet')
         : `Body paste failed: ${bodyResult.reason || 'unknown'}`,
       bodyResult,
-      pendingParts: pendingParts.map((p) => ({ part: p.part, filename: p.filename, characters: p.characters || p.text?.length || 0 })),
+      pendingParts: pendingParts.map((p) => ({
+        part: p.part,
+        filename: p.filename,
+        characters: p.characters || p.text?.length || 0,
+      })),
+    });
+  }
+
+  let sendResult = null;
+  if (send && bodyResult?.ok) {
+    // Confirm To is still selected, then pause so Syncfusion binds body before Send.
+    await new Promise((r) => setTimeout(r, 300));
+    if (recipientName || inmateId) {
+      const stillTo = await verifyToRecipientSelected(win, { recipientName, inmateId }).catch(() => null);
+      if (!stillTo?.ok) {
+        setStatus({
+          state: 'compose',
+          message: 'Re-selecting To before Send…',
+          recipient,
+        });
+        recipient = await selectComposeRecipient(win, { recipientName, inmateId });
+        await new Promise((r) => setTimeout(r, 250));
+      } else {
+        setStatus({
+          state: 'sending',
+          message: `To confirmed (${stillTo.selected || recipientName}) — settling before Send…`,
+          recipient: stillTo,
+        });
+      }
+    }
+    const expectedLen = Number(bodyResult.pastedTextLength || currentPart.text?.length || 0);
+    setStatus({
+      state: 'sending',
+      message: `Waiting 1.2s before Send · part ${currentPart.part}: ${currentPart.filename}…`,
+      bodyResult,
+      recipient,
+      subject: composedSubject,
+    });
+    // Little delay before Send — prevents part 1 firing before CorrLinks accepts the body.
+    await new Promise((r) => setTimeout(r, 1200));
+    setStatus({
+      state: 'sending',
+      message: `Sending part ${currentPart.part}: ${currentPart.filename} (${expectedLen} chars)…`,
+      bodyResult,
+      recipient,
+      subject: composedSubject,
+    });
+    sendResult = await clickComposeSend(win, {
+      expectedFingerprint: bodyFingerprint(
+        bodyResult.continuation && currentPart.text
+          ? `CONT..\n\n${currentPart.text}`
+          : currentPart.text || ''
+      ),
+      expectedBodyLength: expectedLen,
+    });
+    bodyResult = {
+      ...bodyResult,
+      sendResult,
+      sent: Boolean(sendResult?.ok),
+    };
+    setStatus({
+      state: sendResult?.ok ? 'sending' : 'error',
+      message: sendResult?.ok
+        ? `Sent part ${currentPart.part}/${parts.length}: ${currentPart.filename}`
+        : `Send failed for ${currentPart.filename}: ${sendResult?.reason || 'unknown'}`,
+      bodyResult,
+      sendResult,
+      recipient,
+      subject: composedSubject,
+    });
+  } else if (send && bodyResult && !bodyResult.ok) {
+    setStatus({
+      state: 'error',
+      message: `Cannot send — body paste failed: ${bodyResult.reason || 'unknown'}`,
+      bodyResult,
     });
   }
 
@@ -1772,6 +2375,7 @@ async function goToCompose(win, {
     subject: composedSubject,
     subjectResult,
     bodyResult,
+    sendResult,
     pastedPart: currentPart
       ? { part: currentPart.part, filename: currentPart.filename, characters: currentPart.text?.length || 0 }
       : null,
@@ -1785,6 +2389,195 @@ async function goToCompose(win, {
   };
 }
 
+/**
+ * After a send, stay logged in and open a fresh compose for the next file.
+ * Always navigate to compose URL for a clean form (avoids leftover part-1 body).
+ */
+async function prepareNextCompose(win) {
+  await dismissSendSuccessDialog(win, { waitMs: 0 }).catch(() => {});
+  await dismissValidationDialog(win).catch(() => {});
+
+  const urlNow = win.webContents.getURL();
+  if (isCorrlinksLoginUrl(urlNow)) {
+    return { ok: false, sessionLost: true, url: urlNow };
+  }
+
+  setStatus({
+    state: 'compose',
+    message: 'Still logged in — opening fresh compose for next file…',
+    url: urlNow,
+  });
+
+  try {
+    await win.loadURL(CORRLINKS.composeUrl);
+  } catch (error) {
+    const msg = String(error?.message || error);
+    if (!/ERR_ABORTED|-3/.test(msg)) throw error;
+  }
+
+  await new Promise((r) => setTimeout(r, 60));
+  await dismissSendSuccessDialog(win, { waitMs: 0 }).catch(() => {});
+  await dismissValidationDialog(win).catch(() => {});
+
+  const landed = win.webContents.getURL();
+  if (isCorrlinksLoginUrl(landed)) {
+    return { ok: false, sessionLost: true, url: landed };
+  }
+  return { ok: true, url: landed, via: 'compose-url' };
+}
+
+/**
+ * Compose each exchange file as its own CorrLinks message.
+ * When send=true (single inmate only): automatically Send part 1, then 2, then 3…
+ * When send=false: keep legacy paste-first-part-only behavior for the loop.
+ */
+async function composeAllParts(win, {
+  recipientName,
+  inmateId,
+  subject,
+  exchangeParts = [],
+  exchangeSkipped = [],
+  send = false,
+} = {}) {
+  const parts = Array.isArray(exchangeParts) ? exchangeParts : [];
+  if (!send) {
+    return goToCompose(win, {
+      recipientName,
+      inmateId,
+      subject,
+      exchangeParts: parts,
+      exchangeSkipped,
+      send: false,
+    });
+  }
+
+  if (!parts.length) {
+    return goToCompose(win, {
+      recipientName,
+      inmateId,
+      subject,
+      exchangeParts: [],
+      exchangeSkipped,
+      send: false,
+    });
+  }
+
+  const sentParts = [];
+  const failedParts = [];
+  let lastCompose = null;
+
+  setStatus({
+    state: 'sending',
+    message: `Auto-sending ${parts.length} file(s) for ${recipientName || inmateId || 'inmate'}…`,
+    recipientName,
+    inmateId,
+  });
+
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i];
+    const fingerprint = bodyFingerprint(part.text || '');
+    setStatus({
+      state: 'compose',
+      message: `Auto-send ${i + 1}/${parts.length}: ${part.filename || 'file'}…` +
+        (fingerprint ? ` (“${fingerprint.slice(0, 40)}”)` : ''),
+      recipientName,
+      inmateId,
+      sendProgress: { current: i + 1, total: parts.length },
+    });
+
+    // Stay logged in — open next compose in the same session (no logout).
+    if (i > 0) {
+      const next = await prepareNextCompose(win);
+      if (next?.sessionLost) {
+        failedParts.push({
+          part: part.part,
+          filename: part.filename,
+          reason: 'Session lost after previous send — landed on login',
+        });
+        break;
+      }
+    }
+
+    const compose = await goToCompose(win, {
+      recipientName,
+      inmateId,
+      subject,
+      exchangeParts: [{ ...part, continuation: i > 0 }],
+      exchangeSkipped: i === 0 ? exchangeSkipped : [],
+      send: true,
+      // Always navigate for part 1; part 2+ already opened a fresh compose URL.
+      skipNavigate: i > 0,
+    });
+    lastCompose = compose;
+
+    if (compose.sessionLost) {
+      failedParts.push({
+        part: part.part,
+        filename: part.filename,
+        reason: compose.recipient?.reason || 'Session lost',
+      });
+      break;
+    }
+
+    // Only count real CorrLinks success dialog — never navigation-only “success”.
+    const sentOk = Boolean(
+      compose.bodyResult?.ok &&
+      compose.sendResult?.ok &&
+      /success-dialog/i.test(String(compose.sendResult?.via || ''))
+    );
+    if (sentOk) {
+      sentParts.push({
+        part: part.part,
+        filename: part.filename,
+        characters: compose.sendResult?.bodyLength || part.characters || part.text?.length || 0,
+        subject: compose.subject || subject,
+        bodyHead: compose.sendResult?.bodyHead || fingerprint,
+        via: compose.sendResult?.via,
+      });
+      setStatus({
+        state: 'sending',
+        message: `Sent ${i + 1}/${parts.length}: ${part.filename || 'file'}` +
+          (i < parts.length - 1 ? ' · continuing to next file…' : ' · done'),
+        sentParts,
+        sendProgress: { current: i + 1, total: parts.length },
+      });
+    } else {
+      failedParts.push({
+        part: part.part,
+        filename: part.filename,
+        reason:
+          compose.sendResult?.reason ||
+          compose.bodyResult?.reason ||
+          compose.recipient?.reason ||
+          'Compose/send failed',
+      });
+      // Stop on first hard failure so the operator can intervene.
+      break;
+    }
+
+    if (i < parts.length - 1) {
+      await new Promise((r) => setTimeout(r, 40));
+    }
+  }
+
+  return {
+    ...(lastCompose || {}),
+    sentParts,
+    failedParts,
+    sendSummary: {
+      total: parts.length,
+      sent: sentParts.length,
+      failed: failedParts.length,
+    },
+    pendingParts: parts.slice(sentParts.length).map((p) => ({
+      part: p.part,
+      filename: p.filename,
+      url: p.url,
+      characters: p.characters || p.text?.length || 0,
+    })),
+  };
+}
+
 async function attemptLogin(win, { email, password, label, clearSession = false }) {
   setStatus({
     state: 'loading',
@@ -1793,23 +2586,28 @@ async function attemptLogin(win, { email, password, label, clearSession = false 
     attempt: label,
   });
 
-  // Always start from a clean login page so a prior account's "Account locked"
-  // dialog/toast cannot be mis-attributed to this login.
-  await loadLoginPage(win, { clearSession: true });
+  // Always navigate first so executeJavaScript has a real document.
+  // Do NOT clear cookies by default — preserves session for multi-file send.
+  await loadLoginPage(win, { clearSession: Boolean(clearSession) });
   await clearAuthToasts(win);
-  await dismissValidationDialog(win).catch(() => {});
+  // Locked-primary → second account: keep dismiss short so fallback stays snappy.
+  await dismissValidationDialog(win, {
+    waitMs: clearSession ? 80 : 120,
+  }).catch(() => {});
 
-  // Plan for "already logged in":
-  // - same email as target → treat as success (reuse session)
-  // - different email → logout + clear session, then continue normal login
-  const existing = await detectAlreadyLoggedIn(win).catch(() => null);
+  // Same-account session reuse (CorrLinks may redirect to dashboard / interstitial).
+  let existing = await detectAlreadyLoggedIn(win);
   if (existing?.already) {
     const existingEmail = (existing.email || '').toLowerCase();
     const targetEmail = String(email || '').toLowerCase();
-    if (existingEmail && existingEmail === targetEmail) {
+    // Reuse when: email matches, OR email unknown but already on mailbox/dashboard
+    // (avoid clearing session between multi-file sends).
+    const canReuse = !existingEmail || existingEmail === targetEmail;
+    if (canReuse) {
+      const who = existing.email || email;
       setStatus({
         state: 'success',
-        message: `Already logged in as ${existing.email} — reusing session`,
+        message: `Already logged in as ${who} — reusing session`,
         email,
         attempt: label,
         loggedIn: true,
@@ -1817,7 +2615,7 @@ async function attemptLogin(win, { email, password, label, clearSession = false 
       });
       return {
         state: 'success',
-        message: `Already logged in as ${existing.email} — reusing session`,
+        message: `Already logged in as ${who} — reusing session`,
         email,
         attempt: label,
         loggedIn: true,
@@ -1825,12 +2623,10 @@ async function attemptLogin(win, { email, password, label, clearSession = false 
       };
     }
 
-    // Different account (or unknown email on auth URL) → force logout then login as target.
+    // Different known account → logout then continue to login form.
     setStatus({
       state: 'logout',
-      message: existing.email
-        ? `Already logged in as ${existing.email} — switching to ${email}`
-        : `Existing CorrLinks session found — switching to ${email}`,
+      message: `Already logged in as ${existing.email} — switching to ${email}`,
       email,
       attempt: label,
     });
@@ -1840,14 +2636,14 @@ async function attemptLogin(win, { email, password, label, clearSession = false 
   const ready = await waitForLoginForm(win, 90000);
   if (!ready.ok) {
     // One more already-logged-in check (page may have changed during wait).
-    const again = await detectAlreadyLoggedIn(win).catch(() => null);
+    const again = await detectAlreadyLoggedIn(win);
     if (again?.already) {
       const existingEmail = (again.email || '').toLowerCase();
       const targetEmail = String(email || '').toLowerCase();
-      if (existingEmail && existingEmail === targetEmail) {
+      if (!existingEmail || existingEmail === targetEmail) {
         return {
           state: 'success',
-          message: `Already logged in as ${again.email} — reusing session`,
+          message: `Already logged in as ${again.email || email} — reusing session`,
           email,
           attempt: label,
           loggedIn: true,
@@ -1967,9 +2763,19 @@ function summarizeCompose(compose) {
     : compose.bodyResult?.skipped
       ? compose.bodyResult.reason
       : `Body paste failed (${compose.bodyResult?.reason || 'n/a'})`;
-  const pendingMsg = compose.pendingParts?.length
-    ? ` · ${compose.pendingParts.length} more file(s) queued (no send yet)`
-    : ' · no send yet';
+  const sendSummary = compose.sendSummary;
+  let pendingMsg = '';
+  if (sendSummary) {
+    pendingMsg =
+      ` · sent ${sendSummary.sent}/${sendSummary.total}` +
+      (sendSummary.failed ? ` · ${sendSummary.failed} failed` : '');
+  } else if (compose.sendResult?.ok || compose.bodyResult?.sent) {
+    pendingMsg = ' · sent';
+  } else if (compose.pendingParts?.length) {
+    pendingMsg = ` · ${compose.pendingParts.length} more file(s) queued (no send yet)`;
+  } else {
+    pendingMsg = ' · no send yet';
+  }
   return { toMsg, subMsg, bodyMsg, pendingMsg };
 }
 
@@ -1979,11 +2785,13 @@ async function applyComposeToStatus(win, status, composeArgs) {
     return setStatus(status);
   }
   try {
-    const compose = await goToCompose(win, composeArgs);
+    const compose = await composeAllParts(win, composeArgs);
     const { toMsg, subMsg, bodyMsg, pendingMsg } = summarizeCompose(compose);
+    const sendFailed = Boolean(compose.sendSummary?.failed);
+    const sentAny = Boolean(compose.sendSummary?.sent);
     return setStatus({
       ...status,
-      state: status.state === 'success' ? 'success' : status.state,
+      state: sendFailed ? 'error' : status.state === 'success' ? 'success' : status.state,
       message:
         status.state === 'success'
           ? `Logged in — ${toMsg} · ${subMsg} · ${bodyMsg}${pendingMsg}`
@@ -1993,9 +2801,14 @@ async function applyComposeToStatus(win, status, composeArgs) {
       subject: compose.subject || null,
       subjectResult: compose.subjectResult || null,
       bodyResult: compose.bodyResult || null,
+      sendResult: compose.sendResult || null,
+      sentParts: compose.sentParts || [],
+      failedParts: compose.failedParts || [],
+      sendSummary: compose.sendSummary || null,
       pastedPart: compose.pastedPart || null,
       pendingParts: compose.pendingParts || [],
       exchangeSkipped: compose.exchangeSkipped || [],
+      sent: sentAny && !sendFailed,
     });
   } catch (error) {
     return setStatus({
@@ -2052,6 +2865,7 @@ async function loginToCorrlinks({
   exchangeSkipped = [],
   skipCompose = false,
   subject = null,
+  send = false,
 } = {}) {
   if (!email || !password) {
     throw new Error('Primary corrlinks email and password are required');
@@ -2070,6 +2884,7 @@ async function loginToCorrlinks({
     inmateId: inmateId || null,
     exchangePartCount: Array.isArray(exchangeParts) ? exchangeParts.length : 0,
     skipCompose: Boolean(skipCompose),
+    send: Boolean(send),
   });
 
   async function finishWithCompose(status) {
@@ -2091,6 +2906,7 @@ async function loginToCorrlinks({
       exchangeParts,
       exchangeSkipped,
       subject,
+      send: Boolean(send),
     });
   }
 
@@ -2121,13 +2937,15 @@ async function loginToCorrlinks({
 
     setStatus({
       state: 'fallback',
-      message: `Primary locked — trying second_corrlinks_account ${secondEmail}`,
+      message: `Primary locked — switching to second account immediately…`,
       email: secondEmail,
       attempt: 'second',
       primaryError: primary.message,
     });
 
-    // Primary may have reached dashboard with a lock dialog — clear session before second login.
+    // Drop lock dialog + session fast, then login as second (no long pauses).
+    await dismissValidationDialog(win, { waitMs: 80 }).catch(() => {});
+    await clearCorrlinksSession(win);
     const second = await attemptLogin(win, {
       email: secondEmail,
       password: secondPassword,
@@ -2168,7 +2986,10 @@ async function loginToCorrlinks({
  * Convenience: accept a normalized inmate row from SportsData.
  * Full path: login (with lock fallback) + compose for that one recipient.
  */
-async function loginInmate(inmate, { fetchFileText, subject = null, exchangeFiles = null } = {}) {
+async function loginInmate(
+  inmate,
+  { fetchFileText, subject = null, exchangeFiles = null, send = false } = {}
+) {
   const primary = inmate?.corrlinks_account || {};
   const second = inmate?.second_corrlinks_account || {};
   const { exchangeParts, exchangeSkipped } = await downloadExchangeParts(inmate, fetchFileText, {
@@ -2185,6 +3006,7 @@ async function loginInmate(inmate, { fetchFileText, subject = null, exchangeFile
     exchangeParts,
     exchangeSkipped,
     subject,
+    send: Boolean(send),
   });
 }
 
@@ -2226,7 +3048,10 @@ async function logoutCorrlinksSession() {
  * Compose for one inmate on an already-logged-in CorrLinks session.
  * Does not attempt login.
  */
-async function composeForInmate(inmate, { fetchFileText, subject = null, exchangeFiles = null } = {}) {
+async function composeForInmate(
+  inmate,
+  { fetchFileText, subject = null, exchangeFiles = null, send = false } = {}
+) {
   if (!inmate) throw new Error('Inmate is required for compose');
   const win = getOrCreateWindow();
   win.show();
@@ -2244,15 +3069,17 @@ async function composeForInmate(inmate, { fetchFileText, subject = null, exchang
     recipientName,
     inmateId,
     exchangePartCount: exchangeParts.length,
+    send: Boolean(send),
   });
 
   try {
-    const compose = await goToCompose(win, {
+    const compose = await composeAllParts(win, {
       recipientName,
       inmateId,
       exchangeParts,
       exchangeSkipped,
       subject,
+      send: Boolean(send),
     });
     if (compose.sessionLost) {
       return setStatus({
@@ -2264,22 +3091,29 @@ async function composeForInmate(inmate, { fetchFileText, subject = null, exchang
       });
     }
     const { toMsg, subMsg, bodyMsg, pendingMsg } = summarizeCompose(compose);
+    const sendFailed = Boolean(compose.sendSummary?.failed);
     const composeOk =
       Boolean(compose.recipient?.ok) ||
       Boolean(compose.subjectResult?.ok) ||
-      Boolean(compose.bodyResult?.ok);
+      Boolean(compose.bodyResult?.ok) ||
+      Boolean(compose.sendSummary?.sent);
     return setStatus({
-      state: composeOk ? 'success' : 'error',
+      state: sendFailed ? 'error' : composeOk ? 'success' : 'error',
       message: `${toMsg} · ${subMsg} · ${bodyMsg}${pendingMsg}`,
       url: compose.url || CORRLINKS.composeUrl,
       recipient: compose.recipient || null,
       subject: compose.subject || null,
       subjectResult: compose.subjectResult || null,
       bodyResult: compose.bodyResult || null,
+      sendResult: compose.sendResult || null,
+      sentParts: compose.sentParts || [],
+      failedParts: compose.failedParts || [],
+      sendSummary: compose.sendSummary || null,
       pastedPart: compose.pastedPart || null,
       pendingParts: compose.pendingParts || [],
       exchangeSkipped: compose.exchangeSkipped || [],
       loggedIn: true,
+      sent: Boolean(compose.sendSummary?.sent) && !sendFailed,
     });
   } catch (error) {
     return setStatus({
@@ -2306,7 +3140,9 @@ module.exports = {
   clearComposeToField,
   fillComposeSubject,
   fillComposeBody,
+  clickComposeSend,
   goToCompose,
+  composeAllParts,
   reloadCorrlinksPanel,
   openCorrlinksExternal,
   clearCorrlinksPanelSession,

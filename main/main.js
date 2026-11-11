@@ -45,15 +45,25 @@ let cachedAccounts = [];
 const sportsData = new SportsDataClient();
 
 /** Resolve optional daily/weekly template overrides from renderer payload. */
-function resolveTemplateOptions(payload = {}) {
+function resolveTemplateOptions(payload = {}, inmate = null) {
   const template = payload.template || {};
   const mode = String(template.mode || payload.mode || 'daily').toLowerCase();
   const league = normalizeWeeklyLeague(template.league || payload.league);
-  const files = Array.isArray(template.files)
+  let files = Array.isArray(template.files)
     ? template.files
     : Array.isArray(payload.exchangeFiles)
       ? payload.exchangeFiles
       : null;
+  // Daily mode: honor checked files from the UI when no explicit template.files.
+  if ((!files || !files.length) && inmate && Array.isArray(payload.selectedFiles)) {
+    const sendable = inmate?.inmate_exchange?.sendable || [];
+    const keys = payload.selectedFiles.map(String);
+    const filtered = sendable.filter((file, index) => {
+      const key = `${file.part}:${file.filename || index}`;
+      return keys.includes(key);
+    });
+    if (filtered.length) files = filtered;
+  }
   const subject =
     template.subject ||
     payload.subject ||
@@ -267,7 +277,7 @@ function registerIpc() {
   ipcMain.handle('corrlinks:login', async (_event, payload = {}) => {
     try {
       let status;
-      const template = resolveTemplateOptions(payload);
+      const send = Boolean(payload.send);
       if (payload.inmateId != null) {
         const inmate = cachedAccounts.find((a) => String(a.id) === String(payload.inmateId));
         if (!inmate) {
@@ -276,12 +286,15 @@ function registerIpc() {
             status: { state: 'error', message: `Inmate ${payload.inmateId} not in cache — refresh accounts` },
           };
         }
+        const template = resolveTemplateOptions(payload, inmate);
         status = await loginInmate(inmate, {
           fetchFileText: (url) => sportsData.fetchExchangeFileText(url),
           subject: template.subject,
           exchangeFiles: template.exchangeFiles,
+          send,
         });
       } else {
+        const template = resolveTemplateOptions(payload);
         status = await loginToCorrlinks({
           email: payload.email,
           password: payload.password,
@@ -289,10 +302,15 @@ function registerIpc() {
           secondPassword: payload.secondPassword,
           subject: template.subject,
           exchangeParts: template.exchangeFiles || [],
+          send,
         });
       }
 
-      const ok = status.state === 'success' || status.state === 'manual' || status.state === 'locked';
+      const ok =
+        status.state === 'success' ||
+        status.state === 'manual' ||
+        status.state === 'locked' ||
+        Boolean(status.sent);
       return { ok, status };
     } catch (error) {
       return {
@@ -300,6 +318,41 @@ function registerIpc() {
         status: {
           state: 'error',
           message: error.message || 'CorrLinks login failed',
+        },
+      };
+    }
+  });
+
+  /** Single-inmate login + compose + Send for every selected exchange file. Loop must not use this. */
+  ipcMain.handle('corrlinks:sendInmate', async (_event, payload = {}) => {
+    try {
+      const inmate = cachedAccounts.find((a) => String(a.id) === String(payload.inmateId));
+      if (!inmate) {
+        return {
+          ok: false,
+          status: {
+            state: 'error',
+            message: `Inmate ${payload.inmateId} not in cache — refresh accounts`,
+          },
+        };
+      }
+      const template = resolveTemplateOptions(payload, inmate);
+      const status = await loginInmate(inmate, {
+        fetchFileText: (url) => sportsData.fetchExchangeFileText(url),
+        subject: template.subject,
+        exchangeFiles: template.exchangeFiles,
+        send: true,
+      });
+      const ok =
+        Boolean(status.sent) ||
+        (status.state === 'success' && Boolean(status.sendSummary?.sent));
+      return { ok, status };
+    } catch (error) {
+      return {
+        ok: false,
+        status: {
+          state: 'error',
+          message: error.message || 'CorrLinks send failed',
         },
       };
     }

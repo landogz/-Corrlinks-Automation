@@ -91,10 +91,6 @@ const previewSubject = document.getElementById('previewSubject');
 const previewBody = document.getElementById('previewBody');
 const charCountLabel = document.getElementById('charCountLabel');
 const charProgress = document.getElementById('charProgress');
-const confirmSend = document.getElementById('confirmSend');
-const confirmTo = document.getElementById('confirmTo');
-const confirmSubject = document.getElementById('confirmSubject');
-const confirmChars = document.getElementById('confirmChars');
 const loopDoneDialog = document.getElementById('loopDoneDialog');
 const loopDoneIcon = document.getElementById('loopDoneIcon');
 const loopDoneTitle = document.getElementById('loopDoneTitle');
@@ -759,9 +755,15 @@ function updateComposePreview({ to, subject, body, chars, parts } = {}) {
     composeCollapsedSummary.title = composeCollapsedSummary.textContent;
   }
 
-  if (confirmTo) confirmTo.textContent = composePreview.to || '—';
-  if (confirmSubject) confirmSubject.textContent = composePreview.subject || '—';
-  if (confirmChars) confirmChars.textContent = `${count.toLocaleString()} / ${CHAR_MAX.toLocaleString()}`;
+}
+
+function selectedExchangeFiles(inmate) {
+  const all = currentSendableFiles(inmate);
+  if (!selectedFileKeys.length) return all;
+  return all.filter((file, index) => {
+    const key = `${file.part}:${file.filename || index}`;
+    return selectedFileKeys.includes(key);
+  });
 }
 
 function currentTemplateSubject() {
@@ -1408,26 +1410,40 @@ function regroupInmatesAfterProbe(list = accounts, probeByEmail = new Map()) {
 }
 
 function updateActionButtons({ canLogin } = {}) {
+  const inmate = selectedInmate();
   const loginOk =
-    canLogin != null ? canLogin : Boolean(selectedInmate() && inmateHasCorrlinksLogin(selectedInmate()));
+    canLogin != null ? canLogin : Boolean(inmate && inmateHasCorrlinksLogin(inmate));
+  const sendableCount = inmate ? selectedExchangeFiles(inmate).length : 0;
+  const canSendSingle = Boolean(loginOk && sendableCount > 0);
   const hasLoopQueue = groupInmatesByCorrlinksAccount().groups.length > 0;
   const singleBusy = corrlinksLoginBusy && !loopRunning && !bootVerifyRunning;
   const canForceStop = loopRunning || corrlinksLoginBusy || bootVerifyRunning;
   const busy = loopRunning || corrlinksLoginBusy || bootVerifyRunning;
+  // Compose-only stays available in code for loop helpers, but hidden from single-inmate UI.
   btnLogin.disabled = busy || !loginOk;
-  btnLogin.hidden = loopRunning || bootVerifyRunning;
-  btnLogin.title = bootVerifyRunning
-    ? 'Verifying CorrLinks accounts…'
-    : corrlinksLoginBusy
-      ? 'Logging in…'
-      : loginOk
-        ? `Login to CorrLinks (${platformShortcutLabel('L')})`
-        : selectedInmate()
-          ? 'Selected inmate is missing CorrLinks credentials'
-          : 'Select an inmate with CorrLinks credentials';
+  btnLogin.hidden = true;
+  btnLogin.title = 'Compose only is disabled — use Send all files';
   const loginLabel = btnLogin.querySelector('.btn-main-label');
-  if (loginLabel) {
-    loginLabel.textContent = corrlinksLoginBusy ? 'Logging in…' : 'Login to CorrLinks';
+  if (loginLabel) loginLabel.textContent = 'Compose only';
+  if (btnSend) {
+    btnSend.disabled = busy || !canSendSingle;
+    btnSend.hidden = loopRunning || bootVerifyRunning;
+    btnSend.title = !loginOk
+      ? 'Select an inmate with CorrLinks credentials'
+      : !sendableCount
+        ? 'No sendable exchange files for this inmate'
+        : corrlinksLoginBusy
+          ? 'Auto-sending selected files…'
+          : `Auto-send all ${sendableCount} selected file${sendableCount === 1 ? '' : 's'} (${platformShortcutLabel('Enter')})`;
+    const sendLabel = btnSend.querySelector('.btn-send-label');
+    if (sendLabel) {
+      sendLabel.textContent =
+        corrlinksLoginBusy && !loopRunning
+          ? 'Sending…'
+          : sendableCount > 1
+            ? `Send all ${sendableCount} files`
+            : 'Send message';
+    }
   }
   btnStartLoop.disabled = busy || !hasLoopQueue || !accountsVerifiedOnce;
   btnStartLoop.hidden = loopRunning || singleBusy || bootVerifyRunning;
@@ -1587,7 +1603,7 @@ function renderInmateOptions(list, { open = true } = {}) {
       li.append(dot, textWrap);
       li.addEventListener('mousedown', (event) => {
         event.preventDefault();
-        selectInmate(inmate.id, { autoLogin: true });
+        selectInmate(inmate.id, { autoSend: true });
         closeInmateOptions();
       });
       if (index === 0) optionHighlight = 0;
@@ -1645,7 +1661,7 @@ function syncInmateComboboxDisplay({ editing = false } = {}) {
   setInmateSelectedDisplay(showSelected ? inmate : null);
 }
 
-function selectInmate(id, { autoLogin = false } = {}) {
+function selectInmate(id, { autoSend = false } = {}) {
   const inmate = accounts.find((a) => String(a.id) === String(id));
   accountSelect.value = inmate ? String(inmate.id) : '';
   selectedFileKeys = [];
@@ -1660,9 +1676,13 @@ function selectInmate(id, { autoLogin = false } = {}) {
   });
   inmateCard?.classList.remove('collapsed');
   updateActionButtons();
-  if (autoLogin && inmate && !loopRunning) {
-    // Defer so checkboxes/UI settle, then start CorrLinks automatically.
-    queueMicrotask(() => startCorrlinksLogin());
+  if (autoSend && inmate && !loopRunning && !corrlinksLoginBusy && !bootVerifyRunning) {
+    // Selecting an inmate should Send — not compose-only paste.
+    queueMicrotask(() => {
+      if (!inmateHasCorrlinksLogin(inmate)) return;
+      if (selectedExchangeFiles(inmate).length > 0) startCorrlinksSend();
+      else startCorrlinksLogin();
+    });
   }
 }
 
@@ -1679,15 +1699,15 @@ function renderAccounts(list) {
     return;
   }
   const preferred = selectedInmate() || accounts[0];
-  // Prefill first inmate + check all files, but don't auto-login until user picks one.
-  selectInmate(preferred.id, { autoLogin: false });
+  // Prefill first inmate + check all files, but don't auto-send until user picks one.
+  selectInmate(preferred.id, { autoSend: false });
   renderInmateOptions(accounts, { open: false });
   updateActionButtons();
 }
 
 /**
- * Single inmate run: CorrLinks login + compose paste. Never sends.
- * @param {{ quietToast?: boolean }} [options]
+ * Single inmate run: CorrLinks login + compose paste. Never sends (loop uses compose only).
+ * @param {{ quietToast?: boolean, send?: boolean }} [options]
  * @returns {Promise<object|null>} status or null if skipped/busy
  */
 function corrlinksOpStillActive(generation) {
@@ -1695,7 +1715,7 @@ function corrlinksOpStillActive(generation) {
 }
 
 async function startCorrlinksLogin(options = {}) {
-  const { quietToast = false } = options;
+  const { quietToast = false, send = false } = options;
   const inmate = selectedInmate();
   if (!inmate) {
     log('Select an inmate first', 'error');
@@ -1713,16 +1733,23 @@ async function startCorrlinksLogin(options = {}) {
   corrlinksLoginBusy = true;
   clearLoopResultBanner();
   updateActionButtons({ canLogin: true });
-  setStatusHint(`CorrLinks: ${inmate.name || inmate.inmate_id || inmate.id}…`);
+  setStatusHint(
+    send
+      ? `Sending: ${inmate.name || inmate.inmate_id || inmate.id}…`
+      : `CorrLinks: ${inmate.name || inmate.inmate_id || inmate.id}…`
+  );
   setCorrlinksConnected(false, true);
   const template = buildTemplatePayload();
   if (template.mode === 'weekly' && !template.files?.length) {
     toast(`No ${weeklyLeague} weekly file loaded — pick Weekly update again`, 'error');
+    corrlinksLoginBusy = false;
+    updateActionButtons();
     return null;
   }
-  const checkedCount = selectedFileKeys.length;
+  const files = selectedExchangeFiles(inmate);
+  const checkedCount = files.length;
   log(
-    `Login primary ${maskSensitive(inmate.corrlinks_account.email)}` +
+    `${send ? 'Send' : 'Login'} primary ${maskSensitive(inmate.corrlinks_account.email)}` +
       (inmate.second_corrlinks_account?.email
         ? ` (fallback ${maskSensitive(inmate.second_corrlinks_account.email)} if locked)`
         : '') +
@@ -1731,21 +1758,65 @@ async function startCorrlinksLogin(options = {}) {
         : checkedCount
           ? ` · ${checkedCount} exchange file(s) checked`
           : '') +
-      ' · no send',
+      (send
+        ? ` · AUTO-SEND all ${files.length} file${files.length === 1 ? '' : 's'} (single inmate)`
+        : ' · no send'),
     'info'
   );
-  try {
-    const result = await window.api.loginCorrlinks({
-      inmateId: inmate.id,
-      selectedFiles: selectedFileKeys.slice(),
-      template,
+  if (send && files.length > 1) {
+    files.forEach((file, index) => {
+      log(
+        `  ${index + 1}/${files.length}: ${file.filename || `part-${file.part || index + 1}`}` +
+          (file.characters != null ? ` (${Number(file.characters).toLocaleString()} chars)` : ''),
+        'info'
+      );
     });
+  }
+  try {
+    const result = send
+      ? await window.api.sendCorrlinksInmate({
+          inmateId: inmate.id,
+          selectedFiles: selectedFileKeys.slice(),
+          template,
+        })
+      : await window.api.loginCorrlinks({
+          inmateId: inmate.id,
+          selectedFiles: selectedFileKeys.slice(),
+          template,
+          send: false,
+        });
     if (!corrlinksOpStillActive(myGeneration)) {
       return { state: 'aborted', message: 'Force-stopped' };
     }
     handleLoginResult(result.status || {}, { quietToast });
-    setStatusHint((result.status && result.status.message) || 'CorrLinks finished (not sent)');
-    return result.status || null;
+    const status = result.status || {};
+    if (send) {
+      const summary = status.sendSummary;
+      if (summary) {
+        log(
+          `Send finished · ${summary.sent}/${summary.total} sent` +
+            (summary.failed ? ` · ${summary.failed} failed` : ''),
+          summary.failed ? 'warn' : 'success'
+        );
+        if (!quietToast) {
+          toast(
+            summary.failed
+              ? `Sent ${summary.sent}/${summary.total} · ${summary.failed} failed`
+              : `Sent ${summary.sent} message${summary.sent === 1 ? '' : 's'}`,
+            summary.failed ? 'warn' : 'success'
+          );
+        }
+      } else if (!status.sent && !quietToast) {
+        toast(status.message || 'Send did not complete', 'error');
+      }
+      setStatusHint(status.message || 'Send finished');
+    } else {
+      setStatusHint(status.message || 'Compose only (not sent)');
+      if (!quietToast && status.bodyResult?.ok && !status.sent) {
+        toast('Compose only — not sent. Use Send all files to deliver.', 'warn');
+      }
+    }
+    return status;
   } catch (error) {
     if (!corrlinksOpStillActive(myGeneration)) {
       return { state: 'aborted', message: 'Force-stopped' };
@@ -1762,10 +1833,15 @@ async function startCorrlinksLogin(options = {}) {
   }
 }
 
+/** Single-inmate send for every selected exchange file (not used by Start loop). */
+async function startCorrlinksSend(options = {}) {
+  return startCorrlinksLogin({ ...options, send: true });
+}
+
 /** Gap between live account probes during initializing (skipped for cache hits). */
-const LOOP_GAP_MS = 2_000;
+const LOOP_GAP_MS = 500;
 /** Rest before retrying a skipped/failed CorrLinks login, and before compose re-login. */
-const LOOP_RELOGIN_REST_MS = 5_000;
+const LOOP_RELOGIN_REST_MS = 1_000;
 
 function buildLoopQueue() {
   return groupInmatesByCorrlinksAccount();
@@ -2705,7 +2781,7 @@ async function startInmateLoop() {
             ` · Recipient ${r + 1}/${group.inmates.length} · ${recipLabel}`
         );
         log(`—— Recipient ${r + 1}/${group.inmates.length}: ${recipLabel} ——`, 'info');
-        selectInmate(inmate.id, { autoLogin: false });
+        selectInmate(inmate.id, { autoSend: false });
         const status = await startCorrlinksCompose(inmate, { quietToast: true });
         if (!loopStillActive(myGeneration)) break;
         if (statusLooksGood(status)) okCount += 1;
@@ -3018,15 +3094,30 @@ function handleLoginResult(status, { quietToast = false } = {}) {
     updateComposePreview({ subject: status.subject || '' });
   }
 
-  if (status.bodyResult?.ok) {
+  if (status.sentParts?.length) {
+    status.sentParts.forEach((part) => {
+      log(
+        `Sent part ${part.part || '?'}: ${part.filename || 'file'} (${Number(part.characters || 0).toLocaleString()} chars)` +
+          (part.subject ? ` · subject “${part.subject}”` : '') +
+          (part.bodyHead ? ` · “${String(part.bodyHead).slice(0, 40)}”` : ''),
+        'success'
+      );
+    });
+    updateComposePreview({
+      body: `Sent ${status.sentParts.length} file(s)`,
+      chars: status.sentParts.reduce((sum, p) => sum + (Number(p.characters) || 0), 0),
+      parts: status.sentParts.length,
+    });
+  } else if (status.bodyResult?.ok) {
     const chars = status.pastedPart?.characters || 0;
     const filename = status.pastedPart?.filename || 'body';
+    const sentLabel = status.bodyResult?.sent || status.sendResult?.ok ? 'sent' : 'not sent';
     log(
-      `Pasted body part ${status.pastedPart?.part || '?'}: ${filename} (${chars.toLocaleString()} chars) — not sent`,
+      `Pasted body part ${status.pastedPart?.part || '?'}: ${filename} (${chars.toLocaleString()} chars) — ${sentLabel}`,
       'success'
     );
     updateComposePreview({
-      body: `${filename} pasted (not sent)`,
+      body: `${filename} pasted (${sentLabel})`,
       chars,
     });
   } else if (status.bodyResult?.skipped) {
@@ -3035,8 +3126,17 @@ function handleLoginResult(status, { quietToast = false } = {}) {
     log(`Body paste failed: ${status.bodyResult.reason || 'unknown'}`, 'error', status.bodyResult);
   }
 
+  if (status.failedParts?.length) {
+    status.failedParts.forEach((part) => {
+      log(`Send failed · ${part.filename || 'file'}: ${part.reason || 'unknown'}`, 'error');
+    });
+  }
   if (status.pendingParts?.length) {
-    log(`Pending parts: ${status.pendingParts.map((p) => p.filename).join(', ')}`, 'info');
+    log(
+      `Pending parts: ${status.pendingParts.map((p) => p.filename).join(', ')}` +
+        (status.sent ? '' : ' (no send yet)'),
+      'info'
+    );
   }
   if (status.exchangeSkipped?.length) {
     log(`Skipped empty: ${status.exchangeSkipped.map((f) => f.filename).join(', ')}`, 'warn');
@@ -3365,6 +3465,32 @@ async function checkUpdatesBeforeLogin() {
   }
 }
 
+let lastCorrStatusLogKey = '';
+function wireCorrlinksLiveStatus() {
+  if (typeof window.api?.onCorrlinksStatus !== 'function') return;
+  window.api.onCorrlinksStatus((status) => {
+    if (!status?.message) return;
+    const key = `${status.state || ''}|${status.message}`;
+    if (key === lastCorrStatusLogKey) return;
+    lastCorrStatusLogKey = key;
+    const interesting =
+      /send|sent|clicking|auto-send|part \d|failed|compose/i.test(status.message) ||
+      status.state === 'sending' ||
+      status.state === 'error';
+    if (!interesting) return;
+    const level =
+      status.state === 'error' || /fail/i.test(status.message)
+        ? 'error'
+        : /sent|success/i.test(status.message)
+          ? 'success'
+          : 'info';
+    log(status.message, level);
+    if (status.state === 'sending' || /send/i.test(status.message)) {
+      setStatusHint(status.message);
+    }
+  });
+}
+
 function wireAppUpdates() {
   if (typeof window.api?.onUpdateStatus === 'function') {
     window.api.onUpdateStatus((status) => {
@@ -3390,7 +3516,7 @@ function wireAppUpdates() {
     openUpdatesDialog();
   });
   btnUpdatesClose?.addEventListener('click', () => updatesDialog?.close());
-  [updatesDialog, aboutDialog, shortcutsDialog, confirmSend, loopDoneDialog].forEach((dialog) => {
+  [updatesDialog, aboutDialog, shortcutsDialog, loopDoneDialog].forEach((dialog) => {
     dialog?.addEventListener('close', () => {
       scheduleCorrPaneBounds();
       setTimeout(syncCorrPaneBounds, 50);
@@ -3403,6 +3529,7 @@ async function init() {
   showLoginScreen();
   setLoginError('');
   wireAppUpdates();
+  wireCorrlinksLiveStatus();
   setLoginShortcutHint();
 
   try {
@@ -3596,7 +3723,7 @@ inmateSearch.addEventListener('keydown', (event) => {
     const current = options[optionHighlight] || options[0];
     if (current) {
       event.preventDefault();
-      selectInmate(current.dataset.id, { autoLogin: true });
+      selectInmate(current.dataset.id, { autoSend: true });
       closeInmateOptions();
     }
   } else if (event.key === 'Escape') {
@@ -3678,18 +3805,16 @@ btnStatus.addEventListener('click', async () => {
 });
 
 btnSend?.addEventListener('click', () => {
-  if (!composePreview.to || !composePreview.subject) {
-    toast('Compose a message first', 'error');
+  if (loopRunning) {
+    toast('Use Force stop / loop controls — Send is for single inmate only', 'warn');
     return;
   }
-  openModalDialog(confirmSend);
-});
-
-confirmSend?.addEventListener('close', () => {
-  if (confirmSend.returnValue === 'confirm') {
-    toast('Send is not implemented yet', 'warn');
-    log('Send blocked — feature not enabled yet', 'warn');
+  const inmate = selectedInmate();
+  if (!inmate || !selectedExchangeFiles(inmate).length) {
+    toast('Select an inmate with sendable exchange files first', 'warn');
+    return;
   }
+  startCorrlinksSend();
 });
 
 function isLogDrawerOpen() {
@@ -3765,9 +3890,11 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault();
     refreshInmates();
   }
-  if (meta && event.key.toLowerCase() === 'l') {
+  if (meta && (event.key.toLowerCase() === 'l' || event.key === 'Enter')) {
     event.preventDefault();
-    if (!loopRunning && !btnLogin.disabled && !corrlinksLoginBusy) startCorrlinksLogin();
+    if (!loopRunning && btnSend && !btnSend.disabled && !corrlinksLoginBusy) {
+      startCorrlinksSend();
+    }
   }
   if (meta && event.key.toLowerCase() === 'j') {
     event.preventDefault();
@@ -3790,7 +3917,7 @@ function isCorrEmbedBlocked() {
   if (document.body.classList.contains('log-open')) return true;
   if (document.body.classList.contains('account-menu-open')) return true;
   if (accountDropdown && !accountDropdown.hidden) return true;
-  const dialogs = [updatesDialog, aboutDialog, shortcutsDialog, confirmSend, loopDoneDialog];
+  const dialogs = [updatesDialog, aboutDialog, shortcutsDialog, loopDoneDialog];
   if (dialogs.some((dialog) => dialog && dialog.open)) return true;
   return false;
 }
@@ -4302,8 +4429,12 @@ function wireShellUi() {
   });
 
   btnCorrLoginCta?.addEventListener('click', () => {
+    if (btnSend && !btnSend.disabled) {
+      startCorrlinksSend();
+      return;
+    }
     if (!btnLogin.disabled) startCorrlinksLogin();
-    else toast(btnLogin.title || 'Select an inmate first', 'warn');
+    else toast(btnSend?.title || btnLogin.title || 'Select an inmate first', 'warn');
   });
   btnCorrReload?.addEventListener('click', async () => {
     const result = await window.api.reloadCorrlinksPanel?.();

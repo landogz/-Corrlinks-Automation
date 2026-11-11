@@ -298,15 +298,25 @@
                   </div>
                   <div class="actions-stack" id="actionsRow">
                     <button
-                      id="btnLogin"
+                      id="btnSend"
                       type="button"
                       class="action-primary"
                       disabled
-                      title="Select an inmate with CorrLinks credentials"
+                      title="Login and auto-send every selected exchange file (single inmate)"
                     >
-                      <span class="btn-main-label">Login to CorrLinks</span>
+                      <span class="btn-send-label">Send all files</span>
                     </button>
                     <div class="actions-secondary">
+                      <button
+                        id="btnLogin"
+                        type="button"
+                        class="action-secondary"
+                        disabled
+                        hidden
+                        title="Compose only (paste, no Send) — hidden; use Send all files"
+                      >
+                        <span class="btn-main-label">Compose only</span>
+                      </button>
                       <button
                         id="btnStartLoop"
                         type="button"
@@ -595,22 +605,6 @@
     </aside>
 
     <div id="toastHost" class="toast-host" aria-live="polite"></div>
-
-    <dialog id="confirmSend" class="modal">
-      <form method="dialog" id="confirmSendForm">
-        <h3>Confirm send</h3>
-        <p class="muted">Review the message before sending. This cannot be undone.</p>
-        <dl class="confirm-dl">
-          <div><dt>To</dt><dd id="confirmTo">—</dd></div>
-          <div><dt>Subject</dt><dd id="confirmSubject">—</dd></div>
-          <div><dt>Characters</dt><dd id="confirmChars">—</dd></div>
-        </dl>
-        <div class="row">
-          <button value="cancel" class="ghost">Cancel</button>
-          <button id="btnConfirmSend" value="confirm" class="danger" disabled>Send message</button>
-        </div>
-      </form>
-    </dialog>
 
     <dialog id="loopDoneDialog" class="modal loop-done-modal">
       <form method="dialog" id="loopDoneForm">

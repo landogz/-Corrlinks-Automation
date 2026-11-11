@@ -5,10 +5,16 @@ contextBridge.exposeInMainWorld('api', {
   listAccounts: () => ipcRenderer.invoke('accounts:list'),
   loginCorrlinks: (payload) => ipcRenderer.invoke('corrlinks:login', payload),
   loginCorrlinksAccount: (payload) => ipcRenderer.invoke('corrlinks:loginAccount', payload),
+  sendCorrlinksInmate: (payload) => ipcRenderer.invoke('corrlinks:sendInmate', payload),
   logoutCorrlinks: () => ipcRenderer.invoke('corrlinks:logout'),
   forceStopCorrlinks: () => ipcRenderer.invoke('corrlinks:forceStop'),
   composeCorrlinksInmate: (payload) => ipcRenderer.invoke('corrlinks:composeInmate', payload),
   getCorrlinksStatus: () => ipcRenderer.invoke('corrlinks:status'),
+  onCorrlinksStatus: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on('corrlinks:status', listener);
+    return () => ipcRenderer.removeListener('corrlinks:status', listener);
+  },
   setCorrBounds: (bounds) => ipcRenderer.invoke('corrlinks:setBounds', bounds),
   reloadCorrlinksPanel: () => ipcRenderer.invoke('corrlinks:reload'),
   openCorrlinksExternal: () => ipcRenderer.invoke('corrlinks:openExternal'),
