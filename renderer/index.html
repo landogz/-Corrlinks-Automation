@@ -29,13 +29,24 @@
           <img
             class="brand-mark login-mark"
             src="assets/logo-mark-ui.png"
-            width="64"
-            height="64"
-            alt="CorrLinks Automation"
+            width="72"
+            height="72"
+            alt=""
+            aria-hidden="true"
           />
-          <h1>CorrLinks Automation</h1>
-          <p class="sub">Sign in with SportsData to load inmate accounts</p>
+          <p class="login-kicker">CorrLinks Automation</p>
+          <h1 class="login-title">Inmate Exchange Auto</h1>
+          <p id="loginVersion" class="login-version tabular">v…</p>
+          <p class="login-lead">
+            Sign in with your SportsData operator account to load inmates and run CorrLinks workflows.
+          </p>
         </div>
+
+        <ul class="login-points" aria-label="What you can do after sign-in">
+          <li>Load inmate accounts</li>
+          <li>Compose &amp; send CorrLinks mail</li>
+          <li>Multi-file continuation</li>
+        </ul>
 
         <form id="sportsdataForm" class="form login-form" autocomplete="on">
           <input
@@ -46,45 +57,59 @@
             autocomplete="url"
           />
 
-          <label for="sdEmail">Email</label>
-          <input
-            id="sdEmail"
-            name="sportsdata-email"
-            type="email"
-            placeholder="operator@example.com"
-            autocomplete="username"
-            required
-          />
+          <div class="login-field">
+            <label for="sdEmail">Email</label>
+            <input
+              id="sdEmail"
+              name="sportsdata-email"
+              type="email"
+              placeholder="operator@example.com"
+              autocomplete="username"
+              required
+            />
+          </div>
 
-          <label for="sdPassword">Password</label>
-          <input
-            id="sdPassword"
-            name="sportsdata-password"
-            type="password"
-            placeholder="SportsData password"
-            autocomplete="current-password"
-            required
-          />
+          <div class="login-field">
+            <div class="login-label-row">
+              <label for="sdPassword">Password</label>
+              <button type="button" class="login-show-pass" id="btnToggleLoginPassword" aria-pressed="false">
+                Show
+              </button>
+            </div>
+            <input
+              id="sdPassword"
+              name="sportsdata-password"
+              type="password"
+              placeholder="SportsData password"
+              autocomplete="current-password"
+              required
+            />
+          </div>
 
-          <label class="check">
+          <label class="check login-remember">
             <input id="sdRemember" type="checkbox" checked />
             Remember email and password on this computer
           </label>
 
           <p id="loginError" class="login-error" hidden role="alert"></p>
 
-          <div class="row">
+          <div class="row login-actions">
             <button id="btnSaveLogin" type="submit">Sign in</button>
           </div>
         </form>
+
         <p id="configSummary" class="muted meta-line login-meta" hidden></p>
-        <a
-          class="status-credit login-credit"
-          href="https://landogzwebsolutions.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          >Designed by Landogz Web Solutions</a
-        >
+
+        <div class="login-footer">
+          <span class="login-footer-label">Designed by</span>
+          <a
+            class="login-credit"
+            href="https://landogzwebsolutions.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            >Landogz Web Solutions</a
+          >
+        </div>
       </div>
     </div>
 
@@ -618,6 +643,49 @@
       </form>
     </dialog>
 
+    <dialog id="closeConfirmDialog" class="modal close-confirm-modal" aria-labelledby="closeConfirmTitle">
+      <form class="close-confirm-form" id="closeConfirmForm">
+        <div class="close-confirm-hero">
+          <div class="close-confirm-icon" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M9 9l6 6M15 9l-6 6"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+              />
+              <path
+                d="M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17Z"
+                stroke="currentColor"
+                stroke-width="1.6"
+              />
+            </svg>
+          </div>
+          <div class="close-confirm-hero-text">
+            <p class="close-confirm-kicker">Quit application</p>
+            <h3 id="closeConfirmTitle" class="close-confirm-title">Close Inmate Exchange Auto?</h3>
+          </div>
+        </div>
+
+        <p class="close-confirm-lead">
+          You’re about to leave the desktop workspace. Confirm only if you’re done sending.
+        </p>
+
+        <ul class="close-confirm-points">
+          <li>In-progress CorrLinks login or send will stop</li>
+          <li>Open CorrLinks panel session will be cleared</li>
+          <li>Remembered SportsData login stays unless you signed out</li>
+        </ul>
+
+        <div class="row close-confirm-actions">
+          <button type="button" class="ghost" id="btnCloseConfirmCancel">Cancel</button>
+          <button type="button" class="close-confirm-danger" id="btnCloseConfirmOk">
+            Close app
+          </button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="shortcutsDialog" class="modal">
       <form method="dialog">
         <h3>Keyboard shortcuts</h3>
@@ -635,29 +703,131 @@
       </form>
     </dialog>
 
-    <dialog id="aboutDialog" class="modal">
-      <form method="dialog">
-        <h3>About</h3>
-        <p class="muted">CorrLinks Automation · Inmate Exchange Auto</p>
-        <p id="aboutVersion" class="tabular">v…</p>
-        <p class="muted">Designed by Landogz Web Solutions</p>
-        <div class="row">
-          <button value="cancel" class="ghost">Close</button>
+    <dialog id="aboutDialog" class="modal about-modal">
+      <form method="dialog" class="about-form">
+        <div class="about-hero">
+          <img
+            class="about-mark"
+            src="assets/logo-mark-ui.png"
+            width="56"
+            height="56"
+            alt=""
+            aria-hidden="true"
+          />
+          <div class="about-hero-text">
+            <p class="about-kicker">CorrLinks Automation</p>
+            <h3 class="about-title">Inmate Exchange Auto</h3>
+            <p id="aboutVersion" class="about-version tabular">v…</p>
+          </div>
+        </div>
+
+        <p class="about-lead">
+          Desktop workflow for SportsData inmate exchange files and CorrLinks compose —
+          login, paste, and send with optional multi-file continuation.
+        </p>
+
+        <dl class="about-meta">
+          <div>
+            <dt>Product</dt>
+            <dd>Inmate Exchange Auto</dd>
+          </div>
+          <div>
+            <dt>Platform</dt>
+            <dd id="aboutPlatform">—</dd>
+          </div>
+          <div>
+            <dt>Runtime</dt>
+            <dd id="aboutRuntime">Electron</dd>
+          </div>
+          <div>
+            <dt>Copyright</dt>
+            <dd id="aboutCopyright">© MJR</dd>
+          </div>
+        </dl>
+
+        <div class="about-credit">
+          <span class="about-credit-label">Designed by</span>
+          <a
+            class="about-credit-link"
+            href="https://landogzwebsolutions.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            >Landogz Web Solutions</a
+          >
+        </div>
+
+        <div class="row about-actions">
+          <button type="button" class="ghost" id="btnAboutClose" value="cancel">Close</button>
+          <button type="button" id="btnAboutUpdates" data-update-action="check">
+            Check for updates
+          </button>
         </div>
       </form>
     </dialog>
 
-    <dialog id="updatesDialog" class="modal">
-      <form method="dialog" id="updatesForm">
-        <h3>Updates</h3>
-        <p class="muted">Current version <span id="updatesCurrent" class="tabular">v…</span></p>
-        <p id="updatesMessage" class="updates-message">Ready to check for updates.</p>
-        <div id="updatesProgressWrap" class="updates-progress" hidden>
-          <div class="progress"><div id="updatesProgressBar" class="progress-bar" style="width: 0%"></div></div>
+    <dialog id="updatesDialog" class="modal updates-modal">
+      <form method="dialog" id="updatesForm" class="updates-form">
+        <div class="updates-hero">
+          <div class="updates-hero-icon" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M12 3v10m0 0 3.5-3.5M12 13 8.5 9.5"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M5 15.5V17a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-1.5"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+              />
+            </svg>
+          </div>
+          <div class="updates-hero-text">
+            <p class="updates-kicker">Software updates</p>
+            <h3 class="updates-title">Keep Inmate Exchange Auto current</h3>
+            <p id="updatesStatusBadge" class="updates-status-badge" data-state="idle">Idle</p>
+          </div>
         </div>
-        <div class="row">
+
+        <p id="updatesMessage" class="updates-message">Ready to check for updates.</p>
+
+        <dl class="updates-meta">
+          <div>
+            <dt>Installed</dt>
+            <dd id="updatesCurrent" class="tabular">v…</dd>
+          </div>
+          <div>
+            <dt>Latest</dt>
+            <dd id="updatesLatest" class="tabular">—</dd>
+          </div>
+          <div>
+            <dt>Channel</dt>
+            <dd id="updatesChannel">Stable</dd>
+          </div>
+          <div>
+            <dt>Install</dt>
+            <dd id="updatesInstallMode">Auto</dd>
+          </div>
+        </dl>
+
+        <div id="updatesProgressWrap" class="updates-progress" hidden>
+          <div class="updates-progress-head">
+            <span id="updatesProgressLabel">Downloading…</span>
+            <span id="updatesProgressPct" class="tabular">0%</span>
+          </div>
+          <div class="progress">
+            <div id="updatesProgressBar" class="progress-bar" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <div class="row updates-actions">
           <button type="button" class="ghost" id="btnUpdatesClose" value="cancel">Close</button>
-          <button type="button" id="btnUpdatesAction" data-update-action="check">Check for updates</button>
+          <button type="button" id="btnUpdatesAction" data-update-action="check">
+            Check for updates
+          </button>
         </div>
       </form>
     </dialog>

@@ -113,6 +113,12 @@ function loadSavedCredentials() {
   }
 }
 
+/** True when a remembered credentials file exists with email + password. */
+function hasRememberedCredentials() {
+  const saved = loadSavedCredentials();
+  return Boolean(saved.email && saved.password);
+}
+
 function applyCredentialsToEnv(creds = {}) {
   if (creds.baseUrl) process.env.SPORTSDATA_BASE_URL = String(creds.baseUrl).replace(/\/$/, '');
   if (creds.email != null) process.env.SPORTSDATA_EMAIL = String(creds.email);
@@ -177,7 +183,10 @@ applyCredentialsToEnv(loadSavedCredentials());
 
 function getSportsDataConfig() {
   const saved = loadSavedCredentials();
+  const remembered = Boolean(saved.email && saved.password);
   const baseUrl = (saved.baseUrl || process.env.SPORTSDATA_BASE_URL || 'https://sportsdata.com').replace(/\/$/, '');
+  // Prefer remembered file. Fall back to process.env for the active session
+  // (after Sign in) or legacy .env — but auto-login must use `remembered` only.
   const email = saved.email || process.env.SPORTSDATA_EMAIL || '';
   const password = saved.password || process.env.SPORTSDATA_PASSWORD || '';
 
@@ -185,6 +194,7 @@ function getSportsDataConfig() {
     baseUrl,
     email,
     password,
+    remembered,
     credentialsPath: getCredentialsPath(),
   };
 }
@@ -200,6 +210,7 @@ module.exports = {
   resolveEnvPath,
   getCredentialsPath,
   loadSavedCredentials,
+  hasRememberedCredentials,
   saveSportsDataCredentials,
   clearSportsDataCredentials,
   reloadSavedCredentials,

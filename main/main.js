@@ -43,6 +43,47 @@ const { setupAutoUpdater, registerUpdateIpc } = require('./updater');
 let controlWindow = null;
 let cachedAccounts = [];
 const sportsData = new SportsDataClient();
+/** When true, window/app close proceeds without another confirm. */
+let allowAppClose = false;
+let closeConfirmOpen = false;
+
+async function confirmAppClose() {
+  if (allowAppClose) return true;
+  if (closeConfirmOpen) return false;
+  if (!controlWindow || controlWindow.isDestroyed()) return true;
+  closeConfirmOpen = true;
+  try {
+    // Prefer the in-app styled dialog in the renderer.
+    const ok = await controlWindow.webContents.executeJavaScript(
+      `(async () => {
+        if (typeof window.__confirmAppClose === 'function') {
+          return Boolean(await window.__confirmAppClose());
+        }
+        return true;
+      })()`,
+      true
+    );
+    return Boolean(ok);
+  } catch (_) {
+    // Renderer not ready — fall back to native prompt.
+    try {
+      const { response } = await dialog.showMessageBox(controlWindow, {
+        type: 'question',
+        buttons: ['Cancel', 'Close'],
+        defaultId: 1,
+        cancelId: 0,
+        noLink: true,
+        title: 'Close Inmate Exchange Auto',
+        message: 'Close Inmate Exchange Auto?',
+      });
+      return response === 1;
+    } catch {
+      return true;
+    }
+  } finally {
+    closeConfirmOpen = false;
+  }
+}
 
 /** Resolve optional daily/weekly template overrides from renderer payload. */
 function resolveTemplateOptions(payload = {}, inmate = null) {
@@ -77,6 +118,7 @@ function resolveTemplateOptions(payload = {}, inmate = null) {
 }
 
 function createControlWindow() {
+  allowAppClose = false;
   controlWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -137,6 +179,15 @@ function createControlWindow() {
   controlWindow.on('unmaximize', relayout);
   controlWindow.on('enter-full-screen', relayout);
   controlWindow.on('leave-full-screen', relayout);
+  controlWindow.on('close', (event) => {
+    if (allowAppClose) return;
+    event.preventDefault();
+    confirmAppClose().then((ok) => {
+      if (!ok || !controlWindow || controlWindow.isDestroyed()) return;
+      allowAppClose = true;
+      controlWindow.close();
+    });
+  });
   controlWindow.on('closed', () => {
     forceCloseCorrWindow();
     setHostWindow(null);
@@ -148,11 +199,14 @@ function registerIpc() {
   ipcMain.handle('config:summary', async () => {
     const cfg = getSportsDataConfig();
     const timezone = getAppTimezone();
+    const remembered = Boolean(cfg.remembered);
     return {
       baseUrl: cfg.baseUrl,
-      email: cfg.email,
-      password: cfg.password || '',
-      hasPassword: Boolean(cfg.password),
+      // Prefill email from .env if present, but only auto-login when remembered.
+      email: cfg.email || '',
+      password: remembered ? cfg.password || '' : '',
+      hasPassword: remembered && Boolean(cfg.password),
+      remembered,
       timezone,
       subjectToday: buildCorrlinksSubject(),
       envPath,
@@ -217,6 +271,7 @@ function registerIpc() {
         baseUrl: cleared.baseUrl,
         email: '',
         hasPassword: false,
+        remembered: false,
         credentialsPath: cleared.credentialsPath,
       };
     } catch (error) {
@@ -586,6 +641,16 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createControlWindow();
     }
+  });
+});
+
+app.on('before-quit', (event) => {
+  if (allowAppClose) return;
+  event.preventDefault();
+  confirmAppClose().then((ok) => {
+    if (!ok) return;
+    allowAppClose = true;
+    app.quit();
   });
 });
 

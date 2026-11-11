@@ -841,10 +841,17 @@ function renderFilesList(sendable, { skippedCount = 0, emptyMessage = 'No sendab
     filesList.innerHTML = '';
     sendable.forEach((file, index) => {
       const key = `${file.part}:${file.filename || index}`;
+      const order =
+        Number.isFinite(Number(file.part)) && Number(file.part) > 0
+          ? Number(file.part)
+          : index + 1;
+      const filename = file.filename || `part-${order}.txt`;
       const li = document.createElement('li');
+      li.className = 'file-row';
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.checked = selectedFileKeys.includes(key);
+      cb.setAttribute('aria-label', `Select file ${order}`);
       cb.addEventListener('change', () => {
         if (cb.checked) {
           if (!selectedFileKeys.includes(key)) selectedFileKeys.push(key);
@@ -853,15 +860,21 @@ function renderFilesList(sendable, { skippedCount = 0, emptyMessage = 'No sendab
         }
         if (filesHint) filesHint.textContent = `${selectedFileKeys.length} selected`;
       });
+      const label = document.createElement('span');
+      label.className = 'file-label';
+      const orderEl = document.createElement('span');
+      orderEl.className = 'file-order';
+      orderEl.textContent = `File ${order}`;
       const name = document.createElement('span');
       name.className = 'file-name';
-      name.textContent = file.filename || `part-${file.part || index + 1}.txt`;
-      name.title = name.textContent;
+      name.textContent = filename;
+      name.title = `File ${order}: ${filename}`;
+      label.append(orderEl, name);
       const meta = document.createElement('span');
       meta.className = 'file-meta';
       const chars = file.characters != null ? Number(file.characters).toLocaleString() : '—';
       meta.textContent = `${chars} chars`;
-      li.append(cb, name, meta);
+      li.append(cb, label, meta);
       filesList.appendChild(li);
     });
   }
@@ -3241,18 +3254,86 @@ function renderUpdateUi(status = updateStatus) {
   }
 
   if (aboutVersion) aboutVersion.textContent = version ? `v${version}` : 'v…';
+  const loginVersion = document.getElementById('loginVersion');
+  if (loginVersion) loginVersion.textContent = version ? `v${version}` : 'v…';
+  const aboutPlatform = document.getElementById('aboutPlatform');
+  const aboutRuntime = document.getElementById('aboutRuntime');
+  const aboutCopyright = document.getElementById('aboutCopyright');
+  if (aboutPlatform) {
+    const plat =
+      navigator.userAgentData?.platform ||
+      (/Mac/i.test(navigator.platform || navigator.userAgent)
+        ? 'macOS'
+        : /Win/i.test(navigator.platform || navigator.userAgent)
+          ? 'Windows'
+          : navigator.platform || 'Desktop');
+    aboutPlatform.textContent = plat;
+  }
+  if (aboutRuntime) {
+    aboutRuntime.textContent = `Electron · Chromium`;
+  }
+  if (aboutCopyright) {
+    aboutCopyright.textContent = `© ${new Date().getFullYear()} MJR`;
+  }
   if (updatesCurrent) updatesCurrent.textContent = version ? `v${version}` : 'v…';
+
+  const updatesLatest = document.getElementById('updatesLatest');
+  const updatesChannel = document.getElementById('updatesChannel');
+  const updatesInstallMode = document.getElementById('updatesInstallMode');
+  const updatesStatusBadge = document.getElementById('updatesStatusBadge');
+  const updatesProgressLabel = document.getElementById('updatesProgressLabel');
+  const updatesProgressPct = document.getElementById('updatesProgressPct');
+
+  if (updatesLatest) {
+    if (updateStatus.latestVersion) {
+      updatesLatest.textContent = `v${updateStatus.latestVersion}`;
+    } else if (state === 'idle' || state === 'not-available') {
+      updatesLatest.textContent = version ? `v${version}` : '—';
+    } else {
+      updatesLatest.textContent = '—';
+    }
+  }
+  if (updatesChannel) updatesChannel.textContent = 'Stable';
+  if (updatesInstallMode) {
+    updatesInstallMode.textContent = macDmg ? 'macOS DMG' : 'In-app install';
+  }
+  if (updatesStatusBadge) {
+    const badgeMap = {
+      idle: 'Ready',
+      'not-available': 'Up to date',
+      checking: 'Checking…',
+      available: 'Update available',
+      downloading: 'Downloading…',
+      downloaded: macDmg ? 'Installer ready' : 'Ready to install',
+      error: 'Update failed',
+      dev: 'Dev build',
+    };
+    const badgeState = state === 'not-available' ? 'uptodate' : state || 'idle';
+    updatesStatusBadge.dataset.state = badgeState;
+    updatesStatusBadge.textContent = badgeMap[state] || 'Ready';
+  }
   if (updatesMessage) {
     updatesMessage.textContent =
       updateStatus.message ||
-      (state === 'dev' ? 'Updates are available in packaged builds only.' : 'Ready to check for updates.');
+      (state === 'dev'
+        ? 'Updates are available in packaged builds only.'
+        : state === 'available'
+          ? `Version v${updateStatus.latestVersion || '…'} is ready to download.`
+          : state === 'downloaded'
+            ? macDmg
+              ? 'Installer downloaded. Open it to finish updating.'
+              : 'Update downloaded. Restart to finish installing.'
+            : 'Ready to check for updates.');
   }
   if (updatesProgressWrap) {
     updatesProgressWrap.hidden = state !== 'downloading' || macDmg;
   }
-  if (updatesProgressBar) {
-    updatesProgressBar.style.width = `${updateStatus.percent || 0}%`;
+  const pct = Math.max(0, Math.min(100, Number(updateStatus.percent) || 0));
+  if (updatesProgressBar) updatesProgressBar.style.width = `${pct}%`;
+  if (updatesProgressLabel) {
+    updatesProgressLabel.textContent = macDmg ? 'Preparing installer…' : 'Downloading update…';
   }
+  if (updatesProgressPct) updatesProgressPct.textContent = `${Math.round(pct)}%`;
   if (btnUpdate) {
     btnUpdate.disabled = updateBusy || action === 'busy';
     btnUpdate.dataset.updateAction = action === 'busy' ? 'check' : action;
@@ -3359,6 +3440,34 @@ function openModalDialog(dialog) {
   return true;
 }
 
+const closeConfirmDialog = document.getElementById('closeConfirmDialog');
+let closeConfirmResolver = null;
+
+function finishCloseConfirm(ok) {
+  const resolve = closeConfirmResolver;
+  closeConfirmResolver = null;
+  if (closeConfirmDialog?.open) closeConfirmDialog.close();
+  scheduleCorrPaneBounds();
+  if (typeof resolve === 'function') resolve(Boolean(ok));
+}
+
+/** Called from main-process window close / quit. */
+function confirmAppCloseFromUi() {
+  if (closeConfirmResolver) return Promise.resolve(false);
+  if (!closeConfirmDialog || typeof closeConfirmDialog.showModal !== 'function') {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    closeConfirmResolver = resolve;
+    openModalDialog(closeConfirmDialog);
+    queueMicrotask(() => {
+      document.getElementById('btnCloseConfirmCancel')?.focus();
+    });
+  });
+}
+
+window.__confirmAppClose = confirmAppCloseFromUi;
+
 /**
  * After init probe: ask whether to start the regrouped send loop.
  * CorrLinks stays hidden until the user confirms.
@@ -3434,6 +3543,9 @@ async function checkUpdatesBeforeLogin() {
     updateBusy = true;
     renderUpdateUi({ ...updateStatus, state: 'checking', message: 'Checking for updates…' });
     const result = await window.api.checkForUpdates();
+    // Clear busy BEFORE opening the dialog — otherwise Download stays disabled
+    // while we wait for the user to close Updates.
+    updateBusy = false;
     renderUpdateUi(result || updateStatus);
     maybeToastUpdate(result);
 
@@ -3508,7 +3620,15 @@ function wireAppUpdates() {
 
   btnUpdate?.addEventListener('click', (event) => {
     event.preventDefault();
-    runUpdateAction(btnUpdate.dataset.updateAction || 'check');
+    event.stopPropagation();
+    const action =
+      btnUpdate.dataset.updateAction ||
+      (updateStatus.state === 'available'
+        ? 'download'
+        : updateStatus.state === 'downloaded'
+          ? 'install'
+          : 'check');
+    runUpdateAction(action);
   });
   updateChip?.addEventListener('click', () => openUpdatesDialog());
   btnCheckUpdatesMenu?.addEventListener('click', () => {
@@ -3540,12 +3660,10 @@ async function init() {
     // Always check for app updates before SportsData login / auto-login.
     await checkUpdatesBeforeLogin();
 
-    if (summary.email && summary.hasPassword) {
-      if (summary.credentialsPath) {
-        log(`Remembered SportsData login (${maskSensitive(summary.email)}) — verifying…`, 'info');
-      } else if (summary.envPath) {
-        log(`Loaded SportsData credentials from .env — verifying…`, 'info');
-      }
+    // Auto-login only when "Remember …" saved a credentials file.
+    // Logout deletes that file; .env alone must not sign back in on restart.
+    if (summary.remembered && summary.email && summary.hasPassword) {
+      log(`Remembered SportsData login (${maskSensitive(summary.email)}) — verifying…`, 'info');
       setLoginError('Verifying SportsData login…', { info: true });
       const verified = await window.api.verifySportsDataLogin();
       if (!verified?.ok) {
@@ -3559,9 +3677,11 @@ async function init() {
       log('Control UI ready', 'info');
       await refreshInmates();
     } else {
+      if (sdRemember) sdRemember.checked = false;
       setStatusHint('Sign in with SportsData');
       log('Sign in with SportsData email and password to continue', 'warn');
-      sdEmail.focus();
+      if (summary.email && !sdPassword?.value) sdPassword?.focus();
+      else sdEmail?.focus();
     }
   } catch (error) {
     if (configSummary) {
@@ -3610,6 +3730,16 @@ sdEmail?.addEventListener('input', () => {
 sdPassword?.addEventListener('input', () => {
   sdPassword.classList.remove('is-invalid');
   if (loginError && !loginError.hidden) setLoginError('');
+});
+document.getElementById('btnToggleLoginPassword')?.addEventListener('click', () => {
+  if (!sdPassword) return;
+  const show = sdPassword.type === 'password';
+  sdPassword.type = show ? 'text' : 'password';
+  const btn = document.getElementById('btnToggleLoginPassword');
+  if (btn) {
+    btn.textContent = show ? 'Hide' : 'Show';
+    btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+  }
 });
 
 btnRefresh.addEventListener('click', () => {
@@ -3661,6 +3791,8 @@ btnLogout.addEventListener('click', async () => {
     const result = await window.api.logoutSportsData();
     if (!result?.ok) throw new Error(result?.message || 'Sign out failed');
     sdPassword.value = '';
+    sdEmail.value = '';
+    if (sdRemember) sdRemember.checked = false;
     fillLoginForm({
       baseUrl: result.baseUrl || sdBaseUrl.value,
       email: '',
@@ -3674,7 +3806,7 @@ btnLogout.addEventListener('click', async () => {
     resetWorkspaceState();
     updateSignedInChip('');
     showLoginScreen();
-    log('Signed out of SportsData', 'info');
+    log('Signed out of SportsData — remembered login cleared', 'info');
     toast('Signed out', 'info');
     syncCorrPaneBounds();
     sdEmail.focus();
@@ -4403,11 +4535,36 @@ function wireShellUi() {
     await copyText(email);
     setAccountMenuOpen(false);
   });
+  document.getElementById('btnAboutClose')?.addEventListener('click', () => {
+    aboutDialog?.close();
+  });
+  document.getElementById('btnAboutUpdates')?.addEventListener('click', () => {
+    aboutDialog?.close();
+    openUpdatesDialog();
+    const action =
+      updateStatus.state === 'available'
+        ? 'download'
+        : updateStatus.state === 'downloaded'
+          ? 'install'
+          : 'check';
+    runUpdateAction(action);
+  });
   btnAbout?.addEventListener('click', () => {
     setAccountMenuOpen(false);
+    renderUpdateUi(updateStatus);
     openModalDialog(aboutDialog);
   });
   btnShortcuts?.addEventListener('click', () => openModalDialog(shortcutsDialog));
+  document.getElementById('btnCloseConfirmCancel')?.addEventListener('click', () => {
+    finishCloseConfirm(false);
+  });
+  document.getElementById('btnCloseConfirmOk')?.addEventListener('click', () => {
+    finishCloseConfirm(true);
+  });
+  closeConfirmDialog?.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    finishCloseConfirm(false);
+  });
   logSearch?.addEventListener('input', applyLogFilter);
 
   sdConn?.addEventListener('click', () => {
