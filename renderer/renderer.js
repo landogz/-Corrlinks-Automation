@@ -175,6 +175,8 @@ const historyHint = document.getElementById('historyHint');
 const historyPreviewMeta = document.getElementById('historyPreviewMeta');
 const historyPreviewBody = document.getElementById('historyPreviewBody');
 const btnHistoryRefresh = document.getElementById('btnHistoryRefresh');
+const btnHistoryGenerate = document.getElementById('btnHistoryGenerate');
+const historyGenerateDate = document.getElementById('historyGenerateDate');
 const btnHistoryCopy = document.getElementById('btnHistoryCopy');
 const btnHistoryDownloadPreview = document.getElementById('btnHistoryDownloadPreview');
 const btnHistoryExport = document.getElementById('btnHistoryExport');
@@ -3495,6 +3497,7 @@ mainTabs?.addEventListener('click', (event) => {
 });
 
 btnHistoryRefresh?.addEventListener('click', () => loadExchangeHistory());
+btnHistoryGenerate?.addEventListener('click', () => generateExchangeAllManual());
 
 document.getElementById('historyTable')?.addEventListener('click', (event) => {
   const btn = event.target.closest('button[data-url]');
@@ -3865,6 +3868,7 @@ function setMainTab(tab) {
   });
   stepIndicator?.classList.toggle('is-hidden', activeMainTab === 'history');
   scheduleCorrPaneBounds();
+  if (activeMainTab === 'history') ensureHistoryGenerateDateDefault();
   if (activeMainTab === 'history' && !historyLoaded) {
     loadExchangeHistory();
   }
@@ -4032,10 +4036,24 @@ function applyHistoryFilters() {
   historyDataTable.column(0).search(dateQ, false, true).draw();
 }
 
+function todayIsoDate() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function ensureHistoryGenerateDateDefault() {
+  if (!historyGenerateDate) return;
+  if (!historyGenerateDate.value) historyGenerateDate.value = todayIsoDate();
+}
+
 async function loadExchangeHistory() {
   if (!btnHistoryRefresh) return;
   btnHistoryRefresh.disabled = true;
   btnHistoryRefresh.classList.add('loading');
+  if (btnHistoryGenerate) btnHistoryGenerate.disabled = true;
   if (historyHint) historyHint.textContent = 'Loading from /inmate-exchange/all…';
   setStatusHint('Loading Inmate Exchange All…');
   log('Loading Inmate Exchange All from SportsData…', 'info');
@@ -4044,17 +4062,30 @@ async function loadExchangeHistory() {
     if (!result?.ok) throw new Error(result?.message || 'Failed to load history');
     historyLoaded = true;
     const count = result.count ?? result.rows?.length ?? 0;
+    const skippedNoOdds = Number(result.skippedNoOdds || 0);
     if (historyHint) {
       historyHint.textContent =
         count > 0
-          ? `${count} file(s) from /inmate-exchange/all`
-          : result.message || 'No files returned';
+          ? `${count} file(s) from /inmate-exchange/all` +
+            (skippedNoOdds ? ` · ${skippedNoOdds} “No odds” hidden` : '')
+          : skippedNoOdds
+            ? `No odds days only · ${skippedNoOdds} hidden`
+            : result.message || 'No files returned';
     }
     historyRowsCache = result.rows || [];
     if (btnHistoryExport) btnHistoryExport.disabled = historyRowsCache.length === 0;
     renderHistoryTable(historyRowsCache);
-    log(`History loaded · ${count} file(s)`, 'success');
-    toast(`History · ${count} file(s)`, 'success');
+    log(
+      `History loaded · ${count} file(s)` +
+        (skippedNoOdds ? ` · skipped ${skippedNoOdds} “No odds”` : ''),
+      'success'
+    );
+    toast(
+      skippedNoOdds
+        ? `History · ${count} file(s) · ${skippedNoOdds} No odds hidden`
+        : `History · ${count} file(s)`,
+      'success'
+    );
     setStatusHint(`${count} exchange file(s) ready`);
   } catch (error) {
     const message = error.message || String(error);
@@ -4065,6 +4096,45 @@ async function loadExchangeHistory() {
   } finally {
     btnHistoryRefresh.disabled = false;
     btnHistoryRefresh.classList.remove('loading');
+    if (btnHistoryGenerate) btnHistoryGenerate.disabled = false;
+  }
+}
+
+/** Manual All export: POST /inmate-exchange/all (?date= optional), then refresh history. */
+async function generateExchangeAllManual() {
+  if (!btnHistoryGenerate || !window.api?.generateExchangeAll) return;
+  ensureHistoryGenerateDateDefault();
+  const date = String(historyGenerateDate?.value || '').trim() || null;
+  btnHistoryGenerate.disabled = true;
+  btnHistoryGenerate.classList.add('loading');
+  if (btnHistoryRefresh) btnHistoryRefresh.disabled = true;
+  const label = date || 'today';
+  if (historyHint) historyHint.textContent = `Generating All export · ${label}…`;
+  setStatusHint(`Generating Inmate Exchange All · ${label}…`);
+  log(
+    `Manual generate All export` + (date ? ` · date=${date}` : '') + ' · POST /inmate-exchange/all',
+    'info'
+  );
+  try {
+    const result = await window.api.generateExchangeAll({ date });
+    if (!result?.ok) throw new Error(result?.message || 'Generate failed');
+    const summary =
+      result.message ||
+      `All export ready` + (result.date ? ` · ${result.date}` : date ? ` · ${date}` : '');
+    log(summary, 'success');
+    toast(summary, 'success');
+    setStatusHint(summary);
+    await loadExchangeHistory();
+  } catch (error) {
+    const message = error.message || String(error);
+    if (historyHint) historyHint.textContent = 'Generate failed';
+    log(message, 'error');
+    toast(message, 'error');
+    setStatusHint('Generate failed');
+  } finally {
+    btnHistoryGenerate.disabled = false;
+    btnHistoryGenerate.classList.remove('loading');
+    if (btnHistoryRefresh) btnHistoryRefresh.disabled = false;
   }
 }
 

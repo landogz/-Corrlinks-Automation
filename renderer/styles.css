@@ -2389,6 +2389,12 @@ button.status-pill.update-pill.is-downloading .dot {
   gap: 8px;
   align-items: center;
   margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.history-generate-date input[type='date'] {
+  width: 10.5rem;
+  min-width: 10.5rem;
 }
 
 .history-ctrl-btn {
@@ -2397,6 +2403,24 @@ button.status-pill.update-pill.is-downloading .dot {
   justify-content: center;
   gap: 6px;
   white-space: nowrap;
+}
+
+.history-ctrl-btn .spinner {
+  display: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.history-ctrl-btn.loading .spinner {
+  display: inline-block;
+}
+
+.history-ctrl-btn.loading .btn-label {
+  opacity: 0.85;
 }
 
 .history-dt-toolbar {

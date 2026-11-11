@@ -431,6 +431,24 @@
                   <input id="historyDateFilter" type="search" placeholder="Filter date…" aria-label="Filter by date" />
                 </label>
                 <div class="history-toolbar-actions" id="historyToolbarActions">
+                  <label class="history-filter history-generate-date">
+                    <span class="sr-only">Generate date</span>
+                    <input
+                      id="historyGenerateDate"
+                      type="date"
+                      aria-label="Date for Manual generate"
+                      title="Optional date for Manual generate (All export)"
+                    />
+                  </label>
+                  <button
+                    id="btnHistoryGenerate"
+                    type="button"
+                    class="ghost history-ctrl-btn"
+                    title="POST /inmate-exchange/all — generate All export"
+                  >
+                    <span class="btn-label">Manual generate</span>
+                    <span class="spinner" aria-hidden="true"></span>
+                  </button>
                   <button id="btnHistoryExport" type="button" class="ghost history-ctrl-btn" title="Export visible rows as CSV" disabled>
                     Export CSV
                   </button>

@@ -452,6 +452,27 @@ function registerIpc() {
     }
   });
 
+  ipcMain.handle('exchange:generateAll', async (_event, payload = {}) => {
+    try {
+      const date = payload.date ? String(payload.date).trim() : null;
+      const result = await sportsData.generateInmateExchangeAll({ date: date || null });
+      return {
+        ok: Boolean(result?.ok),
+        message: result?.message || null,
+        date: result?.date || date || null,
+        file: result?.file || null,
+        url: result?.url || null,
+        items: result?.items || [],
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error.message || 'Failed to generate Inmate Exchange All',
+        items: [],
+      };
+    }
+  });
+
   ipcMain.handle('exchange:preview', async (_event, payload = {}) => {
     try {
       if (!payload.url) throw new Error('File URL is required');

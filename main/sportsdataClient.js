@@ -369,14 +369,23 @@ class SportsDataClient {
   }
 
   /**
-   * GET /api/v1/insidescore/inmate-exchange/all
-   * Supports a single data object or an array of { date, file, url }.
+   * GET|POST /api/v1/insidescore/inmate-exchange/all
+   * Optional ?date=YYYY-MM-DD. Supports a single data object or an array of { date, file, url }.
    */
-  async fetchInmateExchangeAll(retry = true) {
+  async fetchInmateExchangeAll({ date = null, method = 'GET' } = {}, retry = true) {
     const { baseUrl } = this.getConfig();
     await this.ensureAuth();
 
-    const response = await this.http.get(`${baseUrl}/api/v1/insidescore/inmate-exchange/all`, {
+    const params = new URLSearchParams();
+    const dateValue = String(date || '').trim();
+    if (dateValue) params.set('date', dateValue);
+    const qs = params.toString();
+    const url = `${baseUrl}/api/v1/insidescore/inmate-exchange/all${qs ? `?${qs}` : ''}`;
+    const httpMethod = String(method || 'GET').toUpperCase() === 'POST' ? 'post' : 'get';
+
+    const response = await this.http.request({
+      url,
+      method: httpMethod,
       headers: {
         Accept: 'application/json',
         'X-Requested-With': 'XMLHttpRequest',
@@ -396,7 +405,7 @@ class SportsDataClient {
       this.authenticated = false;
       if (!retry) throw new Error('SportsData session expired and re-login failed');
       await this.login();
-      return this.fetchInmateExchangeAll(false);
+      return this.fetchInmateExchangeAll({ date: dateValue || null, method: httpMethod }, false);
     }
 
     if (response.status !== 200 || !response.data?.status) {
@@ -407,14 +416,32 @@ class SportsDataClient {
     }
 
     const raw = response.data.data;
-    const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    // Prefer data.generations[] (history list). Fall back to array or single {date,file,url}.
+    let list = [];
+    if (Array.isArray(raw?.generations) && raw.generations.length) {
+      list = raw.generations;
+    } else if (Array.isArray(raw)) {
+      list = raw;
+    } else if (raw && (raw.url || raw.file)) {
+      list = [raw];
+    }
+
     const items = list
-      .filter((item) => item && item.url)
-      .map((item) => ({
-        date: item.date || null,
-        file: item.file || null,
-        url: item.url,
-      }));
+      .filter((item) => item && (item.url || item.file))
+      .map((item) => {
+        const file = item.file || null;
+        const filename =
+          item.filename ||
+          (file ? String(file).split('/').pop() : null) ||
+          'all.txt';
+        return {
+          date: item.date || raw?.date || null,
+          file,
+          filename,
+          url: item.url || null,
+        };
+      })
+      .filter((item) => item.url);
 
     if (!items.length) {
       return {
@@ -427,12 +454,19 @@ class SportsDataClient {
     return {
       ok: true,
       items,
-      // Convenience fields for the common single-file response
-      date: items[0].date,
-      file: items[0].file,
-      url: items[0].url,
+      // Convenience fields for the latest / primary file
+      date: raw?.date || items[0].date,
+      file: raw?.file || items[0].file,
+      url: raw?.url || items[0].url,
       message: response.data.message || 'Inmate Exchange All generated.',
     };
+  }
+
+  /**
+   * Manual All export generate — POST /inmate-exchange/all (?date= optional).
+   */
+  async generateInmateExchangeAll({ date = null } = {}) {
+    return this.fetchInmateExchangeAll({ date, method: 'POST' });
   }
 
   /**
@@ -543,27 +577,42 @@ class SportsDataClient {
         ok: true,
         count: 0,
         rows: [],
+        skippedNoOdds: 0,
         message: meta.message || 'No Inmate Exchange All file available',
       };
     }
 
     const rows = [];
+    let skippedNoOdds = 0;
     for (const item of meta.items) {
       let characters = null;
-      if (withCharacters) {
-        try {
-          const file = await this.fetchExchangeFileText(item.url);
-          characters = file.characters;
-        } catch (_) {
-          characters = null;
-        }
+      let text = '';
+      try {
+        // Always peek at content so "No odds for …" days can be hidden from the table.
+        const file = await this.fetchExchangeFileText(item.url);
+        text = file.text || '';
+        characters = withCharacters ? file.characters : null;
+      } catch (_) {
+        characters = null;
+        text = '';
       }
+
+      if (/no odds\s+for/i.test(text)) {
+        skippedNoOdds += 1;
+        continue;
+      }
+
       rows.push({
         date: item.date || null,
         file: item.file || 'all.txt',
-        filename: String(item.file || '').split('/').pop() || 'all.txt',
+        filename:
+          item.filename ||
+          String(item.file || '')
+            .split('/')
+            .pop() ||
+          'all.txt',
         url: item.url,
-        characters,
+        characters: withCharacters ? characters : characters ?? (text ? text.length : null),
         ok: true,
       });
     }
@@ -573,6 +622,7 @@ class SportsDataClient {
       ok: true,
       count: rows.length,
       rows,
+      skippedNoOdds,
       message: meta.message || null,
     };
   }
