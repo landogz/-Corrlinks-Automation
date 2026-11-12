@@ -1462,7 +1462,7 @@ button:focus-visible,
 
 .actions-secondary {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   min-width: 0;
 }
@@ -1505,19 +1505,9 @@ button:focus-visible,
   background: var(--danger);
 }
 
-/* While looping: Login hidden — Stop + Status share the secondary row */
+/* While looping: hide Send — Stop takes the full secondary row */
 .actions-stack.is-looping .action-primary {
   display: none;
-}
-
-.actions-stack.is-looping .actions-secondary,
-.actions-stack.is-single-busy .actions-secondary {
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
-}
-
-/* Single login busy: keep Logging in… and expose Force stop beside Status */
-.actions-stack.is-single-busy .action-stop {
-  order: -1;
 }
 
 button {
@@ -1831,9 +1821,9 @@ button.tiny {
 
 .login-plan {
   display: grid;
-  gap: 4px;
-  padding: 12px 14px;
-  border-radius: 10px;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
   border: 1px solid rgba(45, 212, 191, 0.28);
   background: var(--accent-subtle);
 }
@@ -1847,16 +1837,16 @@ button.tiny {
 }
 .login-plan-kicker {
   margin: 0;
-  font-size: 11px;
-  letter-spacing: 0.06em;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   font-weight: 700;
   color: var(--text-muted);
 }
 .login-plan-main {
   margin: 0;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--text-primary);
   word-break: break-word;
 }
@@ -1864,8 +1854,8 @@ button.tiny {
 .login-plan.is-blocked .login-plan-main { color: var(--danger); }
 .login-plan-meta {
   margin: 0;
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 10px;
+  line-height: 1.35;
   color: var(--text-secondary);
 }
 

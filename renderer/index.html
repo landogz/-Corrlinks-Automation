@@ -387,13 +387,10 @@
                         <span class="live-dot live-dot-run" aria-hidden="true"></span>
                         <span class="btn-stop-label">Stop loop</span>
                       </button>
-                      <button id="btnStatus" type="button" class="action-ghost ghost" title="Check CorrLinks status">
-                        Status
-                      </button>
                     </div>
                   </div>
 
-                  <div class="session-panel" id="sessionPanel" aria-label="Session">
+                  <div class="session-panel" id="sessionPanel" aria-label="Session" hidden>
                     <div class="session-head">
                       <span class="section-label">Session</span>
                       <span id="sessionLive" class="session-live" hidden>
@@ -669,54 +666,11 @@
     <dialog id="loopDoneDialog" class="modal loop-done-modal">
       <form method="dialog" id="loopDoneForm">
         <div id="loopDoneIcon" class="loop-done-icon" aria-hidden="true">✓</div>
-        <h3 id="loopDoneTitle">Loop finished</h3>
-        <p id="loopDoneMessage" class="muted">The send loop has already completed.</p>
+        <h3 id="loopDoneTitle">Loop completed</h3>
+        <p id="loopDoneMessage" class="muted">All recipients in this loop were completed successfully.</p>
         <p id="loopDoneSummary" class="loop-done-summary tabular">—</p>
         <div class="row">
           <button value="ok" class="action-primary" id="btnLoopDoneOk">OK</button>
-        </div>
-      </form>
-    </dialog>
-
-    <dialog id="closeConfirmDialog" class="modal close-confirm-modal" aria-labelledby="closeConfirmTitle">
-      <form class="close-confirm-form" id="closeConfirmForm">
-        <div class="close-confirm-hero">
-          <div class="close-confirm-icon" aria-hidden="true">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
-              <path
-                d="M9 9l6 6M15 9l-6 6"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-              />
-              <path
-                d="M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17Z"
-                stroke="currentColor"
-                stroke-width="1.6"
-              />
-            </svg>
-          </div>
-          <div class="close-confirm-hero-text">
-            <p class="close-confirm-kicker">Quit application</p>
-            <h3 id="closeConfirmTitle" class="close-confirm-title">Close Inmate Exchange Auto?</h3>
-          </div>
-        </div>
-
-        <p class="close-confirm-lead">
-          You’re about to leave the desktop workspace. Confirm only if you’re done sending.
-        </p>
-
-        <ul class="close-confirm-points">
-          <li>In-progress CorrLinks login or send will stop</li>
-          <li>Open CorrLinks panel session will be cleared</li>
-          <li>Remembered SportsData login stays unless you signed out</li>
-        </ul>
-
-        <div class="row close-confirm-actions">
-          <button type="button" class="ghost" id="btnCloseConfirmCancel">Cancel</button>
-          <button type="button" class="close-confirm-danger" id="btnCloseConfirmOk">
-            Close app
-          </button>
         </div>
       </form>
     </dialog>

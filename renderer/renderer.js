@@ -141,7 +141,6 @@ const VERIFY_COPY = {
   manualStatus: 'Re-checking CorrLinks accounts',
 };
 const actionsRow = document.getElementById('actionsRow');
-const btnStatus = document.getElementById('btnStatus');
 const btnSend = document.getElementById('btnSend');
 const loginScreen = document.getElementById('loginScreen');
 const mainShell = document.getElementById('mainShell');
@@ -410,7 +409,7 @@ function setAccountMenuOpen(open) {
   btnAccountMenu.setAttribute('aria-expanded', next ? 'true' : 'false');
   document.body.classList.toggle('account-menu-open', next);
   // Native CorrLinks view paints above HTML and was covering this dropdown.
-  if (next) hideCorrEmbedNow();
+  if (next) hideCorrEmbedNow({ force: true });
   scheduleCorrPaneBounds();
 }
 
@@ -1076,7 +1075,6 @@ function renderAccountMeta(inmate, { preserveFileKeys = null } = {}) {
   inmateCollapsedSummary.hidden = true;
 
   const primary = inmate.corrlinks_account;
-  const second = inmate.second_corrlinks_account;
   const exchange = inmate.inmate_exchange || {};
   const dailySendable = exchange.sendable || [];
   const skipped = exchange.skipped || [];
@@ -1165,51 +1163,6 @@ function renderAccountMeta(inmate, { preserveFileKeys = null } = {}) {
     badgeRow.appendChild(loginBadge);
   }
 
-  [
-    { label: 'Primary', email: primary?.email, ready: Boolean(primary?.password), key: 'primary' },
-    { label: 'Second', email: second?.email, ready: Boolean(second?.password), key: 'second' },
-  ].forEach((row) => {
-    const el = document.createElement('div');
-    const isActive = Boolean(row.email && activeCorrEmail && row.email.toLowerCase() === String(activeCorrEmail).toLowerCase());
-    const isPlanned =
-      assignment?.ready &&
-      row.email &&
-      emailLoopKey(row.email) === emailLoopKey(assignment.email);
-    el.className = `kv-row${isActive || isPlanned ? ' is-active' : ''}`;
-    const label = document.createElement('span');
-    label.className = 'kv-label';
-    label.textContent = row.label;
-    const value = document.createElement('span');
-    value.className = 'kv-value truncate';
-    value.textContent = row.email || 'none';
-    value.title = row.email || 'none';
-    if (row.email && !row.ready) value.textContent += ' (no password)';
-    if (isPlanned) {
-      value.textContent += ' · will login';
-      value.title = `${row.email} · Will login for this recipient`;
-    } else if (isActive) {
-      value.title = `${row.email} · Active session`;
-    }
-    const copy = document.createElement('button');
-    copy.type = 'button';
-    copy.className = 'copy-btn icon-copy';
-    copy.title = row.email ? 'Copy email' : 'No email';
-    copy.setAttribute('aria-label', row.email ? `Copy ${row.label} email` : 'No email to copy');
-    copy.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M4 16V6a2 2 0 012-2h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
-    copy.disabled = !row.email;
-    copy.addEventListener('click', async () => {
-      await copyText(row.email);
-      copy.classList.add('is-copied');
-      copy.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12l5 5L20 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-      setTimeout(() => {
-        copy.classList.remove('is-copied');
-        copy.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M4 16V6a2 2 0 012-2h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
-      }, 1200);
-    });
-    el.append(label, value, copy);
-    accountRows.appendChild(el);
-  });
-
   syncTemplateControls();
   renderFilesList(sendable, {
     skippedCount: templateMode === 'daily' ? skipped.length : 0,
@@ -1290,7 +1243,8 @@ async function setTemplateMode(mode) {
   templateMode = mode === 'weekly' ? 'weekly' : 'daily';
   syncTemplateControls();
   if (templateMode === 'weekly') {
-    await loadWeeklyTemplate({ force: weeklyCache.league !== weeklyLeague });
+    // Always re-hit SportsData weekly API on click (e.g. ?league=CFB).
+    await loadWeeklyTemplate({ force: true });
   } else {
     const inmate = selectedInmate();
     if (inmate) renderAccountMeta(inmate);
@@ -1302,6 +1256,7 @@ async function setWeeklyLeague(league) {
   weeklyLeague = league === 'CFB' ? 'CFB' : 'NFL';
   syncTemplateControls();
   if (templateMode === 'weekly') {
+    // Re-fetch even when the same league pill is clicked again.
     await loadWeeklyTemplate({ force: true });
   }
 }
@@ -1994,7 +1949,7 @@ function renderInmateOptions(list, { open = true } = {}) {
       li.append(dot, textWrap);
       li.addEventListener('mousedown', (event) => {
         event.preventDefault();
-        selectInmate(inmate.id, { autoSend: true });
+        selectInmate(inmate.id);
         closeInmateOptions();
       });
       if (index === 0) optionHighlight = 0;
@@ -2070,7 +2025,7 @@ function clearInmateSelection({ keepEditing = false } = {}) {
   updateActionButtons();
 }
 
-function selectInmate(id, { autoSend = false } = {}) {
+function selectInmate(id) {
   if (id == null || id === '') {
     clearInmateSelection({ keepEditing: false });
     renderInmateOptions(accounts, { open: false });
@@ -2090,29 +2045,6 @@ function selectInmate(id, { autoSend = false } = {}) {
   });
   inmateCard?.classList.remove('collapsed');
   updateActionButtons();
-  if (autoSend && inmate && !loopRunning && !corrlinksLoginBusy && !bootVerifyRunning) {
-    // Selecting an inmate should Send — not compose-only paste.
-    closeInmateOptions();
-    // Start TXT download immediately so compose does not wait after login.
-    const files = selectedExchangeFiles(inmate);
-    if (files.length && window.api?.prefetchExchangeFiles) {
-      void window.api
-        .prefetchExchangeFiles({
-          inmateId: inmate.id,
-          selectedFiles: selectedFileKeys.slice(),
-          files,
-        })
-        .catch(() => {});
-    }
-    // Reveal + size the native webview BEFORE login so CorrLinks is visible immediately.
-    void (async () => {
-      await revealCorrlinksEmbed();
-      if (!inmateHasCorrlinksLogin(inmate)) return;
-      if (corrlinksLoginBusy || loopRunning || bootVerifyRunning) return;
-      if (files.length > 0) startCorrlinksSend();
-      else startCorrlinksLogin();
-    })();
-  }
 }
 
 function accountsContentSnapshot(list = accounts) {
@@ -2156,7 +2088,7 @@ function renderAccounts(list) {
   }
   const preferred = selectedInmate() || accounts[0];
   // Prefill first inmate + check all files, but don't auto-send until user picks one.
-  selectInmate(preferred.id, { autoSend: false });
+  selectInmate(preferred.id);
   renderInmateOptions(accounts, { open: false });
   updateActionButtons();
 }
@@ -2204,7 +2136,7 @@ function applyAccountsLive(list) {
     // Selection disappeared from SportsData — clear rather than silently jump.
     clearInmateSelection({ keepEditing: false });
   } else {
-    selectInmate(accounts[0].id, { autoSend: false });
+    selectInmate(accounts[0].id);
   }
 
   renderInmateOptions(
@@ -2335,8 +2267,7 @@ async function startCorrlinksLogin(options = {}) {
   }
   if (corrlinksLoginBusy) return null;
 
-  // Show the webview immediately — do not wait on SportsData refresh.
-  void revealCorrlinksEmbed();
+  // Prefetch TXT in parallel — never blocks opening the CorrLinks pane.
   if (send && window.api?.prefetchExchangeFiles) {
     const files = selectedExchangeFiles(inmate);
     if (files.length) {
@@ -2351,6 +2282,9 @@ async function startCorrlinksLogin(options = {}) {
   }
   // Keep roster fresh in the background (never blocks CorrLinks open).
   void syncCorrlinksAccountsQuiet({ reason: 'background' });
+
+  // Await reveal so the website is painted before login/send IPC runs.
+  // (Fire-and-forget left the pane on the empty placeholder until late.)
   corrlinksForceStop = false;
   const myGeneration = ++corrlinksOpGeneration;
   corrlinksLoginBusy = true;
@@ -2361,11 +2295,19 @@ async function startCorrlinksLogin(options = {}) {
       ? `Sending via ${assignment.viaLabel}: ${inmate.name || inmate.inmate_id || inmate.id}…`
       : `CorrLinks ${assignment.viaLabel}: ${inmate.name || inmate.inmate_id || inmate.id}…`
   );
+  // Mark embed live first — otherwise setCorrlinksConnected(false) flashes the empty placeholder.
+  corrEmbedRevealed = true;
+  setCorrPlaceholderVisible(false);
+  setCorrPanelBusy(send ? 'Sending…' : 'Logging in…');
   setCorrlinksConnected(false, true);
+  // Open the pane in parallel with login — do not wait for full page load before Send.
+  const revealPromise = revealCorrlinksEmbed().catch(() => null);
+  syncCorrPaneBounds();
   const template = buildTemplatePayload();
   if (template.mode === 'weekly' && !template.files?.length) {
     toast(`No ${weeklyLeague} weekly file loaded — pick Weekly update again`, 'error');
     corrlinksLoginBusy = false;
+    setCorrPanelBusy(null);
     updateActionButtons();
     return null;
   }
@@ -2401,6 +2343,17 @@ async function startCorrlinksLogin(options = {}) {
     loginEmail: assignment.pendingValidation ? null : assignment.email,
   };
   try {
+    // Give the pane a brief head start, then login immediately (don't block on warm).
+    await Promise.race([
+      revealPromise,
+      new Promise((r) => setTimeout(r, 40)),
+    ]);
+    if (!corrlinksOpStillActive(myGeneration)) {
+      corrlinksLoginBusy = false;
+      setCorrPanelBusy(null);
+      updateActionButtons();
+      return { state: 'aborted', message: 'Force-stopped' };
+    }
     const result = send
       ? await window.api.sendCorrlinksInmate({
           inmateId: inmate.id,
@@ -2458,6 +2411,7 @@ async function startCorrlinksLogin(options = {}) {
   } finally {
     if (myGeneration === corrlinksOpGeneration || !corrlinksLoginBusy) {
       corrlinksLoginBusy = false;
+      setCorrPanelBusy(null);
       updateActionButtons();
     }
   }
@@ -3102,6 +3056,8 @@ async function verifyCorrlinksAccountsOnBoot({ force = false, mode = 'boot' } = 
 async function waitLoopGap(ms, { current, total, nextLabel }) {
   const endsAt = Date.now() + ms;
   let lastShown = -1;
+  // Keep CorrLinks webview visible — don't use the pane countdown overlay (it zeros bounds).
+  setLoopCountdownOverlay();
   while (Date.now() < endsAt) {
     if (loopAbort) {
       setLoopCountdownOverlay();
@@ -3110,10 +3066,10 @@ async function waitLoopGap(ms, { current, total, nextLabel }) {
     const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
     if (left !== lastShown) {
       lastShown = left;
-      setLoopCountdownOverlay({ seconds: left, nextLabel, current, total });
       const text = `Waiting ${left}s before next CorrLinks account · ${current}/${total} done · next: ${nextLabel}`;
       setLoopProgress(text);
       setStatusHint(text);
+      if (sessionNextRun) sessionNextRun.textContent = `${left}s`;
     }
     await sleep(Math.min(200, endsAt - Date.now()));
   }
@@ -3142,11 +3098,13 @@ async function startCorrlinksAccountLogin(group, options = {}) {
   }
   if (corrlinksLoginBusy) return null;
 
-  syncCorrPaneBounds();
   corrlinksLoginBusy = true;
   updateActionButtons({ canLogin: true });
   setStatusHint(`Logging in ${maskSensitive(group.email)}…`);
+  setCorrPanelBusy('Logging in…');
   setCorrlinksConnected(false, true);
+  // Loop path previously only synced bounds — never opened the native pane.
+  await revealCorrlinksEmbed().catch(() => null);
   log(
     `Account login ${maskSensitive(group.email)}` +
       (group.secondEmail ? ` (fallback ${maskSensitive(group.secondEmail)} if locked)` : '') +
@@ -3211,6 +3169,7 @@ async function startCorrlinksAccountLogin(group, options = {}) {
     return { state: 'error', message: error.message || String(error) };
   } finally {
     corrlinksLoginBusy = false;
+    setCorrPanelBusy(null);
     updateActionButtons();
   }
 }
@@ -3223,16 +3182,19 @@ async function startCorrlinksCompose(inmate, options = {}) {
   if (!inmate) return null;
   if (corrlinksLoginBusy) return null;
 
-  syncCorrPaneBounds();
   corrlinksLoginBusy = true;
   updateActionButtons({ canLogin: true });
   const template = buildTemplatePayload();
   if (template.mode === 'weekly' && !template.files?.length) {
+    corrlinksLoginBusy = false;
+    updateActionButtons();
     toast(`No ${weeklyLeague} weekly file loaded — pick Weekly update again`, 'error');
     return null;
   }
   const label = `${inmate.name || 'Inmate'} (${inmate.inmate_id || inmate.id})`;
   setStatusHint(`Compose: ${label}…`);
+  setCorrPanelBusy('Composing…');
+  await revealCorrlinksEmbed().catch(() => null);
   log(
     `Compose recipient ${label}` +
       (template.mode === 'weekly' ? ` · weekly ${template.league} · subject ${template.subject}` : '') +
@@ -3250,6 +3212,7 @@ async function startCorrlinksCompose(inmate, options = {}) {
     return { state: 'error', message: error.message || String(error) };
   } finally {
     corrlinksLoginBusy = false;
+    setCorrPanelBusy(null);
     updateActionButtons();
   }
 }
@@ -3453,7 +3416,7 @@ async function startInmateLoop() {
   // Verification done — open CorrLinks and start the regrouped compose plan.
   setLoopInitializingOverlay(null);
   setLoopCountdownOverlay();
-  syncCorrPaneBounds();
+  await revealCorrlinksEmbed().catch(() => null);
 
   log(
     `Phase 3 — one login per account, then compose ${composeRecipientCount} recipient(s) (no send)`,
@@ -3564,7 +3527,7 @@ async function startInmateLoop() {
             ` · Recipient ${r + 1}/${group.inmates.length} · ${recipLabel}`
         );
         log(`—— Recipient ${r + 1}/${group.inmates.length}: ${recipLabel} ——`, 'info');
-        selectInmate(inmate.id, { autoSend: false });
+        selectInmate(inmate.id);
         const status = await startCorrlinksCompose(inmate, { quietToast: true });
         if (!loopStillActive(myGeneration)) break;
         if (statusLooksGood(status)) okCount += 1;
@@ -3595,7 +3558,7 @@ async function startInmateLoop() {
   ].filter(Boolean);
   const accountSummaryText = accountBits.length ? ` · Accounts: ${accountBits.join(', ')}` : '';
   const title = wasAborted ? 'Loop stopped' : 'Loop done';
-  const summary = `${title} · ${okCount} ok · ${failCount} failed · ${recipientTotal} recipients${accountSummaryText} (not sent)`;
+  const summary = `${title} · ${okCount} ok · ${failCount} failed · ${recipientTotal} recipients${accountSummaryText}`;
   const level = failCount || wasAborted || viaSecondCount ? 'warn' : 'success';
   lastLoopResult = { okCount, failCount, recipientTotal, aborted: wasAborted, summary, level };
   setLoopProgress(title, {
@@ -3625,7 +3588,7 @@ function forceStopSingleCorrlinks() {
   // Keep busy until the panel is actually destroyed — clearing early lets a new
   // Send race the dying login and crash main with "Object has been destroyed".
   resetCorrEmbedReveal();
-  hideCorrEmbedNow();
+  hideCorrEmbedNow({ force: true });
   setCorrlinksConnected(false);
   setStatusHint('Force-stopped');
   log('Force-stop requested — aborting CorrLinks login', 'warn');
@@ -3636,7 +3599,7 @@ function forceStopSingleCorrlinks() {
     .catch(() => {})
     .finally(() => {
       resetCorrEmbedReveal();
-      hideCorrEmbedNow();
+      hideCorrEmbedNow({ force: true });
       corrlinksLoginBusy = false;
       updateActionButtons();
     });
@@ -4225,52 +4188,48 @@ async function runUpdateAction(preferredAction) {
   }
 }
 
+/** Remember embed was live before a modal forced it off-screen. */
+let modalPausedCorrReveal = false;
+
 function openModalDialog(dialog) {
   if (!dialog || typeof dialog.showModal !== 'function') return false;
-  hideCorrEmbedNow();
+  // Native WebContentsView paints above HTML and steals clicks — collapse it fully.
+  if (corrEmbedRevealed) modalPausedCorrReveal = true;
+  corrEmbedRevealed = false;
+  void window.api?.setCorrBounds?.({ x: 0, y: 0, width: 0, height: 0, force: true });
   if (!dialog.open) dialog.showModal();
+  // Keep re-asserting hide while open (status sync / ensureVisible can revive the view).
+  const keepHidden = () => {
+    if (!dialog.open) return;
+    void window.api?.setCorrBounds?.({ x: 0, y: 0, width: 0, height: 0, force: true });
+  };
+  keepHidden();
+  requestAnimationFrame(keepHidden);
+  setTimeout(keepHidden, 50);
+  setTimeout(keepHidden, 200);
+  if (!dialog.dataset.modalRevealWired) {
+    dialog.dataset.modalRevealWired = '1';
+    dialog.addEventListener('close', () => {
+      if (modalPausedCorrReveal || corrlinksLoginBusy || loopRunning) {
+        corrEmbedRevealed = true;
+        setCorrPlaceholderVisible(false);
+      }
+      modalPausedCorrReveal = false;
+      scheduleCorrPaneBounds();
+    });
+  }
   scheduleCorrPaneBounds();
   return true;
 }
 
-const closeConfirmDialog = document.getElementById('closeConfirmDialog');
-let closeConfirmResolver = null;
-
-function finishCloseConfirm(ok) {
-  const resolve = closeConfirmResolver;
-  closeConfirmResolver = null;
-  if (closeConfirmDialog?.open) closeConfirmDialog.close();
-  scheduleCorrPaneBounds();
-  if (typeof resolve === 'function') resolve(Boolean(ok));
-}
-
-/** Called from main-process window close / quit. */
-function confirmAppCloseFromUi() {
-  if (closeConfirmResolver) return Promise.resolve(false);
-  if (!closeConfirmDialog || typeof closeConfirmDialog.showModal !== 'function') {
-    return Promise.resolve(true);
-  }
-  return new Promise((resolve) => {
-    closeConfirmResolver = resolve;
-    openModalDialog(closeConfirmDialog);
-    queueMicrotask(() => {
-      document.getElementById('btnCloseConfirmCancel')?.focus();
-    });
-  });
-}
-
-window.__confirmAppClose = confirmAppCloseFromUi;
-
-/**
- * After init probe: ask whether to start the regrouped send loop.
- * CorrLinks stays hidden until the user confirms.
- * @returns {Promise<boolean>}
- */
 /**
  * SweetAlert-style completion popup after the send loop finishes.
  */
 function showLoopDoneAlert({ aborted = false, okCount = 0, failCount = 0, recipientTotal = 0, summary = '' } = {}) {
-  if (!loopDoneDialog || typeof loopDoneDialog.showModal !== 'function') return;
+  if (!loopDoneDialog || typeof loopDoneDialog.showModal !== 'function') {
+    toast(summary || (aborted ? 'Loop stopped' : 'Loop finished'), aborted || failCount ? 'warn' : 'success');
+    return;
+  }
 
   const level = aborted ? 'warn' : failCount > 0 && okCount === 0 ? 'error' : failCount > 0 ? 'warn' : 'success';
   loopDoneDialog.classList.toggle('is-warn', level === 'warn');
@@ -4280,12 +4239,22 @@ function showLoopDoneAlert({ aborted = false, okCount = 0, failCount = 0, recipi
     loopDoneIcon.textContent = level === 'success' ? '✓' : level === 'warn' ? '!' : '×';
   }
   if (loopDoneTitle) {
-    loopDoneTitle.textContent = aborted ? 'Loop stopped' : 'Loop already finished';
+    loopDoneTitle.textContent = aborted ? 'Loop stopped' : 'Loop completed';
   }
   if (loopDoneMessage) {
-    loopDoneMessage.textContent = aborted
-      ? 'The send loop was stopped before it finished.'
-      : 'The send loop has already completed.';
+    if (aborted) {
+      loopDoneMessage.textContent =
+        'The loop was stopped before all recipients were processed.';
+    } else if (failCount > 0 && okCount === 0) {
+      loopDoneMessage.textContent =
+        'The loop finished, but no recipients were completed successfully.';
+    } else if (failCount > 0) {
+      loopDoneMessage.textContent =
+        'The loop finished with some recipients incomplete.';
+    } else {
+      loopDoneMessage.textContent =
+        'All recipients in this loop were completed successfully.';
+    }
   }
   if (loopDoneSummary) {
     const counts =
@@ -4295,6 +4264,15 @@ function showLoopDoneAlert({ aborted = false, okCount = 0, failCount = 0, recipi
   }
 
   openModalDialog(loopDoneDialog);
+  // Ensure OK can dismiss even if a leftover native view intercepts the first frame.
+  const okBtn = document.getElementById('btnLoopDoneOk');
+  if (okBtn && !okBtn.dataset.wired) {
+    okBtn.dataset.wired = '1';
+    okBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      if (loopDoneDialog?.open) loopDoneDialog.close();
+    });
+  }
 }
 
 function openUpdatesDialog() {
@@ -4385,6 +4363,14 @@ function wireCorrlinksLiveStatus() {
     if (key === lastCorrStatusLogKey) return;
     lastCorrStatusLogKey = key;
 
+    // Keep the CorrLinks header off “Opening…” once real work starts.
+    if (corrEmbedRevealed || corrlinksLoginBusy) {
+      const short = String(status.message).replace(/\s+/g, ' ').trim().slice(0, 72);
+      if (short) setCorrPanelBusy(short);
+      // Re-assert pane size whenever CorrLinks reports progress.
+      syncCorrPaneBounds();
+    }
+
     // During verify overlay, mirror every CorrLinks step into the live one-liner + log.
     if (loopInitializingActive && verifyProbeLive) {
       pushVerifyProbeStep(status.message);
@@ -4393,8 +4379,11 @@ function wireCorrlinksLiveStatus() {
     }
 
     const interesting =
-      /send|sent|clicking|auto-send|part \d|failed|compose/i.test(status.message) ||
+      /send|sent|clicking|auto-send|part \d|failed|compose|login|opening|loading|filling|corrlinks/i.test(
+        status.message
+      ) ||
       status.state === 'sending' ||
+      status.state === 'loading' ||
       status.state === 'error';
     if (!interesting) return;
     const level =
@@ -4404,7 +4393,11 @@ function wireCorrlinksLiveStatus() {
           ? 'success'
           : 'info';
     log(status.message, level);
-    if (status.state === 'sending' || /send/i.test(status.message)) {
+    if (
+      status.state === 'sending' ||
+      status.state === 'loading' ||
+      /send|login|opening/i.test(status.message)
+    ) {
       setStatusHint(status.message);
     }
   });
@@ -4705,7 +4698,7 @@ inmateSearch.addEventListener('keydown', (event) => {
     const current = options[optionHighlight] || options[0];
     if (current) {
       event.preventDefault();
-      selectInmate(current.dataset.id, { autoSend: true });
+      selectInmate(current.dataset.id);
       closeInmateOptions();
     }
   } else if (event.key === 'Escape') {
@@ -4780,22 +4773,6 @@ btnStopBootVerify?.addEventListener('click', () => {
   stopBootVerify();
 });
 
-btnStatus.addEventListener('click', async () => {
-  try {
-    const status = await window.api.getCorrlinksStatus();
-    const loggedIn = /success|logged|compose|mailbox/i.test(`${status.state} ${status.message} ${status.url || ''}`);
-    setCorrlinksConnected(loggedIn, status.state === 'manual' || status.state === 'locked');
-    log(
-      `Status: ${status.state} — ${status.message}` +
-        (status.attempt ? ` [${status.attempt}]` : '') +
-        (status.url ? ` @ ${status.url}` : ''),
-      loggedIn ? 'success' : 'info'
-    );
-  } catch (error) {
-    log(error.message || String(error), 'error');
-  }
-});
-
 btnSend?.addEventListener('click', () => {
   if (loopRunning) {
     toast('Use Force stop / loop controls — Send is for single inmate only', 'warn');
@@ -4815,7 +4792,7 @@ function isLogDrawerOpen() {
 
 function setLogDrawerOpen(open) {
   if (!logDrawer) return;
-  if (open) hideCorrEmbedNow();
+  if (open) hideCorrEmbedNow({ force: true });
   logDrawer.hidden = !open;
   if (logBackdrop) logBackdrop.hidden = !open;
   if (btnOpenLog) btnOpenLog.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -4909,19 +4886,23 @@ function isCorrEmbedBlocked() {
   if (loginScreen && !loginScreen.hidden) return true;
   if (mainShell?.hidden) return true;
   if (loopInitializingActive || bootVerifyRunning) return true;
-  if (loopCountdownActive) return true;
+  // Loop countdown overlay must not blank a live loop session.
+  if (loopCountdownActive && !(loopRunning || corrEmbedRevealed || corrlinksLoginBusy)) return true;
   if (activeMainTab !== 'automate') return true;
-  if (document.body.classList.contains('log-open')) return true;
+  // Do NOT block on log-open — status log was zeroing the CorrLinks pane mid-send.
+  // Drawer overlap is handled by clipping in measureCorrPaneBounds.
   if (document.body.classList.contains('account-menu-open')) return true;
   if (accountDropdown && !accountDropdown.hidden) return true;
-  const dialogs = [updatesDialog, aboutDialog, shortcutsDialog, loopDoneDialog, closeConfirmDialog];
+  const dialogs = [updatesDialog, aboutDialog, shortcutsDialog, loopDoneDialog];
   if (dialogs.some((dialog) => dialog && dialog.open)) return true;
   return false;
 }
 
-function hideCorrEmbedNow() {
+function hideCorrEmbedNow({ force = false } = {}) {
   if (!window.api?.setCorrBounds) return;
-  window.api.setCorrBounds({ x: 0, y: 0, width: 0, height: 0 });
+  // During active send/login, ignore soft hides unless force (menu/dialog/logout).
+  if (!force && (corrEmbedRevealed || corrlinksLoginBusy)) return;
+  window.api.setCorrBounds({ x: 0, y: 0, width: 0, height: 0, force: Boolean(force) });
 }
 
 /**
@@ -4968,8 +4949,30 @@ function measureCorrPaneBounds() {
  * Hide the empty-state HTML and open the native CorrLinks view at real pane bounds.
  * Await this before login/send so the site is visible immediately.
  */
+/** Fallback when #corrPane reports a tiny rect (flex not settled yet). */
+function measureCorrColumnFallbackBounds() {
+  const card =
+    document.querySelector('.col-corrlinks .corr-card') ||
+    document.querySelector('.col-corrlinks') ||
+    document.getElementById('corrPane');
+  if (!card) return null;
+  const rect = card.getBoundingClientRect();
+  const footer = document.querySelector('.statusbar')?.getBoundingClientRect();
+  const bottom = Math.min(rect.bottom, footer?.top ?? rect.bottom);
+  const width = Math.max(0, rect.width);
+  const height = Math.max(0, bottom - rect.top);
+  if (width < 80 || height < 80) return null;
+  return {
+    x: Math.round(rect.left),
+    y: Math.round(rect.top),
+    width: Math.round(width),
+    height: Math.round(height),
+  };
+}
+
 async function revealCorrlinksEmbed() {
   closeInmateOptions();
+  setAccountMenuOpen(false);
   corrEmbedRevealed = true;
   setCorrPlaceholderVisible(false);
   setCorrPanelBusy('Opening CorrLinks…');
@@ -4978,22 +4981,47 @@ async function revealCorrlinksEmbed() {
   let bounds = measureCorrPaneBounds();
   if (!bounds) {
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    bounds = measureCorrPaneBounds();
+    bounds = measureCorrPaneBounds() || measureCorrColumnFallbackBounds();
+  }
+  if (!bounds) {
+    bounds = measureCorrColumnFallbackBounds();
   }
   try {
-    if (bounds && window.api?.setCorrBounds) {
-      await window.api.setCorrBounds(bounds);
+    // Always warm — main falls back to window geometry if bounds are missing.
+    if (window.api?.setCorrBounds && bounds) {
+      await window.api.setCorrBounds({ ...bounds, force: true });
     }
     if (window.api?.warmCorrlinksPanel) {
-      await window.api.warmCorrlinksPanel({ bounds: bounds || undefined });
+      const warm = await window.api.warmCorrlinksPanel({ bounds: bounds || undefined });
+      if (warm?.ok) {
+        setCorrPanelBusy('CorrLinks loading…');
+        if (warm.visible === false) {
+          log('CorrLinks warm used window fallback bounds', 'warn');
+        }
+        // Prefer measured bounds after warm; main already applied a fallback if needed.
+        const again = measureCorrPaneBounds() || measureCorrColumnFallbackBounds() || warm.bounds;
+        if (again && window.api?.setCorrBounds) {
+          await window.api.setCorrBounds({ ...again, force: true });
+          bounds = again;
+        }
+      } else {
+        log(warm?.message || 'Failed to open CorrLinks panel', 'error');
+      }
     }
-  } catch (_) {}
-  syncCorrPaneBounds();
+  } catch (error) {
+    log(error?.message || String(error), 'warn');
+  }
+  const live = measureCorrPaneBounds() || bounds;
+  if (live && window.api?.setCorrBounds) {
+    void window.api.setCorrBounds({ ...live, force: true });
+  }
   requestAnimationFrame(() => {
-    syncCorrPaneBounds();
-    setTimeout(syncCorrPaneBounds, 50);
+    const again = measureCorrPaneBounds() || bounds;
+    if (again && window.api?.setCorrBounds) {
+      void window.api.setCorrBounds({ ...again, force: true });
+    }
   });
-  return bounds;
+  return bounds || live || null;
 }
 
 function resetCorrEmbedReveal() {
@@ -5011,13 +5039,14 @@ function syncCorrPaneBounds() {
   if (!window.api?.setCorrBounds) return;
 
   if (isCorrEmbedBlocked()) {
-    hideCorrEmbedNow();
+    // Dialogs/menus must always win over the native view (otherwise OK is unclickable).
+    hideCorrEmbedNow({ force: true });
     return;
   }
 
-  const bounds = measureCorrPaneBounds();
+  const bounds = measureCorrPaneBounds() || (corrEmbedRevealed ? measureCorrColumnFallbackBounds() : null);
   if (!bounds) {
-    hideCorrEmbedNow();
+    if (!(corrEmbedRevealed || corrlinksLoginBusy)) hideCorrEmbedNow();
     return;
   }
   window.api.setCorrBounds(bounds);
@@ -5473,16 +5502,6 @@ function wireShellUi() {
     openModalDialog(aboutDialog);
   });
   btnShortcuts?.addEventListener('click', () => openModalDialog(shortcutsDialog));
-  document.getElementById('btnCloseConfirmCancel')?.addEventListener('click', () => {
-    finishCloseConfirm(false);
-  });
-  document.getElementById('btnCloseConfirmOk')?.addEventListener('click', () => {
-    finishCloseConfirm(true);
-  });
-  closeConfirmDialog?.addEventListener('cancel', (event) => {
-    event.preventDefault();
-    finishCloseConfirm(false);
-  });
   logSearch?.addEventListener('input', applyLogFilter);
 
   sdConn?.addEventListener('click', () => {

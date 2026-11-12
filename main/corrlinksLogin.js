@@ -21,20 +21,97 @@ function setHostWindow(win) {
   hostWindow = win && !win.isDestroyed() ? win : null;
 }
 
-function setCorrBounds(bounds = {}) {
-  corrBounds = {
+/** When true, ignore accidental 0×0 bound updates so Send/login cannot blank the pane. */
+let corrBoundsHold = false;
+/** When true, renderer forced the view off for a modal/menu — do not auto-revive. */
+let corrViewSuppressed = false;
+
+function setCorrBoundsHold(on) {
+  corrBoundsHold = Boolean(on);
+}
+
+function applyCorrViewBounds(next) {
+  if (!corrView || !hostWindow || hostWindow.isDestroyed()) return;
+  try {
+    corrView.setBounds(next);
+    if (typeof corrView.setVisible === 'function') {
+      corrView.setVisible(next.width >= 8 && next.height >= 8);
+    }
+    // Keep the embed above HTML chrome.
+    if (typeof hostWindow.contentView?.addChildView === 'function') {
+      hostWindow.contentView.addChildView(corrView);
+    }
+  } catch (_) {}
+}
+
+/** Last-resort bounds from the BrowserWindow so we never open at 0×0. */
+function windowFallbackCorrBounds() {
+  if (!hostWindow || hostWindow.isDestroyed()) {
+    return { x: 480, y: 64, width: 720, height: 640 };
+  }
+  let width = 900;
+  let height = 700;
+  try {
+    const content = hostWindow.getContentBounds?.() || hostWindow.getBounds();
+    width = Math.max(320, Number(content.width) || 900);
+    height = Math.max(240, Number(content.height) || 700);
+  } catch (_) {}
+  // Approximate the right CorrLinks column when the renderer cannot measure yet.
+  const x = Math.max(280, Math.round(width * 0.4));
+  const y = 58;
+  return {
+    x,
+    y,
+    width: Math.max(280, width - x - 12),
+    height: Math.max(220, height - y - 48),
+  };
+}
+
+function ensureVisibleCorrBounds(preferred = null) {
+  const cand = preferred && typeof preferred === 'object' ? preferred : null;
+  if (cand && Number(cand.width) >= 8 && Number(cand.height) >= 8) {
+    return setCorrBounds(cand, { force: true });
+  }
+  if (corrBounds.width >= 8 && corrBounds.height >= 8) {
+    applyCorrViewBounds(corrBounds);
+    corrBoundsHold = true;
+    return corrBounds;
+  }
+  // Modal/menu suppressed the pane — don't resurrect over HTML dialogs.
+  if (corrViewSuppressed) {
+    applyCorrViewBounds(corrBounds);
+    return corrBounds;
+  }
+  return setCorrBounds(windowFallbackCorrBounds(), { force: true });
+}
+
+function setCorrBounds(bounds = {}, { force = false } = {}) {
+  const next = {
     x: Math.max(0, Math.round(Number(bounds.x) || 0)),
     y: Math.max(0, Math.round(Number(bounds.y) || 0)),
     width: Math.max(0, Math.round(Number(bounds.width) || 0)),
     height: Math.max(0, Math.round(Number(bounds.height) || 0)),
   };
-  if (corrView && hostWindow && !hostWindow.isDestroyed()) {
-    try {
-      corrView.setBounds(corrBounds);
-      if (typeof corrView.setVisible === 'function') {
-        corrView.setVisible(corrBounds.width >= 8 && corrBounds.height >= 8);
-      }
-    } catch (_) {}
+  // Mid-send/login: a late sync with log-open / tiny rect was wiping a visible view.
+  if (
+    !force &&
+    corrBoundsHold &&
+    next.width < 8 &&
+    corrBounds.width >= 8 &&
+    corrBounds.height >= 8
+  ) {
+    applyCorrViewBounds(corrBounds);
+    return corrBounds;
+  }
+  corrBounds = next;
+  applyCorrViewBounds(corrBounds);
+  if (corrBounds.width >= 8 && corrBounds.height >= 8) {
+    corrBoundsHold = true;
+    corrViewSuppressed = false;
+  } else if (force) {
+    // Modal/menu hide must not leave hold stuck so ensureVisible cannot revive the view.
+    corrBoundsHold = false;
+    corrViewSuppressed = true;
   }
   return corrBounds;
 }
@@ -211,6 +288,7 @@ function forceCloseCorrWindow({ generation = null } = {}) {
   if (generation != null && generation !== corrPanelGeneration) {
     return getStatus();
   }
+  corrBoundsHold = false;
   if (corrView && hostWindow && !hostWindow.isDestroyed()) {
     try {
       hostWindow.contentView.removeChildView(corrView);
@@ -227,6 +305,7 @@ function forceCloseCorrWindow({ generation = null } = {}) {
   }
   corrView = null;
   corrAdapter = null;
+  corrBounds = { x: 0, y: 0, width: 0, height: 0 };
   setStatus({ state: 'closed', message: 'CorrLinks panel closed' });
 }
 
@@ -370,7 +449,8 @@ function getOrCreateWindow() {
     throw new Error('Control window is not ready for CorrLinks panel');
   }
   if (corrAdapter && getCorrWebContents()) {
-    setCorrBounds(corrBounds);
+    // Reuse must not stay at 0×0 after boot-verify / soft hides.
+    ensureVisibleCorrBounds(corrBounds);
     return corrAdapter;
   }
 
@@ -384,15 +464,20 @@ function getOrCreateWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: false,
     },
   });
+  try {
+    if (typeof corrView.setBackgroundColor === 'function') {
+      corrView.setBackgroundColor('#ffffff');
+    }
+  } catch (_) {}
   corrView.webContents.setUserAgent(
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   );
   hostWindow.contentView.addChildView(corrView);
-  // Renderer owns placement via setCorrBounds. Do not invent visible defaults —
-  // zero bounds mean intentionally hidden (e.g. loop initializing overlay).
-  setCorrBounds(corrBounds);
+  // Never create a 0×0 view — fall back to window geometry if renderer has not measured yet.
+  ensureVisibleCorrBounds(corrBounds);
 
   corrView.webContents.on('did-navigate', (_event, url) => {
     setStatus({ url });
@@ -503,8 +588,9 @@ async function inspectPage(win) {
   );
 }
 
-async function waitForLoginForm(win, timeoutMs = 60000) {
-  const budget = Math.max(5000, Number(timeoutMs) || 60000);
+async function waitForLoginForm(win, timeoutMs = 60000, { pollMs = 45 } = {}) {
+  const budget = Math.max(2000, Number(timeoutMs) || 60000);
+  const tick = Math.max(15, Number(pollMs) || 45);
   return withTimeoutFallback(
     (async () => {
       const started = Date.now();
@@ -554,7 +640,7 @@ async function waitForLoginForm(win, timeoutMs = 60000) {
         }
 
         ticks += 1;
-        await new Promise((r) => setTimeout(r, 45));
+        await new Promise((r) => setTimeout(r, tick));
       }
 
       const finalInfo = await inspectPage(win).catch(() => null);
@@ -854,7 +940,7 @@ async function fillAndSubmit(win, email, password) {
       const emailFocus = await focusLoginField(win, 'email');
       if (!emailFocus?.ok) {
         if (attempt < 2) {
-          await new Promise((r) => setTimeout(r, 60));
+          await new Promise((r) => setTimeout(r, 25));
           continue;
         }
         return missingFieldResult('email');
@@ -863,8 +949,8 @@ async function fillAndSubmit(win, email, password) {
 
       let passFocus = await focusLoginField(win, 'password');
       if (!passFocus?.ok) {
-        for (let wait = 0; wait < 4 && !passFocus?.ok; wait += 1) {
-          await new Promise((r) => setTimeout(r, 80));
+        for (let wait = 0; wait < 3 && !passFocus?.ok; wait += 1) {
+          await new Promise((r) => setTimeout(r, 30));
           passFocus = await focusLoginField(win, 'password');
         }
       }
@@ -925,10 +1011,9 @@ async function fillAndSubmit(win, email, password) {
 
   // Re-assert values one last time immediately before submit (validators were rejecting empty model).
   await syncEj2LoginFields(win, wantEmail, wantPassword);
-  await new Promise((r) => setTimeout(r, 20));
 
   await cdpClick(win, target.x, target.y);
-  await new Promise((r) => setTimeout(r, 30));
+  await new Promise((r) => setTimeout(r, 15));
 
   const stillLogin = await win.webContents.executeJavaScript(
     ` /\\/login/i.test(location.pathname || location.href) `,
@@ -1595,7 +1680,7 @@ async function forceLogoutExistingSession(win) {
     const msg = String(error?.message || error);
     if (!/ERR_ABORTED|-3/.test(msg)) throw error;
   }
-  await waitForCorrPage(win, { timeoutMs: 8000 }).catch(() => null);
+  await waitForCorrPage(win, { timeoutMs: 4500 }).catch(() => null);
 
   // 4) If interstitial still showing, clear again once.
   const again = await detectAlreadyLoggedIn(win).catch(() => null);
@@ -1605,20 +1690,20 @@ async function forceLogoutExistingSession(win) {
       message: `Still logged in${again.email ? ` as ${again.email}` : ''} — clearing session again…`,
     });
     await clickCorrlinksLogoutUi(win);
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 40));
     await clearCorrlinksSession(win);
     try {
       await win.loadURL(CORRLINKS.loginUrl);
     } catch (_) {}
-    await waitForCorrPage(win, { timeoutMs: 8000 }).catch(() => null);
+    await waitForCorrPage(win, { timeoutMs: 4500 }).catch(() => null);
   }
 
   return { ok: true };
 }
 
 async function loadLoginPage(win, { clearSession = false, timeoutMs = 25000, fast = false } = {}) {
-  const fallback = fast ? 9000 : 25000;
-  const floor = fast ? 5000 : 8000;
+  const fallback = fast ? 4500 : 25000;
+  const floor = fast ? 2500 : 8000;
   const navTimeout = Math.max(floor, Number(timeoutMs) || fallback);
   // Already on a usable login form — skip full navigation (big win on probes/select).
   if (getLiveWebContents(win)) {
@@ -1648,13 +1733,22 @@ async function loadLoginPage(win, { clearSession = false, timeoutMs = 25000, fas
       throw error;
     }
   }
+  // Fast Send path: return as soon as login inputs exist — don't wait for full page idle.
+  if (fast) {
+    const form = await waitForLoginForm(win, navTimeout, { pollMs: 20 });
+    if (form?.ok) {
+      return { reused: false, url: form.info?.url || win.webContents.getURL() || null };
+    }
+  }
   const ready = await waitForCorrPage(win, { timeoutMs: navTimeout });
   if (!ready?.ok && ready?.message && !ready.timedOut) {
     // Soft-continue on timeout; hard-fail on real navigation errors.
     throw new Error(ready.message);
   }
-  // Syncfusion/Angular need a short settle after did-finish-load.
-  await new Promise((r) => setTimeout(r, fast ? 15 : 60));
+  // Syncfusion/Angular need a short settle after did-finish-load (skip on fast).
+  if (!fast) {
+    await new Promise((r) => setTimeout(r, 60));
+  }
   return { reused: false, url: ready?.url || null };
 }
 
@@ -3103,11 +3197,11 @@ async function attemptLogin(
   if (!pageAlreadyLoaded) {
     await loadLoginPage(win, {
       clearSession: Boolean(clearSession),
-      timeoutMs: fast ? 9000 : 25000,
+      timeoutMs: fast ? 4500 : 25000,
       fast: Boolean(fast),
     });
   }
-  // Fast path: login form already on screen — fill immediately.
+  // Fast path: login form already on screen — fill immediately (no toast/dialog wait).
   let fillResult = null;
   const quick = await inspectPage(win).catch(() => null);
   if (quick?.hasLoginForm) {
@@ -3118,13 +3212,15 @@ async function attemptLogin(
       email,
       attempt: label,
     });
-    await clearAuthToasts(win).catch(() => {});
+    void clearAuthToasts(win).catch(() => {});
     fillResult = await fillAndSubmit(win, email, password);
-  } else {
+  } else if (!fast) {
     await clearAuthToasts(win).catch(() => {});
     await dismissValidationDialog(win, {
       waitMs: clearSession ? 40 : 60,
     }).catch(() => {});
+  } else {
+    void clearAuthToasts(win).catch(() => {});
   }
 
   // Reuse an existing session when it is already the target account (dashboard OR
@@ -3169,7 +3265,8 @@ async function attemptLogin(
   }
 
   async function ensureLoginFormReady(timeoutMs) {
-    let ready = await waitForLoginForm(win, timeoutMs);
+    const formOpts = fast ? { pollMs: 20 } : {};
+    let ready = await waitForLoginForm(win, timeoutMs, formOpts);
     if (ready.ok) return ready;
     const again = await detectAlreadyLoggedIn(win).catch(() => null);
     if (ready.alreadyLoggedIn || again?.already) {
@@ -3191,7 +3288,7 @@ async function attemptLogin(
         attempt: label,
       });
       await forceLogoutExistingSession(win);
-      ready = await waitForLoginForm(win, Math.min(timeoutMs, fast ? 9000 : 30000));
+      ready = await waitForLoginForm(win, Math.min(timeoutMs, fast ? 4500 : 30000), formOpts);
       const still = await detectAlreadyLoggedIn(win).catch(() => null);
       if (!ready.ok && still?.already) {
         const stillEmail = (still.email || '').toLowerCase();
@@ -3209,7 +3306,7 @@ async function attemptLogin(
   }
 
   if (!fillResult?.ok) {
-  const ready = await ensureLoginFormReady(fast ? 9000 : 45000);
+  const ready = await ensureLoginFormReady(fast ? 4500 : 45000);
   if (ready.reusedSession) {
     const who = ready.email || email;
     return {
@@ -3240,8 +3337,13 @@ async function attemptLogin(
     attempt: label,
   });
 
-  await clearAuthToasts(win);
-  await dismissValidationDialog(win).catch(() => {});
+  // Don't block credential fill on toast/dialog cleanup after Send.
+  if (fast) {
+    void clearAuthToasts(win).catch(() => {});
+  } else {
+    await clearAuthToasts(win);
+    await dismissValidationDialog(win).catch(() => {});
+  }
 
   fillResult = await fillAndSubmit(win, email, password);
   } // end !fillResult?.ok (form wait + fill)
@@ -3272,7 +3374,7 @@ async function attemptLogin(
       attempt: label,
     });
     await forceLogoutExistingSession(win);
-    const readyAfterLogout = await waitForLoginForm(win, fast ? 9000 : 30000);
+    const readyAfterLogout = await waitForLoginForm(win, fast ? 6000 : 30000);
     if (readyAfterLogout.alreadyLoggedIn || readyAfterLogout.reusedSession) {
       const who = readyAfterLogout.email || fillResult.email || email;
       const whoKey = String(who || '').toLowerCase();
@@ -3338,7 +3440,7 @@ async function attemptLogin(
     attempt: label,
   });
 
-  const result = await waitForLoginResult(win, fast ? 10000 : 45000);
+  const result = await waitForLoginResult(win, fast ? 8000 : 45000);
 
   if (result.ok) {
     return {
@@ -3556,6 +3658,7 @@ async function loginToCorrlinks({
   }
 
   const win = getOrCreateWindow();
+  ensureVisibleCorrBounds(corrBounds);
   win.show();
   win.focus();
 
@@ -3718,25 +3821,31 @@ async function warmCorrlinksPanel(options = {}) {
   if (!hostWindow || hostWindow.isDestroyed()) {
     return { ok: false, message: 'Control window is not ready' };
   }
-  if (options.bounds && typeof options.bounds === 'object') {
-    setCorrBounds(options.bounds);
-  }
+  ensureVisibleCorrBounds(options.bounds || null);
   const win = getOrCreateWindow();
-  if (options.bounds && typeof options.bounds === 'object') {
-    setCorrBounds(options.bounds);
-  }
+  ensureVisibleCorrBounds(options.bounds || null);
+  corrBoundsHold = true;
   win.show();
   win.focus();
   setStatus({
     state: 'loading',
     message: 'Opening CorrLinks…',
+    url: CORRLINKS.loginUrl,
   });
-  // Do not await — caller wants the pane visible ASAP.
-  void loadLoginPage(win, { clearSession: false, timeoutMs: 9000, fast: true }).catch(() => {});
+  // Fire-and-forget navigation — awaiting loadURL here doubled Send latency
+  // (loginInmate navigates again, especially on SECONDARY clear/reload).
+  void win.loadURL(CORRLINKS.loginUrl).catch((error) => {
+    const msg = String(error?.message || error);
+    if (!/ERR_ABORTED|-3/.test(msg)) {
+      console.warn('[corrlinks] warm loadURL:', msg);
+    }
+  });
+  applyCorrViewBounds(corrBounds);
   return {
     ok: true,
     bounds: { ...corrBounds },
     visible: corrBounds.width >= 8 && corrBounds.height >= 8,
+    hold: corrBoundsHold,
   };
 }
 
@@ -3767,10 +3876,14 @@ async function loginInmate(
   const password = useSecond ? second.password : primary.password;
   const secondEmail = useSecond ? null : second.email;
   const secondPassword = useSecond ? null : second.password;
-  const clearSession = Boolean(useSecond);
+  // Do not hard-clear just because via=second — reuse when already on that account.
+  // attemptLogin force-logouts only when switching away from a different session.
+  const clearSession = false;
 
   // Paint the embed first — downloads finish in the background before compose/send.
   const win = getOrCreateWindow();
+  ensureVisibleCorrBounds(corrBounds);
+  corrBoundsHold = true;
   win.show();
   win.focus();
   setStatus({
@@ -3785,12 +3898,13 @@ async function loginInmate(
     quiet: true,
   });
   try {
-    // Prefer the already-warming login page when session does not need a hard clear.
+    // Prefer the already-warming login page; short budget for single-send.
     await loadLoginPage(win, {
       clearSession,
-      timeoutMs: clearSession ? 10000 : 9000,
+      timeoutMs: 4500,
       fast: true,
     });
+    ensureVisibleCorrBounds(corrBounds);
   } catch (error) {
     const msg = String(error?.message || error || 'Failed to load CorrLinks login');
     if (/object has been destroyed|corrlinks panel was closed|force.?stop/i.test(msg)) {
@@ -3901,6 +4015,7 @@ async function composeForInmate(
 ) {
   if (!inmate) throw new Error('Inmate is required for compose');
   const win = getOrCreateWindow();
+  ensureVisibleCorrBounds(corrBounds);
   win.show();
   win.focus();
 
@@ -3985,6 +4100,7 @@ module.exports = {
   clearAndCloseCorrWindow,
   setHostWindow,
   setCorrBounds,
+  setCorrBoundsHold,
   selectComposeRecipient,
   clearComposeToField,
   fillComposeSubject,

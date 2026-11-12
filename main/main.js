@@ -48,10 +48,6 @@ let controlWindow = null;
 let uiPreferences = { theme: 'auto' };
 let cachedAccounts = [];
 const sportsData = new SportsDataClient();
-/** When true, window/app close proceeds without another confirm. */
-let allowAppClose = false;
-let closeConfirmOpen = false;
-
 // Force-stop can leave a timer/listener touching a destroyed WebContents. Swallow
 // that specific main-process crash so Electron does not show the fatal dialog.
 process.on('uncaughtException', (error) => {
@@ -70,44 +66,6 @@ process.on('unhandledRejection', (reason) => {
   }
   console.error('[main] unhandledRejection:', reason);
 });
-
-async function confirmAppClose() {
-  if (allowAppClose) return true;
-  if (closeConfirmOpen) return false;
-  if (!controlWindow || controlWindow.isDestroyed()) return true;
-  closeConfirmOpen = true;
-  try {
-    // Prefer the in-app styled dialog in the renderer.
-    const ok = await controlWindow.webContents.executeJavaScript(
-      `(async () => {
-        if (typeof window.__confirmAppClose === 'function') {
-          return Boolean(await window.__confirmAppClose());
-        }
-        return true;
-      })()`,
-      true
-    );
-    return Boolean(ok);
-  } catch (_) {
-    // Renderer not ready — fall back to native prompt.
-    try {
-      const { response } = await dialog.showMessageBox(controlWindow, {
-        type: 'question',
-        buttons: ['Cancel', 'Close'],
-        defaultId: 1,
-        cancelId: 0,
-        noLink: true,
-        title: 'Close Inmate Exchange Auto',
-        message: 'Close Inmate Exchange Auto?',
-      });
-      return response === 1;
-    } catch {
-      return true;
-    }
-  } finally {
-    closeConfirmOpen = false;
-  }
-}
 
 /** Resolve optional daily/weekly template overrides from renderer payload. */
 function resolveTemplateOptions(payload = {}, inmate = null) {
@@ -142,7 +100,6 @@ function resolveTemplateOptions(payload = {}, inmate = null) {
 }
 
 function createControlWindow() {
-  allowAppClose = false;
   controlWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -203,15 +160,6 @@ function createControlWindow() {
   controlWindow.on('unmaximize', relayout);
   controlWindow.on('enter-full-screen', relayout);
   controlWindow.on('leave-full-screen', relayout);
-  controlWindow.on('close', (event) => {
-    if (allowAppClose) return;
-    event.preventDefault();
-    confirmAppClose().then((ok) => {
-      if (!ok || !controlWindow || controlWindow.isDestroyed()) return;
-      allowAppClose = true;
-      controlWindow.close();
-    });
-  });
   controlWindow.on('closed', () => {
     forceCloseCorrWindow();
     setHostWindow(null);
@@ -582,7 +530,11 @@ function registerIpc() {
   });
 
   ipcMain.handle('corrlinks:status', async () => getStatus());
-  ipcMain.handle('corrlinks:setBounds', async (_event, bounds) => setCorrBounds(bounds || {}));
+  ipcMain.handle('corrlinks:setBounds', async (_event, payload = {}) => {
+    const force = Boolean(payload?.force);
+    const { force: _forceFlag, ...bounds } = payload || {};
+    return setCorrBounds(bounds, { force });
+  });
 
   ipcMain.handle('corrlinks:reload', async () => reloadCorrlinksPanel());
   ipcMain.handle('corrlinks:openExternal', async () => openCorrlinksExternal());
@@ -750,9 +702,7 @@ app.whenReady().then(() => {
   registerIpc();
   registerUpdateIpc({
     allowQuitForUpdate: () => {
-      // Restart-to-update must not show the normal close confirmation,
-      // and CorrLinks embeds must not keep the process alive.
-      allowAppClose = true;
+      // Tear down CorrLinks so quitAndInstall / replace-install can exit cleanly.
       try {
         forceCloseCorrWindow();
       } catch (_) {}
@@ -767,16 +717,6 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createControlWindow();
     }
-  });
-});
-
-app.on('before-quit', (event) => {
-  if (allowAppClose) return;
-  event.preventDefault();
-  confirmAppClose().then((ok) => {
-    if (!ok) return;
-    allowAppClose = true;
-    app.quit();
   });
 });
 
