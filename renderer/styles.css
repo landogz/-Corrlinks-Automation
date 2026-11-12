@@ -936,6 +936,17 @@ body.is-login .toast-host {
   font-weight: 600;
 }
 
+.loop-initializing-live {
+  margin: 6px 0 0;
+  max-width: 44ch;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--accent-hover);
+  font-weight: 500;
+  min-height: 1.35em;
+  word-break: break-word;
+}
+
 .loop-initializing-detail {
   margin: 0;
   color: var(--text-secondary);
@@ -1025,6 +1036,9 @@ body.is-login .toast-host {
 }
 .app-verifying-card .loop-initializing-detail {
   color: var(--text-secondary);
+}
+.app-verifying-card .loop-initializing-live {
+  color: var(--accent-hover);
 }
 button.app-verifying-stop,
 button.app-verifying-stop:hover:not(:disabled) {

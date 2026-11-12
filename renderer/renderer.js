@@ -118,6 +118,7 @@ const appVerifying = document.getElementById('appVerifying');
 const appVerifyingTitle = document.getElementById('appVerifyingTitle');
 const appVerifyingStatus = document.getElementById('appVerifyingStatus');
 const appVerifyingDetail = document.getElementById('appVerifyingDetail');
+const appVerifyingLive = document.getElementById('appVerifyingLive');
 const appVerifyingProgress = document.getElementById('appVerifyingProgress');
 const appVerifyingProgressBar = document.getElementById('appVerifyingProgressBar');
 const appVerifyingPercent = document.getElementById('appVerifyingPercent');
@@ -125,12 +126,16 @@ const btnStopBootVerify = document.getElementById('btnStopBootVerify');
 const loopInitializing = appVerifying;
 const loopInitializingStatus = appVerifyingStatus;
 const loopInitializingDetail = appVerifyingDetail;
+/** Live one-line probe progress under the verifying overlay. */
+let verifyProbeLive = null;
+let verifyProbeLiveTimer = null;
+let lastVerifyLiveLogKey = '';
 
 const VERIFY_COPY = {
   title: 'Preparing your workspace',
   status: 'Validating CorrLinks accounts',
   statusRetry: 'Retrying unavailable accounts',
-  statusPause: 'Waiting 10s before next login',
+  statusPause: 'Waiting before next login',
   defaultStatus: 'Validating CorrLinks accounts',
   manualTitle: 'Manual validation',
   manualStatus: 'Re-checking CorrLinks accounts',
@@ -697,7 +702,11 @@ function showLoginScreen() {
   if (logDrawer) logDrawer.hidden = true;
   document.body.classList.remove('log-open', 'account-menu-open');
   hideCorrEmbedNow();
-  Promise.resolve(window.api?.forceStopCorrlinks?.()).catch(() => {});
+  // Never fire-and-forget forceStop while a probe/send/loop is running — a late
+  // clearAndClose was destroying the new Account-1 panel and freezing verify at 13%.
+  if (!bootVerifyRunning && !loopRunning && !corrlinksLoginBusy) {
+    Promise.resolve(window.api?.forceStopCorrlinks?.()).catch(() => {});
+  }
   scheduleCorrPaneBounds();
 }
 
@@ -2223,9 +2232,9 @@ async function startCorrlinksSend(options = {}) {
 }
 
 /** Gap between live account probes during initializing (skipped for cache hits). */
-const LOOP_GAP_MS = 10_000;
+const LOOP_GAP_MS = 2_000;
 /** Rest before retrying a skipped/failed CorrLinks login, and before compose re-login. */
-const LOOP_RELOGIN_REST_MS = 10_000;
+const LOOP_RELOGIN_REST_MS = 3_000;
 
 function buildLoopQueue() {
   return groupInmatesByCorrlinksAccount();
@@ -2327,6 +2336,69 @@ function setAppVerifyingProgress({ current = null, total = null, percent = null 
   if (appVerifyingPercent) appVerifyingPercent.textContent = `${value}%`;
 }
 
+function clearVerifyProbeLive() {
+  if (verifyProbeLiveTimer) {
+    clearInterval(verifyProbeLiveTimer);
+    verifyProbeLiveTimer = null;
+  }
+  verifyProbeLive = null;
+  lastVerifyLiveLogKey = '';
+  if (appVerifyingLive) appVerifyingLive.textContent = '';
+}
+
+function renderVerifyProbeLive(extraStep = null) {
+  if (!verifyProbeLive || !appVerifyingLive) return;
+  const elapsedSec = Math.max(0, Math.round((Date.now() - verifyProbeLive.startedAt) / 1000));
+  const step = String(extraStep || verifyProbeLive.step || 'Working…').replace(/\s+/g, ' ').trim();
+  // Keep one compact monitor row under Account N of M.
+  const line = `${step} · ${elapsedSec}s`;
+  appVerifyingLive.textContent = line;
+  if (loopInitializingDetail && verifyProbeLive.indexLabel) {
+    loopInitializingDetail.textContent = `${verifyProbeLive.indexLabel} · ${verifyProbeLive.accountLabel}`;
+  }
+}
+
+function setVerifyProbeLive(ctx = null) {
+  clearVerifyProbeLive();
+  if (!ctx) return;
+  verifyProbeLive = {
+    indexLabel: ctx.indexLabel || '',
+    accountLabel: ctx.accountLabel || '',
+    statusLabel: ctx.statusLabel || '',
+    current: ctx.current ?? null,
+    total: ctx.total ?? null,
+    step: ctx.step || 'Starting login…',
+    startedAt: Date.now(),
+  };
+  renderVerifyProbeLive(verifyProbeLive.step);
+  verifyProbeLiveTimer = setInterval(() => {
+    if (!verifyingSessionActive() || !verifyProbeLive) {
+      clearVerifyProbeLive();
+      return;
+    }
+    renderVerifyProbeLive();
+  }, 1000);
+}
+
+function pushVerifyProbeStep(message, { logLine = true } = {}) {
+  if (!message || !verifyProbeLive) return;
+  const step = String(message).replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (!step) return;
+  verifyProbeLive.step = step;
+  renderVerifyProbeLive(step);
+  if (!logLine) return;
+  const key = `${verifyProbeLive.indexLabel}|${step}`;
+  if (key === lastVerifyLiveLogKey) return;
+  lastVerifyLiveLogKey = key;
+  log(
+    `${verifyProbeLive.indexLabel || 'Probe'} · ${verifyProbeLive.accountLabel || ''} · ${step}`.replace(
+      /\s+·\s+$/,
+      ''
+    ),
+    'info'
+  );
+}
+
 function setLoopInitializingOverlay(opts = null) {
   if (!loopInitializing) return;
   if (!opts || opts.active === false) {
@@ -2336,6 +2408,7 @@ function setLoopInitializingOverlay(opts = null) {
     if (appVerifyingTitle) appVerifyingTitle.textContent = VERIFY_COPY.title;
     if (loopInitializingStatus) loopInitializingStatus.textContent = VERIFY_COPY.defaultStatus;
     if (loopInitializingDetail) loopInitializingDetail.textContent = '';
+    clearVerifyProbeLive();
     setAppVerifyingProgress({ percent: 0 });
     syncCorrPaneBounds();
     return;
@@ -2345,6 +2418,7 @@ function setLoopInitializingOverlay(opts = null) {
     loopInitializingActive = false;
     loopInitializing.hidden = true;
     loopInitializing.setAttribute('aria-busy', 'false');
+    clearVerifyProbeLive();
     syncCorrPaneBounds();
     return;
   }
@@ -2361,6 +2435,10 @@ function setLoopInitializingOverlay(opts = null) {
   }
   if (loopInitializingDetail) {
     loopInitializingDetail.textContent = opts.detail || '';
+  }
+  if (opts.live != null) {
+    if (opts.live) pushVerifyProbeStep(opts.live, { logLine: Boolean(opts.logLive) });
+    else if (appVerifyingLive) appVerifyingLive.textContent = '';
   }
   if (opts.current != null || opts.total != null || opts.percent != null) {
     setAppVerifyingProgress({
@@ -2468,10 +2546,18 @@ async function verifyAllCorrlinksAccounts({
     const accountLabel = maskSensitive(account.email);
     const roleTag = accountRoleLabel(account);
     const key = emailLoopKey(account.email);
+    setVerifyProbeLive({
+      indexLabel,
+      accountLabel,
+      statusLabel,
+      current,
+      total,
+      step: 'Starting CorrLinks login…',
+    });
     setLoopInitializingOverlay({
       active: true,
       status: statusLabel,
-      detail: indexLabel,
+      detail: `${indexLabel} · ${accountLabel}`,
       current,
       total,
     });
@@ -2485,15 +2571,45 @@ async function verifyAllCorrlinksAccounts({
       log(`  SECONDARY for: ${account.secondFor.join('; ')}`, 'info');
     }
 
-    let status = await startCorrlinksAccountLogin(
-      {
-        email: account.email,
-        password: account.password,
-        secondEmail: null,
-        secondPassword: null,
-      },
-      { quietToast: true }
-    );
+    const PROBE_DEADLINE_MS = 90_000;
+    async function loginWithDeadline() {
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+      }, PROBE_DEADLINE_MS);
+      try {
+        const status = await Promise.race([
+          startCorrlinksAccountLogin(
+            {
+              email: account.email,
+              password: account.password,
+              secondEmail: null,
+              secondPassword: null,
+            },
+            { quietToast: true }
+          ),
+          new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  state: 'timeout',
+                  message: `Probe timed out after ${PROBE_DEADLINE_MS / 1000}s`,
+                }),
+              PROBE_DEADLINE_MS
+            )
+          ),
+        ]);
+        if (timedOut || status?.state === 'timeout') {
+          pushVerifyProbeStep('Timed out — resetting panel…');
+          await forceResetCorrlinksPanel();
+        }
+        return status;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    let status = await loginWithDeadline();
     // Electron "Script failed to execute" is infra noise — reset panel and retry once.
     if (
       isActive() &&
@@ -2502,31 +2618,30 @@ async function verifyAllCorrlinksAccounts({
       /script failed to execute|object has been destroyed/i.test(String(status.message || ''))
     ) {
       log(`Probe infra glitch · ${accountLabel} — resetting panel and retrying once`, 'warn');
+      pushVerifyProbeStep('Infra glitch — retrying once…');
       await forceResetCorrlinksPanel();
-      if (!isActive()) return false;
-      status = await startCorrlinksAccountLogin(
-        {
-          email: account.email,
-          password: account.password,
-          secondEmail: null,
-          secondPassword: null,
-        },
-        { quietToast: true }
-      );
+      if (!isActive()) {
+        clearVerifyProbeLive();
+        return false;
+      }
+      status = await loginWithDeadline();
     }
-    if (!isActive()) return false;
-    setLoopInitializingOverlay({
-      active: true,
-      status: statusLabel,
-      detail: indexLabel,
-      current,
-      total,
-    });
-    hideCorrEmbedNow();
+    if (!isActive()) {
+      clearVerifyProbeLive();
+      return false;
+    }
 
     probeByEmail.set(key, status || { state: 'error', message: 'No status' });
     const usable = probeAccountUsable(status);
     if (usable) rememberVerifiedAccount(account.email, status);
+    pushVerifyProbeStep(
+      usable
+        ? status.state === 'locked'
+          ? 'Locked but session usable'
+          : 'Probe OK'
+        : `Failed${status?.message ? `: ${status.message}` : ''}`,
+      { logLine: false }
+    );
     log(
       usable
         ? `Probe OK · ${accountLabel} [${roleTag}]` +
@@ -2538,6 +2653,7 @@ async function verifyAllCorrlinksAccounts({
     );
 
     await forceResetCorrlinksPanel();
+    clearVerifyProbeLive();
     if (!isActive()) return usable;
     setLoopInitializingOverlay({
       active: true,
@@ -2920,8 +3036,8 @@ async function forceResetCorrlinksPanel() {
   }
   setCorrlinksConnected(false);
   hideCorrEmbedNow();
-  // Let Electron finish tearing down WebContents before the next login recreates it.
-  await sleep(400);
+  // Brief settle so Electron can tear down WebContents before the next probe.
+  await sleep(150);
 }
 
 function loopStillActive(generation) {
@@ -4022,6 +4138,14 @@ function wireCorrlinksLiveStatus() {
     const key = `${status.state || ''}|${status.message}`;
     if (key === lastCorrStatusLogKey) return;
     lastCorrStatusLogKey = key;
+
+    // During verify overlay, mirror every CorrLinks step into the live one-liner + log.
+    if (loopInitializingActive && verifyProbeLive) {
+      pushVerifyProbeStep(status.message);
+      setStatusHint(status.message);
+      return;
+    }
+
     const interesting =
       /send|sent|clicking|auto-send|part \d|failed|compose/i.test(status.message) ||
       status.state === 'sending' ||

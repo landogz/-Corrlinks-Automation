@@ -7,6 +7,8 @@ let hostWindow = null;
 let corrView = null;
 let corrAdapter = null;
 let corrBounds = { x: 0, y: 0, width: 0, height: 0 };
+/** Bumped whenever a CorrLinks panel is created — stale force-stops must not kill a newer probe. */
+let corrPanelGeneration = 0;
 let lastStatus = {
   state: 'idle',
   message: 'Not started',
@@ -160,42 +162,55 @@ function setStatus(partial) {
   return getStatus();
 }
 
-async function clearDefaultCorrlinksStorage() {
+async function clearSessionCorrlinksData(ses) {
+  if (!ses) return;
   try {
-    const { session } = require('electron');
-    const ses =
-      (corrView?.webContents && !corrView.webContents.isDestroyed() && corrView.webContents.session) ||
-      session.defaultSession;
-    try {
-      const cookies = await ses.cookies.get({ domain: 'corrlinks.com' });
-      for (const cookie of cookies) {
+    const cookies = await ses.cookies.get({ domain: 'corrlinks.com' }).catch(() => []);
+    await Promise.all(
+      (cookies || []).map(async (cookie) => {
         const domain = String(cookie.domain || '').replace(/^\./, '');
         const secure = cookie.secure ? 'https' : 'http';
         const url = `${secure}://${domain}${cookie.path || '/'}`;
         try {
           await ses.cookies.remove(url, cookie.name);
         } catch (_) {}
-      }
-    } catch (_) {}
-    for (const origin of [
+      })
+    );
+  } catch (_) {}
+  await Promise.all(
+    [
       'https://www.corrlinks.com',
       'https://corrlinks.com',
       'http://www.corrlinks.com',
       'http://corrlinks.com',
-    ]) {
-      try {
-        await ses.clearStorageData({
+    ].map((origin) =>
+      ses
+        .clearStorageData({
           origin,
           storages: ['cookies', 'localstorage', 'sessionstorage', 'indexdb', 'cachestorage', 'serviceworkers'],
-        });
-      } catch (_) {}
-    }
+        })
+        .catch(() => {})
+    )
+  );
+}
+
+async function clearDefaultCorrlinksStorage() {
+  try {
+    const { session } = require('electron');
+    const ses =
+      (corrView?.webContents && !corrView.webContents.isDestroyed() && corrView.webContents.session) ||
+      session.defaultSession;
+    await clearSessionCorrlinksData(ses);
   } catch (_) {
     // best-effort
   }
 }
 
-function forceCloseCorrWindow() {
+function forceCloseCorrWindow({ generation = null } = {}) {
+  // Stale force-stop from login-screen setup must not destroy a newer probe panel.
+  if (generation != null && generation !== corrPanelGeneration) {
+    return getStatus();
+  }
   if (corrView && hostWindow && !hostWindow.isDestroyed()) {
     try {
       hostWindow.contentView.removeChildView(corrView);
@@ -217,8 +232,9 @@ function forceCloseCorrWindow() {
 
 /** Clear CorrLinks cookies/storage, then destroy the panel. Use between probes. */
 async function clearAndCloseCorrWindow() {
+  const generation = corrPanelGeneration;
   await clearDefaultCorrlinksStorage();
-  forceCloseCorrWindow();
+  forceCloseCorrWindow({ generation });
   return getStatus();
 }
 
@@ -321,18 +337,19 @@ async function waitForCorrPage(win, { timeoutMs = 45000 } = {}) {
 }
 
 /** executeJavaScript with retries for mid-navigation / recreated panel races. */
-async function runPageScript(win, script, { retries = 4, delayMs = 250 } = {}) {
+async function runPageScript(win, script, { retries = 3, delayMs = 200, timeoutMs = 8000 } = {}) {
   let lastErr = null;
   for (let attempt = 1; attempt <= retries; attempt += 1) {
     const wc = getLiveWebContents(win);
     if (!wc) throw new Error('CorrLinks panel was closed');
     try {
-      return await wc.executeJavaScript(script, true);
+      // Hard per-attempt budget — hung executeJavaScript used to freeze Account 1 probes forever.
+      return await withTimeout(wc.executeJavaScript(script, true), timeoutMs, 'page script timeout');
     } catch (error) {
       lastErr = error;
       const msg = String(error?.message || error);
       const retryable =
-        /script failed to execute|object has been destroyed|frame was unloaded|navigation|rendering|ERR_ABORTED|-3/i.test(
+        /script failed to execute|object has been destroyed|frame was unloaded|navigation|rendering|ERR_ABORTED|-3|page script timeout|timeout/i.test(
           msg
         );
       if (!retryable || attempt >= retries) {
@@ -360,6 +377,7 @@ function getOrCreateWindow() {
   // Drop any stale adapter pointing at a destroyed view.
   corrAdapter = null;
   corrView = null;
+  corrPanelGeneration += 1;
 
   corrView = new WebContentsView({
     webPreferences: {
@@ -485,79 +503,92 @@ async function inspectPage(win) {
   );
 }
 
-async function waitForLoginForm(win, timeoutMs = 90000) {
-  const started = Date.now();
-  let sawCloudflare = false;
-  let ticks = 0;
+async function waitForLoginForm(win, timeoutMs = 60000) {
+  const budget = Math.max(5000, Number(timeoutMs) || 60000);
+  return withTimeoutFallback(
+    (async () => {
+      const started = Date.now();
+      let sawCloudflare = false;
+      let ticks = 0;
 
-  while (Date.now() - started < timeoutMs) {
-    try {
-      // Hot path: inspect only. Full detectAlreadyLoggedIn was doubling every poll
-      // and could stall up to 12s per tick when executeJavaScript raced navigation.
-      const info = await inspectPage(win);
-      if (info.alreadyLoggedIn && !info.hasLoginForm) {
-        // Confirm with a single bounded detect for the email string.
-        const existing =
-          ticks === 0 || ticks % 8 === 0
-            ? await detectAlreadyLoggedIn(win).catch(() => null)
-            : null;
+      while (Date.now() - started < budget) {
+        try {
+          // Hot path: inspect only. Full detectAlreadyLoggedIn was doubling every poll.
+          const info = await inspectPage(win);
+          if (info.alreadyLoggedIn && !info.hasLoginForm) {
+            const existing =
+              ticks === 0 || ticks % 8 === 0
+                ? await detectAlreadyLoggedIn(win).catch(() => null)
+                : null;
+            return {
+              ok: false,
+              alreadyLoggedIn: true,
+              email: existing?.email || null,
+              info: existing || info,
+              message: `Already logged in${existing?.email ? ` as ${existing.email}` : ''} — need force logout`,
+            };
+          }
+          setStatus({
+            url: info.url,
+            message: info.isCloudflare
+              ? 'Waiting for Cloudflare / bot check…'
+              : info.hasLoginForm
+                ? 'Login form detected'
+                : `Waiting for login form… (${info.title || 'loading'})`,
+          });
+
+          if (info.hasLoginForm) {
+            return { ok: true, info };
+          }
+
+          if (info.isCloudflare || info.hasCaptcha) {
+            sawCloudflare = true;
+            setStatus({
+              state: 'manual',
+              message: 'CorrLinks Cloudflare/CAPTCHA challenge — complete it in the window if prompted',
+              url: info.url,
+            });
+          }
+        } catch (_) {
+          // ignore mid-navigation
+        }
+
+        ticks += 1;
+        await new Promise((r) => setTimeout(r, 80));
+      }
+
+      const finalInfo = await inspectPage(win).catch(() => null);
+      const leftover = await detectAlreadyLoggedIn(win).catch(() => null);
+      if (
+        (leftover?.already && !leftover?.hasLoginFields) ||
+        (finalInfo?.alreadyLoggedIn && !finalInfo?.hasLoginForm)
+      ) {
+        const who = leftover?.email || null;
         return {
           ok: false,
           alreadyLoggedIn: true,
-          email: existing?.email || null,
-          info: existing || info,
-          message: `Already logged in${existing?.email ? ` as ${existing.email}` : ''} — need force logout`,
+          email: who,
+          info: leftover || finalInfo,
+          message: `Already logged in${who ? ` as ${who}` : ''} — need force logout`,
         };
       }
-      setStatus({
-        url: info.url,
-        message: info.isCloudflare
-          ? 'Waiting for Cloudflare / bot check…'
-          : info.hasLoginForm
-            ? 'Login form detected'
-            : `Waiting for login form… (${info.title || 'loading'})`,
-      });
-
-      if (info.hasLoginForm) {
-        return { ok: true, info };
-      }
-
-      if (info.isCloudflare || info.hasCaptcha) {
-        sawCloudflare = true;
-        setStatus({
-          state: 'manual',
-          message: 'CorrLinks Cloudflare/CAPTCHA challenge — complete it in the window if prompted',
-          url: info.url,
-        });
-      }
-    } catch (_) {
-      // ignore mid-navigation
-    }
-
-    ticks += 1;
-    await new Promise((r) => setTimeout(r, 80));
-  }
-
-  const finalInfo = await inspectPage(win).catch(() => null);
-  const leftover = await detectAlreadyLoggedIn(win).catch(() => null);
-  if ((leftover?.already && !leftover?.hasLoginFields) || (finalInfo?.alreadyLoggedIn && !finalInfo?.hasLoginForm)) {
-    const who = leftover?.email || null;
-    return {
+      return {
+        ok: false,
+        pendingManual: sawCloudflare,
+        info: finalInfo,
+        message: sawCloudflare
+          ? 'Timed out while Cloudflare/CAPTCHA was showing — complete it manually, then retry login'
+          : 'Timed out waiting for CorrLinks login form',
+      };
+    })(),
+    budget + 2500,
+    {
       ok: false,
-      alreadyLoggedIn: true,
-      email: who,
-      info: leftover || finalInfo,
-      message: `Already logged in${who ? ` as ${who}` : ''} — need force logout`,
-    };
-  }
-  return {
-    ok: false,
-    pendingManual: sawCloudflare,
-    info: finalInfo,
-    message: sawCloudflare
-      ? 'Timed out while Cloudflare/CAPTCHA was showing — complete it manually, then retry login'
-      : 'Timed out waiting for CorrLinks login form',
-  };
+      pendingManual: false,
+      info: null,
+      message: 'Timed out waiting for CorrLinks login form',
+    }
+  );
 }
 
 function clickAt(win, x, y) {
@@ -1277,108 +1308,109 @@ async function waitForComposeBodyReady(win, expectedText, timeoutMs = 6000) {
 }
 
 async function waitForLoginResult(win, timeoutMs = 45000) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    const url = win.webContents.getURL();
-    setStatus({ url });
-
-    const leftLogin = url && !CORRLINKS.loginPathPattern.test(url);
-    if (leftLogin) {
-      // Dashboard can still show "Account locked" Validation Error — dismiss it.
-      const settled = await settlePostLogin(win);
-      if (settled.lockMessage) {
-        return {
-          ok: false,
-          locked: true,
-          loggedIn: true,
-          url,
-          message: settled.lockMessage,
-          dialogDismissed: settled.dismiss?.dismissed === true,
-        };
-      }
-      return {
-        ok: true,
-        url,
-        message: 'Navigated away from login page',
-        dialogDismissed: settled.dismiss?.dismissed === true,
-      };
+  const budget = Math.max(5000, Number(timeoutMs) || 45000);
+  const safeUrl = () => {
+    try {
+      return getLiveWebContents(win)?.getURL?.() || null;
+    } catch (_) {
+      return null;
     }
+  };
+  return withTimeoutFallback(
+    (async () => {
+      const started = Date.now();
+      while (Date.now() - started < budget) {
+        const url = safeUrl();
+        setStatus({ url });
 
-    const pageSignal = await inspectPage(win).catch(() => null);
-    if (pageSignal?.hasCaptcha || pageSignal?.hasMfa || pageSignal?.isCloudflare) {
+        const leftLogin = url && !CORRLINKS.loginPathPattern.test(url);
+        if (leftLogin) {
+          // Dashboard can still show "Account locked" Validation Error — dismiss it.
+          const settled = await settlePostLogin(win);
+          if (settled.lockMessage) {
+            return {
+              ok: false,
+              locked: true,
+              loggedIn: true,
+              url,
+              message: settled.lockMessage,
+              dialogDismissed: settled.dismiss?.dismissed === true,
+            };
+          }
+          return {
+            ok: true,
+            url,
+            message: 'Navigated away from login page',
+            dialogDismissed: settled.dismiss?.dismissed === true,
+          };
+        }
+
+        const pageSignal = await inspectPage(win).catch(() => null);
+        if (pageSignal?.hasCaptcha || pageSignal?.hasMfa || pageSignal?.isCloudflare) {
+          return {
+            ok: false,
+            pendingManual: true,
+            url,
+            message: pageSignal.hasMfa
+              ? 'CorrLinks showed MFA/verification — complete it in the window'
+              : 'CorrLinks showed a bot/CAPTCHA challenge — complete it in the window',
+            signal: pageSignal,
+          };
+        }
+
+        // Visible lock dialog only (body-wide scans caused cross-account false positives).
+        const visibleLock = await readLockDialogMessage(win);
+        if (visibleLock) {
+          await dismissValidationDialog(win);
+          return { ok: false, locked: true, url, message: visibleLock };
+        }
+
+        // Toast/alert messages are OK here because we clear toasts before each login submit.
+        const messages = await readAuthFeedback(win).catch(() => []);
+        for (const msg of messages) {
+          if (classifyAuthMessage(msg) === 'locked') {
+            await dismissValidationDialog(win);
+            return { ok: false, locked: true, url, message: msg };
+          }
+        }
+        for (const msg of messages) {
+          if (classifyAuthMessage(msg) === 'rejected') {
+            return { ok: false, locked: false, url, message: msg };
+          }
+        }
+
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
       return {
         ok: false,
-        pendingManual: true,
-        url,
-        message: pageSignal.hasMfa
-          ? 'CorrLinks showed MFA/verification — complete it in the window'
-          : 'CorrLinks showed a bot/CAPTCHA challenge — complete it in the window',
-        signal: pageSignal,
+        url: safeUrl(),
+        message: 'Timed out waiting for CorrLinks login navigation (window left open for manual check)',
       };
+    })(),
+    budget + 2500,
+    {
+      ok: false,
+      url: safeUrl(),
+      message: 'Timed out waiting for CorrLinks login navigation (window left open for manual check)',
     }
-
-    // Visible lock dialog only (body-wide scans caused cross-account false positives).
-    const visibleLock = await readLockDialogMessage(win);
-    if (visibleLock) {
-      await dismissValidationDialog(win);
-      return { ok: false, locked: true, url, message: visibleLock };
-    }
-
-    // Toast/alert messages are OK here because we clear toasts before each login submit.
-    const messages = await readAuthFeedback(win).catch(() => []);
-    for (const msg of messages) {
-      if (classifyAuthMessage(msg) === 'locked') {
-        await dismissValidationDialog(win);
-        return { ok: false, locked: true, url, message: msg };
-      }
-    }
-    for (const msg of messages) {
-      if (classifyAuthMessage(msg) === 'rejected') {
-        return { ok: false, locked: false, url, message: msg };
-      }
-    }
-
-    await new Promise((r) => setTimeout(r, 50));
-  }
-
-  return {
-    ok: false,
-    url: win.webContents.getURL(),
-    message: 'Timed out waiting for CorrLinks login navigation (window left open for manual check)',
-  };
+  );
 }
 
 async function clearCorrlinksSession(win) {
   try {
-    const ses = win.webContents.session;
-    // Drop auth cookies for the whole corrlinks.com site (www + apex + subdomains).
-    try {
-      const cookies = await ses.cookies.get({ domain: 'corrlinks.com' });
-      for (const cookie of cookies) {
-        const domain = String(cookie.domain || '').replace(/^\./, '');
-        const secure = cookie.secure ? 'https' : 'http';
-        const url = `${secure}://${domain}${cookie.path || '/'}`;
-        try {
-          await ses.cookies.remove(url, cookie.name);
-        } catch (_) {}
-      }
-    } catch (_) {}
-
-    for (const origin of [
-      'https://www.corrlinks.com',
-      'https://corrlinks.com',
-      'http://www.corrlinks.com',
-      'http://corrlinks.com',
-    ]) {
-      try {
-        await ses.clearStorageData({
-          origin,
-          storages: ['cookies', 'localstorage', 'sessionstorage', 'indexdb', 'cachestorage', 'serviceworkers'],
-        });
-      } catch (_) {}
-    }
+    await clearSessionCorrlinksData(win.webContents.session);
   } catch (_) {
     // best-effort
+  }
+}
+
+async function corrlinksHasCookies(ses) {
+  try {
+    const cookies = await ses.cookies.get({ domain: 'corrlinks.com' });
+    return Array.isArray(cookies) && cookies.length > 0;
+  } catch (_) {
+    return false;
   }
 }
 
@@ -1390,6 +1422,19 @@ function withTimeout(promise, ms, label = 'timeout') {
     }),
     new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error(label)), ms);
+    }),
+  ]);
+}
+
+/** Like withTimeout but resolves `fallback` instead of rejecting when the budget expires. */
+function withTimeoutFallback(promise, ms, fallback) {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise).finally(() => {
+      if (timer) clearTimeout(timer);
+    }),
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(fallback), ms);
     }),
   ]);
 }
@@ -1571,21 +1616,26 @@ async function forceLogoutExistingSession(win) {
   return { ok: true };
 }
 
-async function loadLoginPage(win, { clearSession = false } = {}) {
-  // Already on a usable login form — skip full navigation (big win on single-select).
+async function loadLoginPage(win, { clearSession = false, timeoutMs = 25000, fast = false } = {}) {
+  const navTimeout = Math.max(8000, Number(timeoutMs) || (fast ? 12000 : 25000));
+  // Already on a usable login form — skip full navigation (big win on probes/select).
   if (getLiveWebContents(win)) {
     const info = await inspectPage(win).catch(() => null);
     if (info?.hasLoginForm && !info?.alreadyLoggedIn) {
       if (clearSession) {
-        await clearCorrlinksSession(win);
+        const hasCookies = await corrlinksHasCookies(win.webContents.session);
+        if (hasCookies) await clearCorrlinksSession(win);
       }
       return { reused: true, url: info.url || null };
     }
   }
 
   if (clearSession) {
-    await clearCorrlinksSession(win);
+    setStatus({ state: 'loading', message: 'Clearing CorrLinks session…' });
+    const hasCookies = await corrlinksHasCookies(win.webContents.session);
+    if (hasCookies) await clearCorrlinksSession(win);
   }
+  setStatus({ state: 'loading', message: 'Opening CorrLinks login page…' });
   // Cloudflare / SPA redirects often abort the first navigation (-3 ERR_ABORTED)
   // even when the final login page still renders. Treat abort as soft failure.
   try {
@@ -1596,13 +1646,13 @@ async function loadLoginPage(win, { clearSession = false } = {}) {
       throw error;
     }
   }
-  const ready = await waitForCorrPage(win, { timeoutMs: 25000 });
+  const ready = await waitForCorrPage(win, { timeoutMs: navTimeout });
   if (!ready?.ok && ready?.message && !ready.timedOut) {
     // Soft-continue on timeout; hard-fail on real navigation errors.
     throw new Error(ready.message);
   }
   // Syncfusion/Angular need a short settle after did-finish-load.
-  await new Promise((r) => setTimeout(r, 80));
+  await new Promise((r) => setTimeout(r, fast ? 40 : 80));
   return { reused: false, url: ready?.url || null };
 }
 
@@ -3035,7 +3085,7 @@ async function composeAllParts(win, {
 
 async function attemptLogin(
   win,
-  { email, password, label, clearSession = false, pageAlreadyLoaded = false } = {}
+  { email, password, label, clearSession = false, pageAlreadyLoaded = false, fast = false } = {}
 ) {
   setStatus({
     state: 'loading',
@@ -3047,8 +3097,13 @@ async function attemptLogin(
   // Always navigate first so executeJavaScript has a real document.
   // Do NOT clear cookies by default — preserves session for multi-file send.
   // pageAlreadyLoaded: caller already ran loadLoginPage in parallel with downloads.
+  // fast: account probes — shorter waits (skipCompose path).
   if (!pageAlreadyLoaded) {
-    await loadLoginPage(win, { clearSession: Boolean(clearSession) });
+    await loadLoginPage(win, {
+      clearSession: Boolean(clearSession),
+      timeoutMs: fast ? 12000 : 25000,
+      fast: Boolean(fast),
+    });
   }
   // Fast path: login form already on screen — fill immediately.
   let fillResult = null;
@@ -3134,7 +3189,7 @@ async function attemptLogin(
         attempt: label,
       });
       await forceLogoutExistingSession(win);
-      ready = await waitForLoginForm(win, Math.min(timeoutMs, 60000));
+      ready = await waitForLoginForm(win, Math.min(timeoutMs, fast ? 15000 : 30000));
       const still = await detectAlreadyLoggedIn(win).catch(() => null);
       if (!ready.ok && still?.already) {
         const stillEmail = (still.email || '').toLowerCase();
@@ -3152,7 +3207,7 @@ async function attemptLogin(
   }
 
   if (!fillResult?.ok) {
-  const ready = await ensureLoginFormReady(45000);
+  const ready = await ensureLoginFormReady(fast ? 18000 : 45000);
   if (ready.reusedSession) {
     const who = ready.email || email;
     return {
@@ -3215,7 +3270,7 @@ async function attemptLogin(
       attempt: label,
     });
     await forceLogoutExistingSession(win);
-    const readyAfterLogout = await waitForLoginForm(win, 60000);
+    const readyAfterLogout = await waitForLoginForm(win, fast ? 15000 : 30000);
     if (readyAfterLogout.alreadyLoggedIn || readyAfterLogout.reusedSession) {
       const who = readyAfterLogout.email || fillResult.email || email;
       const whoKey = String(who || '').toLowerCase();
@@ -3281,7 +3336,7 @@ async function attemptLogin(
     attempt: label,
   });
 
-  const result = await waitForLoginResult(win);
+  const result = await waitForLoginResult(win, fast ? 18000 : 45000);
 
   if (result.ok) {
     return {
@@ -3556,6 +3611,8 @@ async function loginToCorrlinks({
     label: attemptLabel,
     clearSession: Boolean(clearSession),
     pageAlreadyLoaded: Boolean(pageAlreadyLoaded),
+    // Account probes (skipCompose) use the fast path — shorter nav/form/result waits.
+    fast: Boolean(skipCompose),
   });
   setStatus(primary);
 
@@ -3593,6 +3650,7 @@ async function loginToCorrlinks({
       password: secondPassword,
       label: 'second',
       clearSession: true,
+      fast: Boolean(skipCompose),
     });
 
     const finalSecond = {
@@ -3742,7 +3800,7 @@ async function loginAccount(
     // Recreated panel / mid-navigation races — hard reset once and retry.
     if (/script failed to execute|object has been destroyed/i.test(msg)) {
       forceCloseCorrWindow();
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 200));
       return run();
     }
     throw error;
