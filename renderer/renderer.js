@@ -1,3 +1,78 @@
+const THEME_STORAGE_KEY = 'iea.theme';
+
+function getThemePreference() {
+  const boot = window.__IEA_THEME_BOOT__?.preference;
+  const pref =
+    document.documentElement.dataset.themePref ||
+    boot ||
+    localStorage.getItem(THEME_STORAGE_KEY) ||
+    'auto';
+  return pref === 'light' || pref === 'dark' || pref === 'auto' ? pref : 'auto';
+}
+
+function resolveThemePreference(pref = getThemePreference()) {
+  if (pref === 'light' || pref === 'dark') return pref;
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function syncThemeSwitchUi(pref = getThemePreference()) {
+  document.querySelectorAll('[data-theme-pref]').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.getAttribute('data-theme-pref') === pref);
+    btn.setAttribute('aria-pressed', btn.getAttribute('data-theme-pref') === pref ? 'true' : 'false');
+  });
+  const aboutTheme = document.getElementById('aboutTheme');
+  if (aboutTheme) {
+    const resolved = resolveThemePreference(pref);
+    aboutTheme.textContent =
+      pref === 'auto' ? `Auto (${resolved})` : pref === 'light' ? 'Light' : 'Dark';
+  }
+}
+
+function applyThemePreference(pref = 'auto', { persist = true } = {}) {
+  const next = pref === 'light' || pref === 'dark' || pref === 'auto' ? pref : 'auto';
+  const resolved = resolveThemePreference(next);
+  document.documentElement.dataset.themePref = next;
+  document.documentElement.dataset.theme = resolved;
+  document.documentElement.style.colorScheme = resolved;
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch (_) {}
+  }
+  syncThemeSwitchUi(next);
+  if (persist && window.api?.setThemePreference) {
+    window.api.setThemePreference(next).catch(() => {});
+  }
+  return { preference: next, resolved };
+}
+
+async function restoreThemePreference() {
+  let pref = getThemePreference();
+  try {
+    const saved = await window.api?.getThemePreference?.();
+    if (saved?.preference === 'light' || saved?.preference === 'dark' || saved?.preference === 'auto') {
+      pref = saved.preference;
+    }
+  } catch (_) {}
+  applyThemePreference(pref, { persist: true });
+}
+
+function wireThemeControls() {
+  document.addEventListener('click', (event) => {
+    const btn = event.target.closest?.('[data-theme-pref]');
+    if (!btn) return;
+    event.preventDefault();
+    applyThemePreference(btn.getAttribute('data-theme-pref') || 'auto');
+  });
+  const mq = window.matchMedia('(prefers-color-scheme: light)');
+  const onSystemTheme = () => {
+    if (getThemePreference() === 'auto') applyThemePreference('auto', { persist: false });
+  };
+  if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onSystemTheme);
+  else if (typeof mq.addListener === 'function') mq.addListener(onSystemTheme);
+  restoreThemePreference();
+}
+
 const logEl = document.getElementById('log');
 const accountSelect = document.getElementById('accountSelect');
 const accountMeta = document.getElementById('accountMeta');
@@ -31,6 +106,7 @@ const sessionLastResult = document.getElementById('sessionLastResult');
 const inmateSelectedDisplay = document.getElementById('inmateSelectedDisplay');
 const inmateSelectedName = document.getElementById('inmateSelectedName');
 const inmateSelectedId = document.getElementById('inmateSelectedId');
+const btnClearInmate = document.getElementById('btnClearInmate');
 const historyStatusFilter = document.getElementById('historyStatusFilter');
 const historyDateFilter = document.getElementById('historyDateFilter');
 const historyControls = document.getElementById('historyControls');
@@ -54,8 +130,10 @@ const VERIFY_COPY = {
   title: 'Preparing your workspace',
   status: 'Validating CorrLinks accounts',
   statusRetry: 'Retrying unavailable accounts',
-  statusPause: 'Brief pause between checks',
+  statusPause: 'Waiting 10s before next login',
   defaultStatus: 'Validating CorrLinks accounts',
+  manualTitle: 'Manual validation',
+  manualStatus: 'Re-checking CorrLinks accounts',
 };
 const actionsRow = document.getElementById('actionsRow');
 const btnStatus = document.getElementById('btnStatus');
@@ -296,7 +374,10 @@ function platformShortcutLabel(key) {
 }
 
 function setLoginShortcutHint() {
-  if (btnRefresh) btnRefresh.title = `Refresh (${platformShortcutLabel('R')})`;
+  if (btnRefresh) {
+    btnRefresh.title = `Refresh inmates & validate CorrLinks (${platformShortcutLabel('R')})`;
+    btnRefresh.setAttribute('aria-label', 'Refresh inmates and validate CorrLinks accounts');
+  }
   if (btnOpenLog) btnOpenLog.title = `Open status log (${platformShortcutLabel('J')})`;
 }
 
@@ -828,6 +909,38 @@ function syncTemplateControls() {
   }
 }
 
+async function downloadSendableFile(file, { order = 1 } = {}) {
+  const filename = file?.filename || `part-${order}.txt`;
+  if (!file?.url) {
+    toast(`No download URL for ${filename}`, 'error');
+    return;
+  }
+  const inmate = selectedInmate();
+  const inmateId = inmate?.inmate_id || inmate?.id || 'inmate';
+  const suggestedName = `${inmateId}-${filename}`.replace(/[^\w.\-]+/g, '_');
+  const partNum = Number(file?.part) > 0 ? Number(file.part) : order;
+  setStatusHint(`Downloading ${filename}…`);
+  try {
+    const result = await window.api.downloadExchangeFile({
+      url: file.url,
+      suggestedName,
+      part: partNum,
+      continuation: partNum > 1,
+    });
+    if (result?.canceled) {
+      setStatusHint('Download canceled');
+      return;
+    }
+    if (!result?.ok) throw new Error(result?.message || 'Download failed');
+    log(`Saved File ${order}: ${result.path}`, 'success');
+    toast(`Saved File ${order}`, 'success');
+    setStatusHint(`Saved File ${order} · ${(result.characters || 0).toLocaleString()} chars`);
+  } catch (error) {
+    log(error.message || String(error), 'error');
+    toast(error.message || String(error), 'error');
+  }
+}
+
 function renderFilesList(sendable, { skippedCount = 0, emptyMessage = 'No sendable files for this inmate.' } = {}) {
   selectedFileKeys = sendable.map((file, index) => `${file.part}:${file.filename || index}`);
   if (filesHint) {
@@ -859,6 +972,7 @@ function renderFilesList(sendable, { skippedCount = 0, emptyMessage = 'No sendab
           selectedFileKeys = selectedFileKeys.filter((k) => k !== key);
         }
         if (filesHint) filesHint.textContent = `${selectedFileKeys.length} selected`;
+        updateActionButtons();
       });
       const label = document.createElement('span');
       label.className = 'file-label';
@@ -874,7 +988,19 @@ function renderFilesList(sendable, { skippedCount = 0, emptyMessage = 'No sendab
       meta.className = 'file-meta';
       const chars = file.characters != null ? Number(file.characters).toLocaleString() : '—';
       meta.textContent = `${chars} chars`;
-      li.append(cb, label, meta);
+      const downloadBtn = document.createElement('button');
+      downloadBtn.type = 'button';
+      downloadBtn.className = 'file-download ghost tiny';
+      downloadBtn.textContent = 'Download';
+      downloadBtn.title = file.url ? `Download ${filename}` : 'No download URL';
+      downloadBtn.setAttribute('aria-label', `Download file ${order}`);
+      downloadBtn.disabled = !file.url;
+      downloadBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        downloadSendableFile(file, { order });
+      });
+      li.append(cb, label, meta, downloadBtn);
       filesList.appendChild(li);
     });
   }
@@ -934,13 +1060,77 @@ function renderAccountMeta(inmate) {
   }
 
   accountRows.innerHTML = '';
+
+  const assignment = resolveInmateLoginAssignment(inmate);
+  if (assignment) {
+    const plan = document.createElement('div');
+    plan.className = `login-plan${assignment.ready ? '' : ' is-blocked'}${
+      assignment.via === 'second' ? ' is-secondary' : ''
+    }`;
+    const planTitle = document.createElement('p');
+    planTitle.className = 'login-plan-kicker';
+    planTitle.textContent = assignment.ready ? 'Will login' : 'Cannot login';
+    const planMain = document.createElement('p');
+    planMain.className = 'login-plan-main';
+    planMain.textContent = assignment.ready
+      ? `${assignment.viaLabel} · ${assignment.email}`
+      : assignment.reason || 'No usable account';
+    planMain.title = planMain.textContent;
+    const planMeta = document.createElement('p');
+    planMeta.className = 'login-plan-meta';
+    if (assignment.ready) {
+      const bits = [
+        `Loop group ${assignment.groupIndex}/${assignment.groupTotal}`,
+        `${assignment.groupSize} recipient${assignment.groupSize === 1 ? '' : 's'} on this account`,
+      ];
+      if (assignment.pendingValidation) bits.push('pending validation');
+      else {
+        bits.push(`PRIMARY=${assignment.primaryState}`);
+        if (assignment.second) bits.push(`SECONDARY=${assignment.secondState}`);
+      }
+      planMeta.textContent = bits.join(' · ');
+    } else {
+      const primaryProbe =
+        (emailLoopKey(assignment.primary) && bootProbeByEmail.get(emailLoopKey(assignment.primary))) ||
+        (assignment.primary ? getCachedVerifiedProbe(assignment.primary) : null);
+      const secondProbe =
+        (emailLoopKey(assignment.second) && bootProbeByEmail.get(emailLoopKey(assignment.second))) ||
+        (assignment.second ? getCachedVerifiedProbe(assignment.second) : null);
+      const detailBits = [
+        assignment.primary ? `PRIMARY ${maskSensitive(assignment.primary)}=${assignment.primaryState}` : null,
+        assignment.second ? `SECONDARY ${maskSensitive(assignment.second)}=${assignment.secondState}` : null,
+      ].filter(Boolean);
+      const why =
+        (primaryProbe && !probeAccountUsable(primaryProbe) && primaryProbe.message) ||
+        (secondProbe && !probeAccountUsable(secondProbe) && secondProbe.message) ||
+        '';
+      planMeta.textContent = why ? `${detailBits.join(' · ')} · ${why}` : detailBits.join(' · ');
+      planMeta.title = planMeta.textContent;
+    }
+    plan.append(planTitle, planMain, planMeta);
+    accountRows.appendChild(plan);
+
+    const loginBadge = document.createElement('span');
+    loginBadge.className = `badge ${
+      !assignment.ready ? 'warn' : assignment.via === 'second' ? 'warn' : 'success'
+    }`;
+    loginBadge.textContent = assignment.ready
+      ? `Login: ${assignment.viaLabel}`
+      : 'Login blocked';
+    badgeRow.appendChild(loginBadge);
+  }
+
   [
     { label: 'Primary', email: primary?.email, ready: Boolean(primary?.password), key: 'primary' },
     { label: 'Second', email: second?.email, ready: Boolean(second?.password), key: 'second' },
   ].forEach((row) => {
     const el = document.createElement('div');
     const isActive = Boolean(row.email && activeCorrEmail && row.email.toLowerCase() === String(activeCorrEmail).toLowerCase());
-    el.className = `kv-row${isActive ? ' is-active' : ''}`;
+    const isPlanned =
+      assignment?.ready &&
+      row.email &&
+      emailLoopKey(row.email) === emailLoopKey(assignment.email);
+    el.className = `kv-row${isActive || isPlanned ? ' is-active' : ''}`;
     const label = document.createElement('span');
     label.className = 'kv-label';
     label.textContent = row.label;
@@ -949,7 +1139,12 @@ function renderAccountMeta(inmate) {
     value.textContent = row.email || 'none';
     value.title = row.email || 'none';
     if (row.email && !row.ready) value.textContent += ' (no password)';
-    if (isActive) value.title = `${row.email} · Active account`;
+    if (isPlanned) {
+      value.textContent += ' · will login';
+      value.title = `${row.email} · Will login for this recipient`;
+    } else if (isActive) {
+      value.title = `${row.email} · Active session`;
+    }
     const copy = document.createElement('button');
     copy.type = 'button';
     copy.className = 'copy-btn icon-copy';
@@ -979,7 +1174,9 @@ function renderAccountMeta(inmate) {
         : 'No sendable files for this inmate.',
   });
 
-  const canLogin = Boolean(primary?.email && primary?.password);
+  const canLogin = Boolean(
+    assignment?.ready || (primary?.email && primary?.password)
+  );
   updateActionButtons({ canLogin });
 }
 
@@ -1067,6 +1264,104 @@ function inmateHasCorrlinksLogin(inmate) {
   return Boolean(inmate?.corrlinks_account?.email && inmate?.corrlinks_account?.password);
 }
 
+/**
+ * Same account choice the send-loop regroup uses for a recipient.
+ * When probes exist: primary if usable, else secondary if usable.
+ * Before validation: plan primary (with secondary fallback at login).
+ */
+function resolveInmateLoginAssignment(inmate) {
+  if (!inmate) return null;
+  const primary = inmate.corrlinks_account || {};
+  const second = inmate.second_corrlinks_account || {};
+  const primaryKey = emailLoopKey(primary.email);
+  const secondKey = emailLoopKey(second.email);
+  const primaryProbe =
+    (primaryKey && bootProbeByEmail.get(primaryKey)) ||
+    (primary.email ? getCachedVerifiedProbe(primary.email) : null);
+  const secondProbe =
+    (secondKey && bootProbeByEmail.get(secondKey)) ||
+    (second.email ? getCachedVerifiedProbe(second.email) : null);
+  const hasProbes = bootProbeByEmail.size > 0 || verifiedCorrlinksAccounts.size > 0;
+
+  const primaryState = primaryProbe?.state || (primary.email ? (hasProbes ? 'unchecked' : 'pending') : 'none');
+  const secondState = second.email
+    ? secondProbe?.state || (hasProbes ? 'unchecked' : 'pending')
+    : 'none';
+
+  let via = null;
+  let email = null;
+  let password = null;
+  let ready = false;
+  let pendingValidation = false;
+  let reason = '';
+
+  if (probeAccountUsable(primaryProbe) && primary.email && primary.password) {
+    via = 'primary';
+    email = primary.email;
+    password = primary.password;
+    ready = true;
+  } else if (secondKey && second.password && probeAccountUsable(secondProbe)) {
+    via = 'second';
+    email = second.email;
+    password = second.password;
+    ready = true;
+  } else if (!hasProbes && primary.email && primary.password) {
+    via = 'primary';
+    email = primary.email;
+    password = primary.password;
+    ready = true;
+    pendingValidation = true;
+    reason = second.email
+      ? 'Not validated yet — will try PRIMARY, then SECONDARY if locked'
+      : 'Not validated yet — will login PRIMARY';
+  } else if (hasProbes) {
+    reason =
+      primary.email || second.email
+        ? 'No usable CorrLinks account after validation'
+        : 'No CorrLinks credentials';
+  } else {
+    reason = 'No primary CorrLinks credentials';
+  }
+
+  let groupSize = 1;
+  let groupIndex = 1;
+  let groupTotal = 1;
+  if (email) {
+    const probeMap = new Map(bootProbeByEmail);
+    for (const [key, value] of verifiedCorrlinksAccounts.entries()) {
+      if (!probeMap.has(key)) probeMap.set(key, value);
+    }
+    const regrouped = hasProbes
+      ? regroupInmatesAfterProbe(accounts, probeMap)
+      : groupInmatesByCorrlinksAccount(accounts);
+    const groups = regrouped.groups || [];
+    groupTotal = Math.max(1, groups.length);
+    const key = emailLoopKey(email);
+    const idx = groups.findIndex((g) => emailLoopKey(g.email) === key);
+    if (idx >= 0) {
+      groupIndex = idx + 1;
+      groupSize = groups[idx].inmates?.length || 1;
+    }
+  }
+
+  return {
+    via,
+    email,
+    password,
+    ready,
+    pendingValidation,
+    reason,
+    primary: primary.email || null,
+    second: second.email || null,
+    primaryState,
+    secondState,
+    groupSize,
+    groupIndex,
+    groupTotal,
+    viaLabel: via === 'second' ? 'SECONDARY' : via === 'primary' ? 'PRIMARY' : '—',
+  };
+}
+
 function recipientLoopKey(inmate) {
   const id =
     inmate?.inmate_id != null && String(inmate.inmate_id).trim() !== ''
@@ -1134,12 +1429,26 @@ function probeAccountUsable(probe) {
   );
 }
 
+/** Infra / automation failures — must never permanently block Send from disk cache. */
+function probeIsSoftFailure(probe) {
+  if (!probe) return true;
+  if (probeAccountUsable(probe)) return false;
+  if (probe.state === 'locked' && !probe.loggedIn) return false;
+  const msg = String(probe.message || '');
+  if (/script failed to execute|object has been destroyed|webcontents.*destroy|navigation.*interrupt/i.test(msg)) {
+    return true;
+  }
+  return probe.state === 'error' || probe.state === 'timeout' || probe.state === 'manual' || !probe.state;
+}
+
 /** Retry only soft failures (timeout/error) — not hard locks. */
 function shouldRetryProbeLogin(probe) {
   if (probeAccountUsable(probe)) return false;
   if (!probe) return true;
-  if (probe.state === 'locked') return false;
-  if (probe?.cached) return false;
+  if (probe.state === 'locked' && !probe.loggedIn) return false;
+  // Soft failures (incl. persisted "Script failed to execute") always retry.
+  if (probeIsSoftFailure(probe)) return true;
+  if (probe?.cached || probe?.persistent) return false;
   return true;
 }
 
@@ -1200,7 +1509,11 @@ function restoreVerifiedFromPersistedProbes(probes = {}, uniqueAccounts = []) {
       cached: true,
       persistent: true,
     };
-    verifiedCorrlinksAccounts.set(key, entry);
+    // Soft infra failures must not restore as final — they permanently block Send.
+    if (probeIsSoftFailure(entry)) continue;
+    if (probeAccountUsable(entry)) {
+      verifiedCorrlinksAccounts.set(key, entry);
+    }
     map.set(key, { ...entry });
   }
   bootProbeByEmail = map;
@@ -1211,7 +1524,10 @@ function persistedCacheCoversAccounts(probes = {}, uniqueAccounts = []) {
   if (!uniqueAccounts.length) return true;
   return uniqueAccounts.every((account) => {
     const key = emailLoopKey(account.email);
-    return Boolean(probes?.[key] && typeof probes[key] === 'object');
+    const saved = probes?.[key];
+    if (!saved || typeof saved !== 'object') return false;
+    // "Script failed to execute" / timeout / error do not cover — force live re-probe.
+    return !probeIsSoftFailure(saved);
   });
 }
 
@@ -1219,6 +1535,7 @@ async function persistVerifiedAccountsCache(fingerprint, probeByEmail = bootProb
   if (!fingerprint || !window.api?.saveCorrlinksVerifyCache) return false;
   const probes = {};
   for (const [key, value] of probeByEmail.entries()) {
+    if (probeIsSoftFailure(value)) continue;
     probes[key] = {
       ...value,
       persistent: true,
@@ -1226,7 +1543,7 @@ async function persistVerifiedAccountsCache(fingerprint, probeByEmail = bootProb
   }
   // Also keep usable session cache entries.
   for (const [key, value] of verifiedCorrlinksAccounts.entries()) {
-    if (!probes[key]) {
+    if (!probes[key] && !probeIsSoftFailure(value)) {
       probes[key] = { ...value, persistent: true };
     }
   }
@@ -1268,9 +1585,17 @@ async function tryRestoreVerifiedFromDisk(uniqueAccounts = collectUniqueCorrlink
   }
 
   restoreVerifiedFromPersistedProbes(cache.probes, uniqueAccounts);
-  accountsVerifiedOnce = true;
   const ok = [...bootProbeByEmail.values()].filter((s) => probeAccountUsable(s)).length;
   const fail = uniqueAccounts.length - ok;
+  // A saved "all failed" cache must not permanently block Send — re-probe live.
+  if (ok === 0 && uniqueAccounts.length > 0) {
+    log('Saved validation has no usable accounts — re-validating live', 'warn');
+    clearVerifiedAccounts();
+    bootProbeByEmail = new Map();
+    accountsVerifiedOnce = false;
+    return false;
+  }
+  accountsVerifiedOnce = true;
   const summary =
     fail > 0
       ? `Accounts unchanged · using saved validation · ${ok} ready · ${fail} unavailable`
@@ -1424,10 +1749,13 @@ function regroupInmatesAfterProbe(list = accounts, probeByEmail = new Map()) {
 
 function updateActionButtons({ canLogin } = {}) {
   const inmate = selectedInmate();
+  const assignment = inmate ? resolveInmateLoginAssignment(inmate) : null;
   const loginOk =
-    canLogin != null ? canLogin : Boolean(inmate && inmateHasCorrlinksLogin(inmate));
+    canLogin != null
+      ? canLogin
+      : Boolean(assignment?.ready || (inmate && inmateHasCorrlinksLogin(inmate)));
   const sendableCount = inmate ? selectedExchangeFiles(inmate).length : 0;
-  const canSendSingle = Boolean(loginOk && sendableCount > 0);
+  const canSendSingle = Boolean(loginOk && sendableCount > 0 && assignment?.ready !== false);
   const hasLoopQueue = groupInmatesByCorrlinksAccount().groups.length > 0;
   const singleBusy = corrlinksLoginBusy && !loopRunning && !bootVerifyRunning;
   const canForceStop = loopRunning || corrlinksLoginBusy || bootVerifyRunning;
@@ -1441,13 +1769,17 @@ function updateActionButtons({ canLogin } = {}) {
   if (btnSend) {
     btnSend.disabled = busy || !canSendSingle;
     btnSend.hidden = loopRunning || bootVerifyRunning;
-    btnSend.title = !loginOk
-      ? 'Select an inmate with CorrLinks credentials'
-      : !sendableCount
-        ? 'No sendable exchange files for this inmate'
-        : corrlinksLoginBusy
-          ? 'Auto-sending selected files…'
-          : `Auto-send all ${sendableCount} selected file${sendableCount === 1 ? '' : 's'} (${platformShortcutLabel('Enter')})`;
+    btnSend.title = !inmate
+      ? 'Select an inmate first'
+      : assignment && !assignment.ready
+        ? assignment.reason || 'No usable CorrLinks account for this recipient'
+        : !loginOk
+          ? 'Select an inmate with CorrLinks credentials'
+          : !sendableCount
+            ? 'No sendable exchange files for this inmate'
+            : corrlinksLoginBusy
+              ? 'Auto-sending selected files…'
+              : `Send via ${assignment?.viaLabel || 'PRIMARY'} ${maskSensitive(assignment?.email || '')} · ${sendableCount} file${sendableCount === 1 ? '' : 's'} (${platformShortcutLabel('Enter')})`;
     const sendLabel = btnSend.querySelector('.btn-send-label');
     if (sendLabel) {
       sendLabel.textContent =
@@ -1672,9 +2004,32 @@ function syncInmateComboboxDisplay({ editing = false } = {}) {
     }
   }
   setInmateSelectedDisplay(showSelected ? inmate : null);
+  if (btnClearInmate) {
+    // Show clear while a selection exists (overlay or focused editing with a bound id).
+    btnClearInmate.hidden = !inmate;
+  }
+}
+
+function clearInmateSelection({ keepEditing = false } = {}) {
+  accountSelect.value = '';
+  selectedFileKeys = [];
+  if (inmateSearch) inmateSearch.value = '';
+  syncInmateComboboxDisplay({ editing: keepEditing });
+  renderAccountMeta(null);
+  setStepState({
+    inmateDone: false,
+    composeDone: Boolean(composePreview.to || composePreview.subject),
+    active: 1,
+  });
+  updateActionButtons();
 }
 
 function selectInmate(id, { autoSend = false } = {}) {
+  if (id == null || id === '') {
+    clearInmateSelection({ keepEditing: false });
+    renderInmateOptions(accounts, { open: false });
+    return;
+  }
   const inmate = accounts.find((a) => String(a.id) === String(id));
   accountSelect.value = inmate ? String(inmate.id) : '';
   selectedFileKeys = [];
@@ -1734,8 +2089,11 @@ async function startCorrlinksLogin(options = {}) {
     log('Select an inmate first', 'error');
     return null;
   }
-  if (!inmateHasCorrlinksLogin(inmate)) {
-    log('Selected inmate has no primary CorrLinks credentials', 'error');
+  const assignment = resolveInmateLoginAssignment(inmate);
+  if (!assignment?.ready) {
+    const message = assignment?.reason || 'Selected inmate has no usable CorrLinks account';
+    log(message, 'error');
+    if (!quietToast) toast(message, 'error');
     return null;
   }
   if (corrlinksLoginBusy) return null;
@@ -1748,8 +2106,8 @@ async function startCorrlinksLogin(options = {}) {
   updateActionButtons({ canLogin: true });
   setStatusHint(
     send
-      ? `Sending: ${inmate.name || inmate.inmate_id || inmate.id}…`
-      : `CorrLinks: ${inmate.name || inmate.inmate_id || inmate.id}…`
+      ? `Sending via ${assignment.viaLabel}: ${inmate.name || inmate.inmate_id || inmate.id}…`
+      : `CorrLinks ${assignment.viaLabel}: ${inmate.name || inmate.inmate_id || inmate.id}…`
   );
   setCorrlinksConnected(false, true);
   const template = buildTemplatePayload();
@@ -1762,10 +2120,11 @@ async function startCorrlinksLogin(options = {}) {
   const files = selectedExchangeFiles(inmate);
   const checkedCount = files.length;
   log(
-    `${send ? 'Send' : 'Login'} primary ${maskSensitive(inmate.corrlinks_account.email)}` +
-      (inmate.second_corrlinks_account?.email
+    `${send ? 'Send' : 'Login'} ${assignment.viaLabel} ${maskSensitive(assignment.email)}` +
+      (assignment.pendingValidation && inmate.second_corrlinks_account?.email
         ? ` (fallback ${maskSensitive(inmate.second_corrlinks_account.email)} if locked)`
         : '') +
+      ` · loop group ${assignment.groupIndex}/${assignment.groupTotal}` +
       (template.mode === 'weekly'
         ? ` · weekly ${template.league} · subject ${template.subject}`
         : checkedCount
@@ -1774,7 +2133,7 @@ async function startCorrlinksLogin(options = {}) {
       (send
         ? ` · AUTO-SEND all ${files.length} file${files.length === 1 ? '' : 's'} (single inmate)`
         : ' · no send'),
-    'info'
+    assignment.via === 'second' ? 'warn' : 'info'
   );
   if (send && files.length > 1) {
     files.forEach((file, index) => {
@@ -1785,18 +2144,24 @@ async function startCorrlinksLogin(options = {}) {
       );
     });
   }
+  const loginPlan = {
+    preferVia: assignment.pendingValidation ? null : assignment.via,
+    loginEmail: assignment.pendingValidation ? null : assignment.email,
+  };
   try {
     const result = send
       ? await window.api.sendCorrlinksInmate({
           inmateId: inmate.id,
           selectedFiles: selectedFileKeys.slice(),
           template,
+          ...loginPlan,
         })
       : await window.api.loginCorrlinks({
           inmateId: inmate.id,
           selectedFiles: selectedFileKeys.slice(),
           template,
           send: false,
+          ...loginPlan,
         });
     if (!corrlinksOpStillActive(myGeneration)) {
       return { state: 'aborted', message: 'Force-stopped' };
@@ -1852,9 +2217,9 @@ async function startCorrlinksSend(options = {}) {
 }
 
 /** Gap between live account probes during initializing (skipped for cache hits). */
-const LOOP_GAP_MS = 500;
+const LOOP_GAP_MS = 10_000;
 /** Rest before retrying a skipped/failed CorrLinks login, and before compose re-login. */
-const LOOP_RELOGIN_REST_MS = 1_000;
+const LOOP_RELOGIN_REST_MS = 10_000;
 
 function buildLoopQueue() {
   return groupInmatesByCorrlinksAccount();
@@ -2114,7 +2479,7 @@ async function verifyAllCorrlinksAccounts({
       log(`  SECONDARY for: ${account.secondFor.join('; ')}`, 'info');
     }
 
-    const status = await startCorrlinksAccountLogin(
+    let status = await startCorrlinksAccountLogin(
       {
         email: account.email,
         password: account.password,
@@ -2123,6 +2488,26 @@ async function verifyAllCorrlinksAccounts({
       },
       { quietToast: true }
     );
+    // Electron "Script failed to execute" is infra noise — reset panel and retry once.
+    if (
+      isActive() &&
+      status &&
+      !probeAccountUsable(status) &&
+      /script failed to execute|object has been destroyed/i.test(String(status.message || ''))
+    ) {
+      log(`Probe infra glitch · ${accountLabel} — resetting panel and retrying once`, 'warn');
+      await forceResetCorrlinksPanel();
+      if (!isActive()) return false;
+      status = await startCorrlinksAccountLogin(
+        {
+          email: account.email,
+          password: account.password,
+          secondEmail: null,
+          secondPassword: null,
+        },
+        { quietToast: true }
+      );
+    }
     if (!isActive()) return false;
     setLoopInitializingOverlay({
       active: true,
@@ -2262,9 +2647,10 @@ async function verifyAllCorrlinksAccounts({
   };
 }
 
-async function verifyCorrlinksAccountsOnBoot({ force = false } = {}) {
+async function verifyCorrlinksAccountsOnBoot({ force = false, mode = 'boot' } = {}) {
   if (bootVerifyRunning || loopRunning || corrlinksLoginBusy) return null;
   const uniqueAccounts = collectUniqueCorrlinksAccounts();
+  const manual = mode === 'manual';
   if (!uniqueAccounts.length) {
     accountsVerifiedOnce = true;
     bootProbeByEmail = new Map();
@@ -2280,33 +2666,49 @@ async function verifyCorrlinksAccountsOnBoot({ force = false } = {}) {
     });
     if (map.size === uniqueAccounts.length) {
       bootProbeByEmail = map;
-      return { probeByEmail: map, probeOk: map.size, probeFail: 0, probeTotal: uniqueAccounts.length };
+      const ok = [...map.values()].filter((s) => probeAccountUsable(s)).length;
+      const fail = uniqueAccounts.length - ok;
+      const summary =
+        fail > 0
+          ? `Accounts unchanged · using saved validation · ${ok} ready · ${fail} unavailable`
+          : `Accounts unchanged · using saved validation · ${ok} accounts ready`;
+      log(summary, fail > 0 ? 'warn' : 'success');
+      toast(summary, fail > 0 ? 'warn' : 'success');
+      setStatusHint(summary);
+      return { probeByEmail: map, probeOk: ok, probeFail: fail, probeTotal: uniqueAccounts.length };
     }
   }
 
   bootVerifyRunning = true;
   bootVerifyAbort = false;
   updateActionButtons();
+  const title = manual ? VERIFY_COPY.manualTitle : VERIFY_COPY.title;
+  const statusLabel = manual ? VERIFY_COPY.manualStatus : VERIFY_COPY.status;
   log(
-    `Workspace setup — validating ${uniqueAccounts.length} CorrLinks account(s)`,
+    `${manual ? 'Manual validation' : 'Workspace setup'} — validating ${uniqueAccounts.length} CorrLinks account(s)`,
     'info'
   );
-  toast('Preparing workspace… validating CorrLinks accounts', 'info');
+  toast(
+    manual
+      ? 'Manual validation… re-checking CorrLinks accounts'
+      : 'Preparing workspace… validating CorrLinks accounts',
+    'info'
+  );
   setLoopInitializingOverlay({
     active: true,
-    title: VERIFY_COPY.title,
-    status: VERIFY_COPY.status,
+    title,
+    status: statusLabel,
     detail: `Starting · ${uniqueAccounts.length} accounts`,
     current: 0,
     total: uniqueAccounts.length,
   });
-  setStatusHint('Preparing workspace…');
+  setStatusHint(manual ? 'Manual validation…' : 'Preparing workspace…');
 
   try {
     const result = await verifyAllCorrlinksAccounts({
       uniqueAccounts,
       isActive: () => bootVerifyRunning && !bootVerifyAbort,
-      statusLabel: VERIFY_COPY.status,
+      statusLabel,
     });
     bootProbeByEmail = result.probeByEmail;
     accountsVerifiedOnce = !result.aborted;
@@ -2318,8 +2720,12 @@ async function verifyCorrlinksAccountsOnBoot({ force = false } = {}) {
       }
     }
     const summary = result.aborted
-      ? `Setup canceled · ${result.probeOk} ready · ${result.probeFail} unavailable`
-      : `Workspace ready · ${result.probeOk} accounts available · ${result.probeFail} unavailable`;
+      ? `${manual ? 'Manual validation canceled' : 'Setup canceled'} · ${result.probeOk} ready · ${result.probeFail} unavailable`
+      : manual
+        ? result.probeFail > 0
+          ? `Manual validation · ${result.probeOk} ready · ${result.probeFail} unavailable`
+          : `Manual validation · ${result.probeOk} accounts ready`
+        : `Workspace ready · ${result.probeOk} accounts available · ${result.probeFail} unavailable`;
     log(summary, result.probeFail || result.aborted ? 'warn' : 'success');
     toast(summary, result.probeFail || result.aborted ? 'warn' : 'success');
     setStatusHint(summary);
@@ -2508,6 +2914,8 @@ async function forceResetCorrlinksPanel() {
   }
   setCorrlinksConnected(false);
   hideCorrEmbedNow();
+  // Let Electron finish tearing down WebContents before the next login recreates it.
+  await sleep(400);
 }
 
 function loopStillActive(generation) {
@@ -2852,8 +3260,8 @@ function forceStopSingleCorrlinks() {
   if (!corrlinksLoginBusy || loopRunning) return;
   corrlinksForceStop = true;
   corrlinksOpGeneration += 1;
-  corrlinksLoginBusy = false;
-
+  // Keep busy until the panel is actually destroyed — clearing early lets a new
+  // Send race the dying login and crash main with "Object has been destroyed".
   hideCorrEmbedNow();
   setCorrlinksConnected(false);
   setStatusHint('Force-stopped');
@@ -2912,10 +3320,10 @@ function stopInmateLoop() {
   loopGeneration += 1;
   corrlinksForceStop = true;
   corrlinksOpGeneration += 1;
-  corrlinksLoginBusy = false;
   loopRunning = false;
   loopPhase = 'stopped';
   loopInitializingActive = false;
+  // Keep corrlinksLoginBusy until panel teardown finishes (same race as single force-stop).
 
   setLoopInitializingOverlay(null);
   setLoopCountdownOverlay();
@@ -2939,6 +3347,7 @@ function stopInmateLoop() {
     .catch(() => {})
     .finally(() => {
       // In-flight probe awaits can try to re-show the cover — clear again.
+      corrlinksLoginBusy = false;
       setLoopInitializingOverlay(null);
       setLoopCountdownOverlay();
       hideCorrEmbedNow();
@@ -3021,13 +3430,18 @@ async function signInAndVerifySportsData() {
   return { saved, verified };
 }
 
-async function refreshInmates({ verifyAccounts = true } = {}) {
+async function refreshInmates({ verifyAccounts = true, forceValidation = false } = {}) {
   if (!btnRefresh) return;
   if (bootVerifyRunning || loopRunning) return;
   btnRefresh.disabled = true;
   btnRefresh.classList.add('loading');
-  setStatusHint('Refreshing inmates…');
-  log('Refreshing inmate accounts from SportsData…', 'info');
+  setStatusHint(forceValidation ? 'Refreshing inmates… then manual validation' : 'Refreshing inmates…');
+  log(
+    forceValidation
+      ? 'Refreshing inmate accounts from SportsData… (manual CorrLinks validation next)'
+      : 'Refreshing inmate accounts from SportsData…',
+    'info'
+  );
   try {
     const result = await window.api.refreshAccounts();
     if (!result.ok) {
@@ -3049,14 +3463,23 @@ async function refreshInmates({ verifyAccounts = true } = {}) {
     });
     inmateCard?.classList.remove('collapsed');
     if (verifyAccounts && result.accounts.length) {
-      const uniqueAccounts = collectUniqueCorrlinksAccounts();
-      const restored = await tryRestoreVerifiedFromDisk(uniqueAccounts);
-      if (!restored) {
+      if (forceValidation) {
+        // User clicked refresh — always re-probe CorrLinks accounts.
         clearVerifiedAccounts();
         bootProbeByEmail = new Map();
         accountsVerifiedOnce = false;
-        log('CorrLinks accounts changed or no saved validation — validating…', 'info');
-        await verifyCorrlinksAccountsOnBoot({ force: true });
+        lastAccountsFingerprint = (await computeAccountsFingerprint(accounts)) || lastAccountsFingerprint;
+        await verifyCorrlinksAccountsOnBoot({ force: true, mode: 'manual' });
+      } else {
+        const uniqueAccounts = collectUniqueCorrlinksAccounts();
+        const restored = await tryRestoreVerifiedFromDisk(uniqueAccounts);
+        if (!restored) {
+          clearVerifiedAccounts();
+          bootProbeByEmail = new Map();
+          accountsVerifiedOnce = false;
+          log('CorrLinks accounts changed or no saved validation — validating…', 'info');
+          await verifyCorrlinksAccountsOnBoot({ force: true });
+        }
       }
     }
   } catch (error) {
@@ -3101,9 +3524,11 @@ function handleLoginResult(status, { quietToast = false } = {}) {
     log(`To select failed: ${status.recipient.reason || 'unknown'}`, 'error', status.recipient);
   }
 
-  if (status.subjectResult?.ok || status.subject) {
-    if (status.subjectResult?.ok) log(`Subject: ${status.subject}`, 'success');
-    else log(`Subject failed: ${status.subject}`, 'error');
+  if (status.subjectResult) {
+    if (status.subjectResult.ok) log(`Subject: ${status.subject}`, 'success');
+    else log(`Subject failed: ${status.subject || status.subjectResult.reason || 'unknown'}`, 'error');
+    updateComposePreview({ subject: status.subject || '' });
+  } else if (status.subject && status.state === 'success') {
     updateComposePreview({ subject: status.subject || '' });
   }
 
@@ -3744,7 +4169,7 @@ document.getElementById('btnToggleLoginPassword')?.addEventListener('click', () 
 
 btnRefresh.addEventListener('click', () => {
   if (activeMainTab === 'history') loadExchangeHistory();
-  else refreshInmates();
+  else refreshInmates({ forceValidation: true });
 });
 
 mainTabs?.addEventListener('click', (event) => {
@@ -3840,7 +4265,18 @@ inmateSearch.addEventListener('blur', () => {
 });
 inmateSearch.addEventListener('input', () => {
   syncInmateComboboxDisplay({ editing: true });
+  // Native search ✕ (and deleting all text) must clear the bound inmate,
+  // otherwise blur restores the previous selection overlay.
+  if (!inmateSearch.value.trim() && accountSelect.value) {
+    clearInmateSelection({ keepEditing: true });
+  }
   renderInmateOptions(filterAccounts(inmateSearchQuery()), { open: true });
+});
+// Chromium fires `search` when the type=search clear (✕) control is clicked.
+inmateSearch.addEventListener('search', () => {
+  if (inmateSearch.value.trim()) return;
+  if (accountSelect.value) clearInmateSelection({ keepEditing: true });
+  renderInmateOptions(accounts, { open: true });
 });
 inmateSearch.addEventListener('keydown', (event) => {
   const options = [...inmateOptions.querySelectorAll('.combobox-option[data-id]')];
@@ -3870,8 +4306,18 @@ document.addEventListener('click', (event) => {
   if (!event.target.closest('#inmateCombobox')) closeInmateOptions();
 });
 
+btnClearInmate?.addEventListener('click', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  if (inmateSearch?.disabled) return;
+  clearInmateSelection({ keepEditing: true });
+  renderInmateOptions(accounts, { open: true });
+  inmateSearch?.focus();
+});
+
 document.getElementById('inmateCombobox')?.addEventListener('click', (event) => {
   if (inmateSearch?.disabled) return;
+  if (event.target.closest('.combobox-clear')) return;
   if (
     !event.target.closest('.combobox-chevron') &&
     !event.target.closest('.combobox-selected')
@@ -4020,7 +4466,8 @@ document.addEventListener('keydown', (event) => {
   }
   if (meta && event.key.toLowerCase() === 'r') {
     event.preventDefault();
-    refreshInmates();
+    if (activeMainTab === 'history') loadExchangeHistory();
+    else refreshInmates({ forceValidation: true });
   }
   if (meta && (event.key.toLowerCase() === 'l' || event.key === 'Enter')) {
     event.preventDefault();
@@ -4518,6 +4965,7 @@ function exportHistoryCsv() {
 }
 
 function wireShellUi() {
+  wireThemeControls();
   setLoginShortcutHint();
   setCorrPlaceholderVisible(true);
   updateSessionPanel();

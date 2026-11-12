@@ -1,6 +1,6 @@
 const path = require('path');
 const fs = require('fs/promises');
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme } = require('electron');
 const { SportsDataClient } = require('./sportsdataClient');
 const {
   loginToCorrlinks,
@@ -12,6 +12,7 @@ const {
   setHostWindow,
   setCorrBounds,
   forceCloseCorrWindow,
+  clearAndCloseCorrWindow,
   reloadCorrlinksPanel,
   openCorrlinksExternal,
   clearCorrlinksPanelSession,
@@ -38,14 +39,36 @@ const {
   normalizeWeeklyLeague,
   buildWeeklySubject,
 } = require('./subject');
+const { applyContinuationPrefix } = require('./exchangeFiles');
 const { setupAutoUpdater, registerUpdateIpc } = require('./updater');
+const { loadUiPreferences, saveUiPreferences, normalizeTheme } = require('./uiPreferences');
 
 let controlWindow = null;
+let uiPreferences = { theme: 'auto' };
 let cachedAccounts = [];
 const sportsData = new SportsDataClient();
 /** When true, window/app close proceeds without another confirm. */
 let allowAppClose = false;
 let closeConfirmOpen = false;
+
+// Force-stop can leave a timer/listener touching a destroyed WebContents. Swallow
+// that specific main-process crash so Electron does not show the fatal dialog.
+process.on('uncaughtException', (error) => {
+  const msg = String(error?.message || error || '');
+  if (/object has been destroyed/i.test(msg)) {
+    console.warn('[corrlinks] swallowed destroyed-object exception:', msg);
+    return;
+  }
+  console.error('[main] uncaughtException:', error);
+});
+process.on('unhandledRejection', (reason) => {
+  const msg = String(reason?.message || reason || '');
+  if (/object has been destroyed/i.test(msg)) {
+    console.warn('[corrlinks] swallowed destroyed-object rejection:', msg);
+    return;
+  }
+  console.error('[main] unhandledRejection:', reason);
+});
 
 async function confirmAppClose() {
   if (allowAppClose) return true;
@@ -125,7 +148,7 @@ function createControlWindow() {
     minWidth: 960,
     minHeight: 640,
     title: 'CorrLinks Automation',
-    backgroundColor: '#0a0f16',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0a0f16' : '#f3f6fa',
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     ...(process.platform === 'darwin'
       ? {
@@ -195,7 +218,55 @@ function createControlWindow() {
   });
 }
 
+function applyWindowChromeTheme() {
+  const dark = nativeTheme.shouldUseDarkColors;
+  const bg = dark ? '#0a0f16' : '#f3f6fa';
+  if (controlWindow && !controlWindow.isDestroyed()) {
+    controlWindow.setBackgroundColor(bg);
+  }
+  return { resolved: dark ? 'dark' : 'light', backgroundColor: bg };
+}
+
+function applyThemePreference(pref = 'auto', { persist = true } = {}) {
+  const preference = normalizeTheme(pref);
+  nativeTheme.themeSource =
+    preference === 'light' || preference === 'dark' ? preference : 'system';
+  if (persist) {
+    uiPreferences = saveUiPreferences({ theme: preference });
+  } else {
+    uiPreferences = { ...uiPreferences, theme: preference };
+  }
+  return {
+    ok: true,
+    preference,
+    ...applyWindowChromeTheme(),
+  };
+}
+
 function registerIpc() {
+  ipcMain.on('ui:getThemePreferenceSync', (event) => {
+    const preference = normalizeTheme(uiPreferences?.theme || loadUiPreferences().theme);
+    nativeTheme.themeSource =
+      preference === 'light' || preference === 'dark' ? preference : 'system';
+    event.returnValue = {
+      preference,
+      resolved: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+    };
+  });
+
+  ipcMain.handle('ui:getThemePreference', async () => {
+    const preference = normalizeTheme(uiPreferences?.theme || loadUiPreferences().theme);
+    return {
+      ok: true,
+      preference,
+      resolved: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+    };
+  });
+
+  ipcMain.handle('ui:setThemePreference', async (_event, pref = 'auto') => {
+    return applyThemePreference(pref, { persist: true });
+  });
+
   ipcMain.handle('config:summary', async () => {
     const cfg = getSportsDataConfig();
     const timezone = getAppTimezone();
@@ -347,6 +418,8 @@ function registerIpc() {
           subject: template.subject,
           exchangeFiles: template.exchangeFiles,
           send,
+          preferVia: payload.preferVia || null,
+          loginEmail: payload.loginEmail || null,
         });
       } else {
         const template = resolveTemplateOptions(payload);
@@ -397,6 +470,8 @@ function registerIpc() {
         subject: template.subject,
         exchangeFiles: template.exchangeFiles,
         send: true,
+        preferVia: payload.preferVia || null,
+        loginEmail: payload.loginEmail || null,
       });
       const ok =
         Boolean(status.sent) ||
@@ -456,7 +531,8 @@ function registerIpc() {
   /** Hard-stop CorrLinks (destroy panel) so a running loop can abort mid-login/compose. */
   ipcMain.handle('corrlinks:forceStop', async () => {
     try {
-      forceCloseCorrWindow();
+      // Clear cookies first so the next probe does not inherit "already logged in".
+      await clearAndCloseCorrWindow();
       return { ok: true, status: getStatus() };
     } catch (error) {
       return {
@@ -605,6 +681,11 @@ function registerIpc() {
     try {
       if (!payload.url) throw new Error('File URL is required');
       const file = await sportsData.fetchExchangeFileText(payload.url);
+      const text = applyContinuationPrefix(file.text || '', {
+        part: payload.part,
+        continuation: payload.continuation,
+        index: payload.index,
+      });
       const suggested =
         payload.suggestedName ||
         (payload.date ? `inmate-exchange-all-${payload.date}.txt` : 'inmate-exchange-all.txt');
@@ -616,11 +697,11 @@ function registerIpc() {
       if (result.canceled || !result.filePath) {
         return { ok: false, canceled: true };
       }
-      await fs.writeFile(result.filePath, file.text, 'utf8');
+      await fs.writeFile(result.filePath, text, 'utf8');
       return {
         ok: true,
         path: result.filePath,
-        characters: file.characters,
+        characters: text.length,
       };
     } catch (error) {
       return {
@@ -633,9 +714,14 @@ function registerIpc() {
 
 app.whenReady().then(() => {
   reloadSavedCredentials();
+  uiPreferences = loadUiPreferences();
+  applyThemePreference(uiPreferences.theme, { persist: false });
   registerIpc();
   registerUpdateIpc();
   createControlWindow();
+  nativeTheme.on('updated', () => {
+    applyWindowChromeTheme();
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

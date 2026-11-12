@@ -20,6 +20,7 @@
       href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"
     />
     <link rel="stylesheet" href="styles.css" />
+    <script src="theme-boot.js"></script>
   </head>
   <body>
     <!-- SportsData gate — shown until operator signs in -->
@@ -100,6 +101,15 @@
 
         <p id="configSummary" class="muted meta-line login-meta" hidden></p>
 
+        <div class="theme-switch-wrap login-theme">
+          <p class="theme-switch-label">Appearance</p>
+          <div class="theme-switch" role="group" aria-label="Theme">
+            <button type="button" class="theme-switch-btn" data-theme-pref="auto">Auto</button>
+            <button type="button" class="theme-switch-btn" data-theme-pref="light">Light</button>
+            <button type="button" class="theme-switch-btn" data-theme-pref="dark">Dark</button>
+          </div>
+        </div>
+
         <div class="login-footer">
           <span class="login-footer-label">Designed by</span>
           <a
@@ -143,8 +153,8 @@
             id="btnRefresh"
             type="button"
             class="icon-only"
-            title="Refresh (⌘R)"
-            aria-label="Refresh inmates"
+            title="Refresh inmates & validate CorrLinks (⌘R)"
+            aria-label="Refresh inmates and validate CorrLinks accounts"
           >
             <span class="btn-icon refresh-icon" aria-hidden="true"></span>
             <span class="spinner" aria-hidden="true"></span>
@@ -195,6 +205,14 @@
               <div class="account-dropdown-head">
                 <span class="account-dropdown-label">Signed in</span>
                 <span id="accountMenuEmail" class="account-dropdown-email truncate" title=""></span>
+              </div>
+              <div class="theme-switch-wrap account-theme">
+                <p class="theme-switch-label">Appearance</p>
+                <div class="theme-switch" role="group" aria-label="Theme">
+                  <button type="button" class="theme-switch-btn" data-theme-pref="auto">Auto</button>
+                  <button type="button" class="theme-switch-btn" data-theme-pref="light">Light</button>
+                  <button type="button" class="theme-switch-btn" data-theme-pref="dark">Dark</button>
+                </div>
               </div>
               <button type="button" class="account-menu-item" role="menuitem" id="btnCopyEmail">
                 Copy email
@@ -265,6 +283,19 @@
                         <span id="inmateSelectedName" class="combobox-selected-name truncate"></span>
                         <span id="inmateSelectedId" class="combobox-selected-id truncate"></span>
                       </div>
+                      <button
+                        type="button"
+                        id="btnClearInmate"
+                        class="combobox-clear"
+                        hidden
+                        tabindex="-1"
+                        aria-label="Clear selected inmate"
+                        title="Clear"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                          <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+                        </svg>
+                      </button>
                       <span class="combobox-chevron" aria-hidden="true">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                           <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
@@ -743,7 +774,20 @@
             <dt>Copyright</dt>
             <dd id="aboutCopyright">© MJR</dd>
           </div>
+          <div>
+            <dt>Theme</dt>
+            <dd id="aboutTheme">Auto</dd>
+          </div>
         </dl>
+
+        <div class="theme-switch-wrap about-theme">
+          <p class="theme-switch-label">Appearance</p>
+          <div class="theme-switch" role="group" aria-label="Theme">
+            <button type="button" class="theme-switch-btn" data-theme-pref="auto">Auto</button>
+            <button type="button" class="theme-switch-btn" data-theme-pref="light">Light</button>
+            <button type="button" class="theme-switch-btn" data-theme-pref="dark">Dark</button>
+          </div>
+        </div>
 
         <div class="about-credit">
           <span class="about-credit-label">Designed by</span>

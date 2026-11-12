@@ -1,5 +1,30 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+function readSavedTheme() {
+  try {
+    const result = ipcRenderer.sendSync('ui:getThemePreferenceSync');
+    if (result && (result.preference === 'light' || result.preference === 'dark' || result.preference === 'auto')) {
+      return result;
+    }
+  } catch (_) {}
+  return { preference: 'auto', resolved: 'dark' };
+}
+
+function applyThemeToDocument(preference, resolved) {
+  try {
+    const root = document.documentElement;
+    if (!root) return;
+    root.dataset.themePref = preference;
+    root.dataset.theme = resolved;
+    root.style.colorScheme = resolved;
+  } catch (_) {}
+}
+
+const bootTheme = readSavedTheme();
+applyThemeToDocument(bootTheme.preference, bootTheme.resolved);
+// Keep a sync snapshot for theme-boot.js / early renderer code.
+contextBridge.exposeInMainWorld('__IEA_THEME_BOOT__', bootTheme);
+
 contextBridge.exposeInMainWorld('api', {
   refreshAccounts: () => ipcRenderer.invoke('accounts:refresh'),
   listAccounts: () => ipcRenderer.invoke('accounts:list'),
@@ -44,4 +69,6 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('update:status', listener);
     return () => ipcRenderer.removeListener('update:status', listener);
   },
+  getThemePreference: () => ipcRenderer.invoke('ui:getThemePreference'),
+  setThemePreference: (pref) => ipcRenderer.invoke('ui:setThemePreference', pref),
 });

@@ -6,6 +6,23 @@ function isEmptyExchangeFilename(filename) {
   return /(?:^|[_\-.])empty(?:[_\-.]|$)/i.test(String(filename || ''));
 }
 
+/**
+ * Part 2+ bodies get a CONT.. lead-in so the inmate knows the message continues.
+ * Idempotent if the source text already starts with CONT..
+ */
+function applyContinuationPrefix(text, { part, continuation, index } = {}) {
+  const raw = String(text ?? '');
+  const partNum = Number(part);
+  const indexNum = Number(index);
+  const isContinuation =
+    Boolean(continuation) ||
+    (Number.isFinite(partNum) && partNum > 1) ||
+    (Number.isFinite(indexNum) && indexNum > 0);
+  if (!isContinuation) return raw;
+  if (/^\s*CONT\.\./i.test(raw)) return raw;
+  return `CONT..\n\n${raw}`;
+}
+
 function normalizeExchangeFiles(inmateExchange) {
   const files = Array.isArray(inmateExchange?.files) ? inmateExchange.files : [];
   const normalized = files
@@ -42,4 +59,5 @@ function normalizeExchangeFiles(inmateExchange) {
 module.exports = {
   isEmptyExchangeFilename,
   normalizeExchangeFiles,
+  applyContinuationPrefix,
 };

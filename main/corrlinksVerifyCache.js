@@ -3,7 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 /** Bump when fingerprint shape changes so old caches re-validate once. */
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 function getCachePath() {
   try {
