@@ -3543,6 +3543,8 @@ async function loginToCorrlinks({
   clearSession = false,
   pageAlreadyLoaded = false,
   attemptLabel = 'primary',
+  /** Shorter nav/form/result waits (probes + single-inmate send). */
+  fast = false,
 } = {}) {
   if (!email || !password) {
     throw new Error('Primary corrlinks email and password are required');
@@ -3605,14 +3607,15 @@ async function loginToCorrlinks({
     });
   }
 
+  const useFast = Boolean(fast) || Boolean(skipCompose);
   const primary = await attemptLogin(win, {
     email,
     password,
     label: attemptLabel,
     clearSession: Boolean(clearSession),
     pageAlreadyLoaded: Boolean(pageAlreadyLoaded),
-    // Account probes (skipCompose) use the fast path — shorter nav/form/result waits.
-    fast: Boolean(skipCompose),
+    // Account probes + single-inmate send use shorter nav/form/result waits.
+    fast: useFast,
   });
   setStatus(primary);
 
@@ -3650,7 +3653,7 @@ async function loginToCorrlinks({
       password: secondPassword,
       label: 'second',
       clearSession: true,
-      fast: Boolean(skipCompose),
+      fast: useFast,
     });
 
     const finalSecond = {
@@ -3683,9 +3686,25 @@ async function loginToCorrlinks({
 }
 
 /**
- * Convenience: accept a normalized inmate row from SportsData.
- * Full path: login (with lock fallback) + compose for that one recipient.
+ * Create the CorrLinks embed and start navigating to login immediately so the
+ * webview paints while the renderer finishes prep / SportsData sync.
  */
+async function warmCorrlinksPanel() {
+  if (!hostWindow || hostWindow.isDestroyed()) {
+    return { ok: false, message: 'Control window is not ready' };
+  }
+  const win = getOrCreateWindow();
+  win.show();
+  win.focus();
+  setStatus({
+    state: 'loading',
+    message: 'Opening CorrLinks…',
+  });
+  // Do not await — caller wants the pane visible ASAP.
+  void loadLoginPage(win, { clearSession: false, timeoutMs: 14000, fast: true }).catch(() => {});
+  return { ok: true };
+}
+
 async function loginInmate(
   inmate,
   {
@@ -3715,8 +3734,10 @@ async function loginInmate(
   const secondPassword = useSecond ? null : second.password;
   const clearSession = Boolean(useSecond);
 
-  // Login immediately — downloads finish in the background before compose/send.
+  // Paint the embed first — downloads finish in the background before compose/send.
   const win = getOrCreateWindow();
+  win.show();
+  win.focus();
   setStatus({
     state: 'loading',
     message: `Preparing CorrLinks login (${useSecond ? 'second' : 'primary'}: ${email})`,
@@ -3725,7 +3746,12 @@ async function loginInmate(
   });
   const downloadPromise = downloadExchangeParts(inmate, fetchFileText, { exchangeFiles });
   try {
-    await loadLoginPage(win, { clearSession });
+    // Prefer the already-warming login page when session does not need a hard clear.
+    await loadLoginPage(win, {
+      clearSession,
+      timeoutMs: clearSession ? 16000 : 14000,
+      fast: true,
+    });
   } catch (error) {
     const msg = String(error?.message || error || 'Failed to load CorrLinks login');
     if (/object has been destroyed|corrlinks panel was closed|force.?stop/i.test(msg)) {
@@ -3756,6 +3782,8 @@ async function loginInmate(
       clearSession: false,
       pageAlreadyLoaded: true,
       attemptLabel: useSecond ? 'second' : 'primary',
+      // Inmate send/login: shorter form/result waits than the old 45s defaults.
+      fast: true,
     });
 
   try {
@@ -3913,6 +3941,7 @@ module.exports = {
   logoutCorrlinksSession,
   getStatus,
   getOrCreateWindow,
+  warmCorrlinksPanel,
   forceCloseCorrWindow,
   clearAndCloseCorrWindow,
   setHostWindow,

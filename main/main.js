@@ -13,6 +13,7 @@ const {
   setCorrBounds,
   forceCloseCorrWindow,
   clearAndCloseCorrWindow,
+  warmCorrlinksPanel,
   reloadCorrlinksPanel,
   openCorrlinksExternal,
   clearCorrlinksPanelSession,
@@ -586,6 +587,13 @@ function registerIpc() {
   ipcMain.handle('corrlinks:reload', async () => reloadCorrlinksPanel());
   ipcMain.handle('corrlinks:openExternal', async () => openCorrlinksExternal());
   ipcMain.handle('corrlinks:clearSession', async () => clearCorrlinksPanelSession());
+  ipcMain.handle('corrlinks:warmPanel', async () => {
+    try {
+      return await warmCorrlinksPanel();
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to open CorrLinks panel' };
+    }
+  });
   ipcMain.handle('corrlinks:zoom', async (_event, payload = {}) => zoomCorrlinksPanel(payload || {}));
   ipcMain.handle('corrlinks:hasSession', async () => hasCorrlinksPanelSession());
 

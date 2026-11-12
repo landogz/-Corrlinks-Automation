@@ -2083,6 +2083,10 @@ function selectInmate(id, { autoSend = false } = {}) {
   updateActionButtons();
   if (autoSend && inmate && !loopRunning && !corrlinksLoginBusy && !bootVerifyRunning) {
     // Selecting an inmate should Send — not compose-only paste.
+    // Close the picker + paint the CorrLinks embed before login prep.
+    closeInmateOptions();
+    syncCorrPaneBounds();
+    void window.api?.warmCorrlinksPanel?.().catch(() => {});
     queueMicrotask(() => {
       if (!inmateHasCorrlinksLogin(inmate)) return;
       if (selectedExchangeFiles(inmate).length > 0) startCorrlinksSend();
@@ -2297,9 +2301,6 @@ function corrlinksOpStillActive(generation) {
 
 async function startCorrlinksLogin(options = {}) {
   const { quietToast = false, send = false } = options;
-  if (!options._skipAccountsSync) {
-    await syncCorrlinksAccountsQuiet({ reason: 'preflight', force: true });
-  }
   const inmate = selectedInmate();
   if (!inmate) {
     log('Select an inmate first', 'error');
@@ -2314,7 +2315,11 @@ async function startCorrlinksLogin(options = {}) {
   }
   if (corrlinksLoginBusy) return null;
 
+  // Show the webview immediately — do not wait on SportsData refresh.
   syncCorrPaneBounds();
+  void window.api?.warmCorrlinksPanel?.().catch(() => {});
+  // Keep roster fresh in the background (never blocks CorrLinks open).
+  void syncCorrlinksAccountsQuiet({ reason: 'background' });
   corrlinksForceStop = false;
   const myGeneration = ++corrlinksOpGeneration;
   corrlinksLoginBusy = true;
