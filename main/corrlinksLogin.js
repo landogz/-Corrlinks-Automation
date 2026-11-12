@@ -554,7 +554,7 @@ async function waitForLoginForm(win, timeoutMs = 60000) {
         }
 
         ticks += 1;
-        await new Promise((r) => setTimeout(r, 80));
+        await new Promise((r) => setTimeout(r, 45));
       }
 
       const finalInfo = await inspectPage(win).catch(() => null);
@@ -1144,10 +1144,10 @@ async function dismissValidationDialog(win, { waitMs = 120 } = {}) {
 }
 
 async function settlePostLogin(win) {
-  await new Promise((r) => setTimeout(r, 40));
+  await new Promise((r) => setTimeout(r, 20));
   let lockMessage = await readLockDialogMessage(win);
   // Detect lock quickly so we can fall back to the second account without downtime.
-  const dismiss = await dismissValidationDialog(win, { waitMs: lockMessage ? 250 : 120 });
+  const dismiss = await dismissValidationDialog(win, { waitMs: lockMessage ? 150 : 60 });
   if (!lockMessage) {
     lockMessage = await readLockDialogMessage(win);
   }
@@ -1379,7 +1379,7 @@ async function waitForLoginResult(win, timeoutMs = 45000) {
           }
         }
 
-        await new Promise((r) => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 35));
       }
 
       return {
@@ -1567,10 +1567,10 @@ async function forceLogoutExistingSession(win) {
   // 1) Try UI logout while authenticated.
   const ui = await clickCorrlinksLogoutUi(win);
   if (ui?.via === 'dashboard') {
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 80));
     await clickCorrlinksLogoutUi(win);
   }
-  await new Promise((r) => setTimeout(r, ui?.ok ? 150 : 40));
+  await new Promise((r) => setTimeout(r, ui?.ok ? 60 : 20));
 
   // 2) Hard-clear cookies/storage for corrlinks.com.
   await clearCorrlinksSession(win);
@@ -1585,7 +1585,7 @@ async function forceLogoutExistingSession(win) {
         // continue trying other URLs
       }
     }
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 30));
   }
 
   await clearCorrlinksSession(win);
@@ -1595,7 +1595,7 @@ async function forceLogoutExistingSession(win) {
     const msg = String(error?.message || error);
     if (!/ERR_ABORTED|-3/.test(msg)) throw error;
   }
-  await waitForCorrPage(win, { timeoutMs: 12000 }).catch(() => null);
+  await waitForCorrPage(win, { timeoutMs: 8000 }).catch(() => null);
 
   // 4) If interstitial still showing, clear again once.
   const again = await detectAlreadyLoggedIn(win).catch(() => null);
@@ -1605,19 +1605,21 @@ async function forceLogoutExistingSession(win) {
       message: `Still logged in${again.email ? ` as ${again.email}` : ''} — clearing session again…`,
     });
     await clickCorrlinksLogoutUi(win);
-    await new Promise((r) => setTimeout(r, 120));
+    await new Promise((r) => setTimeout(r, 50));
     await clearCorrlinksSession(win);
     try {
       await win.loadURL(CORRLINKS.loginUrl);
     } catch (_) {}
-    await waitForCorrPage(win, { timeoutMs: 12000 }).catch(() => null);
+    await waitForCorrPage(win, { timeoutMs: 8000 }).catch(() => null);
   }
 
   return { ok: true };
 }
 
 async function loadLoginPage(win, { clearSession = false, timeoutMs = 25000, fast = false } = {}) {
-  const navTimeout = Math.max(8000, Number(timeoutMs) || (fast ? 12000 : 25000));
+  const fallback = fast ? 9000 : 25000;
+  const floor = fast ? 5000 : 8000;
+  const navTimeout = Math.max(floor, Number(timeoutMs) || fallback);
   // Already on a usable login form — skip full navigation (big win on probes/select).
   if (getLiveWebContents(win)) {
     const info = await inspectPage(win).catch(() => null);
@@ -1652,7 +1654,7 @@ async function loadLoginPage(win, { clearSession = false, timeoutMs = 25000, fas
     throw new Error(ready.message);
   }
   // Syncfusion/Angular need a short settle after did-finish-load.
-  await new Promise((r) => setTimeout(r, fast ? 40 : 80));
+  await new Promise((r) => setTimeout(r, fast ? 15 : 60));
   return { reused: false, url: ready?.url || null };
 }
 
@@ -2422,8 +2424,8 @@ async function clickComposeSend(win, { expectedFingerprint = '', expectedBodyLen
         (expectedFingerprint ? ` · expect “${expectedFingerprint.slice(0, 40)}”` : ''),
     });
 
-    // Extra settle once Send is enabled — Angular needs a moment after large paste.
-    await new Promise((r) => setTimeout(r, 500));
+    // Brief settle once Send is enabled — Angular needs a moment after large paste.
+    await new Promise((r) => setTimeout(r, 180));
 
     win.focus();
     clickAt(win, ready.send.x, ready.send.y);
@@ -2448,12 +2450,12 @@ async function clickComposeSend(win, { expectedFingerprint = '', expectedBodyLen
     ).catch(() => false);
 
     // Give CorrLinks a beat to process before polling for the success dialog.
-    await new Promise((r) => setTimeout(r, 350));
+    await new Promise((r) => setTimeout(r, 120));
     setStatus({
       state: 'sending',
       message: 'Waiting for “Message successfully sent”…',
     });
-    let successDlg = await dismissSendSuccessDialog(win, { waitMs: 10000 });
+    let successDlg = await dismissSendSuccessDialog(win, { waitMs: 6000 });
     if (successDlg.success) {
       setStatus({
         state: 'sending',
@@ -2485,8 +2487,8 @@ async function clickComposeSend(win, { expectedFingerprint = '', expectedBodyLen
         });
         clickAt(win, again.send.x, again.send.y);
         await cdpClick(win, again.send.x, again.send.y).catch(() => {});
-        await new Promise((r) => setTimeout(r, 350));
-        successDlg = await dismissSendSuccessDialog(win, { waitMs: 10000 });
+        await new Promise((r) => setTimeout(r, 120));
+        successDlg = await dismissSendSuccessDialog(win, { waitMs: 6000 });
         if (successDlg.success) {
           return {
             ok: true,
@@ -2804,8 +2806,8 @@ async function goToCompose(win, {
 
   let sendResult = null;
   if (send && bodyResult?.ok) {
-    // Confirm To is still selected, then pause so Syncfusion binds body before Send.
-    await new Promise((r) => setTimeout(r, 300));
+    // Confirm To is still selected, then a short pause so Syncfusion binds body before Send.
+    await new Promise((r) => setTimeout(r, 80));
     if (recipientName || inmateId) {
       const stillTo = await verifyToRecipientSelected(win, { recipientName, inmateId }).catch(() => null);
       if (!stillTo?.ok) {
@@ -2815,11 +2817,11 @@ async function goToCompose(win, {
           recipient,
         });
         recipient = await selectComposeRecipient(win, { recipientName, inmateId });
-        await new Promise((r) => setTimeout(r, 250));
+        await new Promise((r) => setTimeout(r, 80));
       } else {
         setStatus({
           state: 'sending',
-          message: `To confirmed (${stillTo.selected || recipientName}) — settling before Send…`,
+          message: `To confirmed (${stillTo.selected || recipientName}) — sending…`,
           recipient: stillTo,
         });
       }
@@ -2827,13 +2829,13 @@ async function goToCompose(win, {
     const expectedLen = Number(bodyResult.pastedTextLength || currentPart.text?.length || 0);
     setStatus({
       state: 'sending',
-      message: `Waiting 1.2s before Send · part ${currentPart.part}: ${currentPart.filename}…`,
+      message: `Settling before Send · part ${currentPart.part}: ${currentPart.filename}…`,
       bodyResult,
       recipient,
       subject: composedSubject,
     });
-    // Little delay before Send — prevents part 1 firing before CorrLinks accepts the body.
-    await new Promise((r) => setTimeout(r, 1200));
+    // Short delay before Send — body is already verified by waitForComposeBodyReady.
+    await new Promise((r) => setTimeout(r, 350));
     setStatus({
       state: 'sending',
       message: `Sending part ${currentPart.part}: ${currentPart.filename} (${expectedLen} chars)…`,
@@ -3101,7 +3103,7 @@ async function attemptLogin(
   if (!pageAlreadyLoaded) {
     await loadLoginPage(win, {
       clearSession: Boolean(clearSession),
-      timeoutMs: fast ? 12000 : 25000,
+      timeoutMs: fast ? 9000 : 25000,
       fast: Boolean(fast),
     });
   }
@@ -3189,7 +3191,7 @@ async function attemptLogin(
         attempt: label,
       });
       await forceLogoutExistingSession(win);
-      ready = await waitForLoginForm(win, Math.min(timeoutMs, fast ? 15000 : 30000));
+      ready = await waitForLoginForm(win, Math.min(timeoutMs, fast ? 9000 : 30000));
       const still = await detectAlreadyLoggedIn(win).catch(() => null);
       if (!ready.ok && still?.already) {
         const stillEmail = (still.email || '').toLowerCase();
@@ -3207,7 +3209,7 @@ async function attemptLogin(
   }
 
   if (!fillResult?.ok) {
-  const ready = await ensureLoginFormReady(fast ? 18000 : 45000);
+  const ready = await ensureLoginFormReady(fast ? 9000 : 45000);
   if (ready.reusedSession) {
     const who = ready.email || email;
     return {
@@ -3270,7 +3272,7 @@ async function attemptLogin(
       attempt: label,
     });
     await forceLogoutExistingSession(win);
-    const readyAfterLogout = await waitForLoginForm(win, fast ? 15000 : 30000);
+    const readyAfterLogout = await waitForLoginForm(win, fast ? 9000 : 30000);
     if (readyAfterLogout.alreadyLoggedIn || readyAfterLogout.reusedSession) {
       const who = readyAfterLogout.email || fillResult.email || email;
       const whoKey = String(who || '').toLowerCase();
@@ -3336,7 +3338,7 @@ async function attemptLogin(
     attempt: label,
   });
 
-  const result = await waitForLoginResult(win, fast ? 18000 : 45000);
+  const result = await waitForLoginResult(win, fast ? 10000 : 45000);
 
   if (result.ok) {
     return {
@@ -3701,7 +3703,7 @@ async function warmCorrlinksPanel() {
     message: 'Opening CorrLinks…',
   });
   // Do not await — caller wants the pane visible ASAP.
-  void loadLoginPage(win, { clearSession: false, timeoutMs: 14000, fast: true }).catch(() => {});
+  void loadLoginPage(win, { clearSession: false, timeoutMs: 9000, fast: true }).catch(() => {});
   return { ok: true };
 }
 
@@ -3749,7 +3751,7 @@ async function loginInmate(
     // Prefer the already-warming login page when session does not need a hard clear.
     await loadLoginPage(win, {
       clearSession,
-      timeoutMs: clearSession ? 16000 : 14000,
+      timeoutMs: clearSession ? 10000 : 9000,
       fast: true,
     });
   } catch (error) {
@@ -3782,7 +3784,7 @@ async function loginInmate(
       clearSession: false,
       pageAlreadyLoaded: true,
       attemptLabel: useSecond ? 'second' : 'primary',
-      // Inmate send/login: shorter form/result waits than the old 45s defaults.
+      // Inmate send/login: short form/result waits.
       fast: true,
     });
 
