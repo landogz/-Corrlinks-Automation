@@ -2087,9 +2087,20 @@ function selectInmate(id, { autoSend = false } = {}) {
     closeInmateOptions();
     syncCorrPaneBounds();
     void window.api?.warmCorrlinksPanel?.().catch(() => {});
+    // Start TXT download immediately so compose does not wait after login.
+    const files = selectedExchangeFiles(inmate);
+    if (files.length && window.api?.prefetchExchangeFiles) {
+      void window.api
+        .prefetchExchangeFiles({
+          inmateId: inmate.id,
+          selectedFiles: selectedFileKeys.slice(),
+          files,
+        })
+        .catch(() => {});
+    }
     queueMicrotask(() => {
       if (!inmateHasCorrlinksLogin(inmate)) return;
-      if (selectedExchangeFiles(inmate).length > 0) startCorrlinksSend();
+      if (files.length > 0) startCorrlinksSend();
       else startCorrlinksLogin();
     });
   }
@@ -2318,6 +2329,18 @@ async function startCorrlinksLogin(options = {}) {
   // Show the webview immediately — do not wait on SportsData refresh.
   syncCorrPaneBounds();
   void window.api?.warmCorrlinksPanel?.().catch(() => {});
+  if (send && window.api?.prefetchExchangeFiles) {
+    const files = selectedExchangeFiles(inmate);
+    if (files.length) {
+      void window.api
+        .prefetchExchangeFiles({
+          inmateId: inmate.id,
+          selectedFiles: selectedFileKeys.slice(),
+          files,
+        })
+        .catch(() => {});
+    }
+  }
   // Keep roster fresh in the background (never blocks CorrLinks open).
   void syncCorrlinksAccountsQuiet({ reason: 'background' });
   corrlinksForceStop = false;

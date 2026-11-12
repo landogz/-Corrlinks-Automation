@@ -3481,7 +3481,11 @@ async function applyComposeToStatus(win, status, composeArgs) {
   }
 }
 
-async function downloadExchangeParts(inmate, fetchFileText, { exchangeFiles = null } = {}) {
+async function downloadExchangeParts(
+  inmate,
+  fetchFileText,
+  { exchangeFiles = null, quiet = false } = {}
+) {
   const exchange = inmate?.inmate_exchange || {};
   const sendable = Array.isArray(exchangeFiles) && exchangeFiles.length
     ? exchangeFiles
@@ -3497,24 +3501,23 @@ async function downloadExchangeParts(inmate, fetchFileText, { exchangeFiles = nu
   if (typeof fetchFileText !== 'function' || !sendable.length) {
     return { exchangeParts: [], exchangeSkipped: skipped };
   }
-  setStatus({
-    state: 'exchange',
-    message:
-      sendable.length === 1
-        ? `Downloading exchange file: ${sendable[0].filename}`
-        : `Downloading ${sendable.length} exchange files in parallel…`,
-  });
+  if (!quiet) {
+    setStatus({
+      state: 'exchange',
+      message:
+        sendable.length === 1
+          ? `Downloading exchange file: ${sendable[0].filename}`
+          : `Downloading ${sendable.length} exchange files…`,
+    });
+  }
   const exchangeParts = await Promise.all(
     sendable.map(async (file) => {
-      setStatus({
-        state: 'exchange',
-        message: `Downloading exchange file part ${file.part}: ${file.filename}`,
-      });
       const got = await fetchFileText(file.url);
       return {
         ...file,
         text: got.text || '',
         characters: got.characters ?? (got.text || '').length,
+        cached: Boolean(got?.cached),
       };
     })
   );
@@ -3572,13 +3575,32 @@ async function loginToCorrlinks({
     let parts = Array.isArray(exchangeParts) ? exchangeParts : [];
     let skipped = Array.isArray(exchangeSkipped) ? exchangeSkipped : [];
     if (exchangePartsPromise) {
-      setStatus({
-        state: 'exchange',
-        message: 'Waiting for exchange file download…',
-        email,
-        attempt: attemptLabel,
-      });
-      const got = await exchangePartsPromise;
+      const pending = exchangePartsPromise;
+      let settled = false;
+      const mark = pending.then(
+        (v) => {
+          settled = true;
+          return v;
+        },
+        (e) => {
+          settled = true;
+          throw e;
+        }
+      );
+      // Only show download wait if login finished first and files are still in flight.
+      await Promise.race([
+        mark,
+        new Promise((r) => setTimeout(r, 120)),
+      ]);
+      if (!settled) {
+        setStatus({
+          state: 'exchange',
+          message: 'Finishing exchange file download…',
+          email,
+          attempt: attemptLabel,
+        });
+      }
+      const got = await mark;
       parts = got?.exchangeParts || parts;
       skipped = got?.exchangeSkipped || skipped;
     }
@@ -3746,7 +3768,11 @@ async function loginInmate(
     email,
     attempt: useSecond ? 'second' : 'primary',
   });
-  const downloadPromise = downloadExchangeParts(inmate, fetchFileText, { exchangeFiles });
+  // Quiet: login status owns the UI; files are usually already prefetched on select.
+  const downloadPromise = downloadExchangeParts(inmate, fetchFileText, {
+    exchangeFiles,
+    quiet: true,
+  });
   try {
     // Prefer the already-warming login page when session does not need a hard clear.
     await loadLoginPage(win, {

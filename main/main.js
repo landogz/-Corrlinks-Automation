@@ -594,6 +594,29 @@ function registerIpc() {
       return { ok: false, message: error.message || 'Failed to open CorrLinks panel' };
     }
   });
+
+  /** Prefetch exchange TXT bodies so single-send does not stall on download. */
+  ipcMain.handle('exchange:prefetch', async (_event, payload = {}) => {
+    try {
+      let files = Array.isArray(payload.files) ? payload.files : [];
+      if ((!files.length) && payload.inmateId != null) {
+        const inmate = cachedAccounts.find((a) => String(a.id) === String(payload.inmateId));
+        const sendable = inmate?.inmate_exchange?.sendable || [];
+        if (Array.isArray(payload.selectedFiles) && payload.selectedFiles.length) {
+          const keys = payload.selectedFiles.map(String);
+          files = sendable.filter((file, index) => {
+            const key = `${file.part}:${file.filename || index}`;
+            return keys.includes(key);
+          });
+        } else {
+          files = sendable;
+        }
+      }
+      return await sportsData.prefetchExchangeFiles(files);
+    } catch (error) {
+      return { ok: false, message: error.message || 'Prefetch failed' };
+    }
+  });
   ipcMain.handle('corrlinks:zoom', async (_event, payload = {}) => zoomCorrlinksPanel(payload || {}));
   ipcMain.handle('corrlinks:hasSession', async () => hasCorrlinksPanelSession());
 

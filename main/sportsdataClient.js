@@ -117,6 +117,10 @@ class SportsDataClient {
     this.jar = new CookieJar();
     this.authenticated = false;
     this.lastError = null;
+    /** @type {Map<string, { text: string, characters: number, cachedAt: number }>} */
+    this.exchangeFileCache = new Map();
+    /** In-flight downloads keyed by URL (dedupe parallel prefetch/send). */
+    this.exchangeFileInflight = new Map();
 
     this.http = axios.create({
       timeout: 30000,
@@ -152,6 +156,43 @@ class SportsDataClient {
     this.jar = new CookieJar();
     this.authenticated = false;
     this.lastError = null;
+    this.exchangeFileCache.clear();
+    this.exchangeFileInflight.clear();
+  }
+
+  getCachedExchangeFile(url) {
+    const key = String(url || '').trim();
+    if (!key) return null;
+    return this.exchangeFileCache.get(key) || null;
+  }
+
+  /**
+   * Prefetch exchange TXT bodies so single-send compose does not wait on download.
+   * @param {Array<{ url?: string }|string>} filesOrUrls
+   */
+  async prefetchExchangeFiles(filesOrUrls = []) {
+    const urls = [
+      ...new Set(
+        (Array.isArray(filesOrUrls) ? filesOrUrls : [])
+          .map((item) => (typeof item === 'string' ? item : item?.url))
+          .map((u) => String(u || '').trim())
+          .filter(Boolean)
+      ),
+    ];
+    if (!urls.length) return { ok: true, cached: 0, fetched: 0 };
+    let cached = 0;
+    let fetched = 0;
+    await Promise.all(
+      urls.map(async (url) => {
+        if (this.getCachedExchangeFile(url)) {
+          cached += 1;
+          return;
+        }
+        await this.fetchExchangeFileText(url);
+        fetched += 1;
+      })
+    );
+    return { ok: true, cached, fetched, total: urls.length };
   }
 
   resolveUrl(config) {
@@ -337,35 +378,68 @@ class SportsDataClient {
 
   /**
    * Download an Inmate Exchange TXT file (session cookie required for some storage paths).
+   * Results are cached so select → send does not re-download the same part.
    */
   async fetchExchangeFileText(url) {
     if (!url) throw new Error('Exchange file URL is required');
-    await this.ensureAuth();
-
-    const response = await this.http.get(url, {
-      headers: {
-        Accept: 'text/plain,text/*,*/*',
-        Referer: `${this.getConfig().baseUrl}/insidescore/inmate-exchange`,
-      },
-      responseType: 'text',
-      transformResponse: [(data) => data],
-      maxRedirects: 5,
-      validateStatus: (status) => status >= 200 && status < 400,
-    });
-
-    const text = typeof response.data === 'string' ? response.data : String(response.data ?? '');
-    if (/Login to your account/i.test(text) && /name="password"/i.test(text)) {
-      this.authenticated = false;
-      await this.login();
-      return this.fetchExchangeFileText(url);
+    const key = String(url).trim();
+    const hit = this.exchangeFileCache.get(key);
+    if (hit?.text != null) {
+      return {
+        ok: true,
+        url: key,
+        text: hit.text,
+        characters: hit.characters ?? hit.text.length,
+        cached: true,
+      };
     }
 
-    return {
-      ok: true,
-      url,
-      text,
-      characters: text.length,
+    const inflight = this.exchangeFileInflight.get(key);
+    if (inflight) return inflight;
+
+    const downloadOnce = async () => {
+      await this.ensureAuth();
+      const response = await this.http.get(key, {
+        headers: {
+          Accept: 'text/plain,text/*,*/*',
+          Referer: `${this.getConfig().baseUrl}/insidescore/inmate-exchange`,
+        },
+        responseType: 'text',
+        transformResponse: [(data) => data],
+        maxRedirects: 5,
+        timeout: 15000,
+        validateStatus: (status) => status >= 200 && status < 400,
+      });
+      return typeof response.data === 'string' ? response.data : String(response.data ?? '');
     };
+
+    const job = (async () => {
+      let text = await downloadOnce();
+      if (/Login to your account/i.test(text) && /name="password"/i.test(text)) {
+        this.authenticated = false;
+        await this.login();
+        text = await downloadOnce();
+      }
+
+      const result = {
+        ok: true,
+        url: key,
+        text,
+        characters: text.length,
+        cached: false,
+      };
+      this.exchangeFileCache.set(key, {
+        text,
+        characters: text.length,
+        cachedAt: Date.now(),
+      });
+      return result;
+    })().finally(() => {
+      this.exchangeFileInflight.delete(key);
+    });
+
+    this.exchangeFileInflight.set(key, job);
+    return job;
   }
 
   /**
