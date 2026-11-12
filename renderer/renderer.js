@@ -236,6 +236,16 @@ let bootProbeByEmail = new Map();
 let accountsVerifiedOnce = false;
 /** Fingerprint of live corrlinks-accounts used for persisted validation skip. */
 let lastAccountsFingerprint = null;
+/** Snapshot of last applied corrlinks-accounts payload (names, files, credentials). */
+let lastAccountsSnapshot = null;
+/** Quiet poll of SportsData corrlinks-accounts while signed in. */
+let accountsAutoRefreshTimer = null;
+let accountsAutoRefreshBusy = false;
+/** How often to re-fetch https://sportsdata.com/api/v1/insidescore/corrlinks-accounts */
+const ACCOUNTS_AUTO_REFRESH_MS = 60_000;
+/** Ignore rapid window-focus refreshes (visibility + focus can double-fire). */
+const ACCOUNTS_FOCUS_MIN_GAP_MS = 15_000;
+let lastAccountsQuietSyncAt = 0;
 /** Active top-level tab: automate | history */
 let activeMainTab = 'automate';
 /** @type {any} */
@@ -693,6 +703,7 @@ function updateSignedInChip(email) {
 }
 
 function showLoginScreen() {
+  stopAccountsAutoRefresh();
   loginScreen.hidden = false;
   mainShell.hidden = true;
   document.body.classList.add('is-login');
@@ -716,6 +727,7 @@ function showMainApp(email) {
   document.body.classList.add('is-app');
   document.body.classList.remove('is-login');
   updateSignedInChip(email);
+  startAccountsAutoRefresh();
   scheduleCorrPaneBounds();
   requestAnimationFrame(() => syncCorrPaneBounds());
 }
@@ -956,11 +968,20 @@ async function downloadSendableFile(file, { order = 1 } = {}) {
   }
 }
 
-function renderFilesList(sendable, { skippedCount = 0, emptyMessage = 'No sendable files for this inmate.' } = {}) {
-  selectedFileKeys = sendable.map((file, index) => `${file.part}:${file.filename || index}`);
+function renderFilesList(
+  sendable,
+  { skippedCount = 0, emptyMessage = 'No sendable files for this inmate.', preserveKeys = null } = {}
+) {
+  const allKeys = sendable.map((file, index) => `${file.part}:${file.filename || index}`);
+  if (Array.isArray(preserveKeys) && preserveKeys.length) {
+    const kept = allKeys.filter((key) => preserveKeys.includes(key));
+    selectedFileKeys = kept.length ? kept : allKeys.slice();
+  } else {
+    selectedFileKeys = allKeys.slice();
+  }
   if (filesHint) {
     filesHint.textContent = sendable.length
-      ? `${sendable.length} selected` + (skippedCount ? ` · ${skippedCount} empty skipped` : '')
+      ? `${selectedFileKeys.length} selected` + (skippedCount ? ` · ${skippedCount} empty skipped` : '')
       : weeklyLoading
         ? 'Loading…'
         : '';
@@ -1026,7 +1047,7 @@ function renderFilesList(sendable, { skippedCount = 0, emptyMessage = 'No sendab
   if (filesBlock) filesBlock.hidden = false;
 }
 
-function renderAccountMeta(inmate) {
+function renderAccountMeta(inmate, { preserveFileKeys = null } = {}) {
   if (!inmate) {
     accountMeta.hidden = true;
     inmateCollapsedSummary.hidden = false;
@@ -1187,6 +1208,7 @@ function renderAccountMeta(inmate) {
       templateMode === 'weekly'
         ? `No ${weeklyLeague} weekly update file available.`
         : 'No sendable files for this inmate.',
+    preserveKeys: preserveFileKeys,
   });
 
   const canLogin = Boolean(
@@ -2069,9 +2091,36 @@ function selectInmate(id, { autoSend = false } = {}) {
   }
 }
 
+function accountsContentSnapshot(list = accounts) {
+  try {
+    return JSON.stringify(
+      (Array.isArray(list) ? list : []).map((inmate) => ({
+        id: inmate?.id ?? null,
+        name: inmate?.name || '',
+        inmate_id: inmate?.inmate_id ?? null,
+        status: inmate?.status || '',
+        facility: inmate?.facility || null,
+        corrlinks_account: inmate?.corrlinks_account || null,
+        second_corrlinks_account: inmate?.second_corrlinks_account || null,
+        inmate_exchange: inmate?.inmate_exchange || null,
+      }))
+    );
+  } catch {
+    return String(Date.now());
+  }
+}
+
+function setInmateCountLabel(count) {
+  if (!inmateCount) return;
+  const n = Number(count) || 0;
+  inmateCount.textContent = `${n} inmate${n === 1 ? '' : 's'}`;
+}
+
 function renderAccounts(list) {
   accounts = Array.isArray(list) ? list : [];
+  lastAccountsSnapshot = accountsContentSnapshot(accounts);
   selectedFileKeys = [];
+  setInmateCountLabel(accounts.length);
   if (!accounts.length) {
     accountSelect.value = '';
     inmateSearch.value = '';
@@ -2089,6 +2138,155 @@ function renderAccounts(list) {
 }
 
 /**
+ * Apply a live corrlinks-accounts payload without resetting the user's selection.
+ * @returns {{ changed: boolean, added: number, removed: number }}
+ */
+function applyAccountsLive(list) {
+  const next = Array.isArray(list) ? list : [];
+  const snapshot = accountsContentSnapshot(next);
+  if (snapshot === lastAccountsSnapshot && accounts.length === next.length) {
+    return { changed: false, added: 0, removed: 0 };
+  }
+
+  const prevIds = new Set(accounts.map((a) => String(a.id)));
+  const nextIds = new Set(next.map((a) => String(a.id)));
+  const added = [...nextIds].filter((id) => !prevIds.has(id)).length;
+  const removed = [...prevIds].filter((id) => !nextIds.has(id)).length;
+  const prevSelectedId = accountSelect?.value || '';
+  const prevFileKeys = selectedFileKeys.slice();
+  const dropdownOpen = Boolean(inmateOptions && !inmateOptions.hidden);
+
+  accounts = next;
+  lastAccountsSnapshot = snapshot;
+  setInmateCountLabel(accounts.length);
+  inmateSearch.disabled = !accounts.length;
+
+  if (!accounts.length) {
+    accountSelect.value = '';
+    if (inmateSearch) inmateSearch.value = '';
+    syncInmateComboboxDisplay({ editing: false });
+    renderAccountMeta(null);
+    renderInmateOptions([], { open: false });
+    updateActionButtons({ canLogin: false });
+    return { changed: true, added, removed };
+  }
+
+  const stillSelected = accounts.find((a) => String(a.id) === String(prevSelectedId));
+  if (stillSelected) {
+    accountSelect.value = String(stillSelected.id);
+    syncInmateComboboxDisplay({ editing: dropdownOpen && document.activeElement === inmateSearch });
+    renderAccountMeta(stillSelected, { preserveFileKeys: prevFileKeys });
+  } else if (prevSelectedId) {
+    // Selection disappeared from SportsData — clear rather than silently jump.
+    clearInmateSelection({ keepEditing: false });
+  } else {
+    selectInmate(accounts[0].id, { autoSend: false });
+  }
+
+  renderInmateOptions(
+    filterAccounts(inmateSearchQuery()),
+    { open: dropdownOpen }
+  );
+  updateActionButtons();
+  return { changed: true, added, removed };
+}
+
+function stopAccountsAutoRefresh() {
+  if (accountsAutoRefreshTimer) {
+    clearInterval(accountsAutoRefreshTimer);
+    accountsAutoRefreshTimer = null;
+  }
+}
+
+function startAccountsAutoRefresh() {
+  stopAccountsAutoRefresh();
+  if (mainShell?.hidden) return;
+  accountsAutoRefreshTimer = setInterval(() => {
+    void syncCorrlinksAccountsQuiet({ reason: 'interval' });
+  }, ACCOUNTS_AUTO_REFRESH_MS);
+}
+
+/**
+ * Quiet re-fetch of SportsData corrlinks-accounts. Keeps the inmate picker current
+ * without toasts; re-validates CorrLinks only when credentials change.
+ */
+async function syncCorrlinksAccountsQuiet({ reason = 'poll', force = false } = {}) {
+  if (accountsAutoRefreshBusy) return { ok: false, skipped: 'busy' };
+  if (mainShell?.hidden || loginScreen?.hidden === false) return { ok: false, skipped: 'login' };
+  if (!force && (bootVerifyRunning || loopRunning || corrlinksLoginBusy)) {
+    return { ok: false, skipped: 'ops' };
+  }
+  if (btnRefresh?.classList.contains('loading')) return { ok: false, skipped: 'manual' };
+  if (
+    !force &&
+    reason === 'focus' &&
+    Date.now() - lastAccountsQuietSyncAt < ACCOUNTS_FOCUS_MIN_GAP_MS
+  ) {
+    return { ok: false, skipped: 'throttle' };
+  }
+
+  accountsAutoRefreshBusy = true;
+  try {
+    const result = await window.api.refreshAccounts();
+    lastAccountsQuietSyncAt = Date.now();
+    if (!result?.ok) {
+      setSportsConnected(false);
+      if (reason === 'focus' || reason === 'preflight') {
+        log(result?.message || 'corrlinks-accounts refresh failed', 'warn');
+      }
+      return { ok: false, message: result?.message };
+    }
+
+    setSportsConnected(true);
+    const prevFingerprint = lastAccountsFingerprint;
+    const diff = applyAccountsLive(result.accounts || []);
+    const nextFingerprint = await computeAccountsFingerprint(accounts);
+    const credentialsChanged =
+      Boolean(nextFingerprint) &&
+      Boolean(prevFingerprint) &&
+      nextFingerprint !== prevFingerprint;
+
+    if (diff.changed) {
+      const bits = [];
+      if (diff.added) bits.push(`+${diff.added}`);
+      if (diff.removed) bits.push(`-${diff.removed}`);
+      log(
+        `corrlinks-accounts updated (${result.accounts.length} inmate${
+          result.accounts.length === 1 ? '' : 's'
+        }${bits.length ? ` · ${bits.join(' ')}` : ''})`,
+        'info'
+      );
+      setStatusHint(`${result.accounts.length} inmates ready`);
+      setStepState({
+        inmateDone: Boolean(selectedInmate()),
+        composeDone: Boolean(composePreview.to || composePreview.subject),
+        active: selectedInmate() ? 1 : 1,
+      });
+    }
+
+    lastAccountsFingerprint = nextFingerprint || lastAccountsFingerprint;
+
+    if (credentialsChanged && !bootVerifyRunning && !loopRunning && !corrlinksLoginBusy) {
+      clearVerifiedAccounts();
+      bootProbeByEmail = new Map();
+      accountsVerifiedOnce = false;
+      log('Live corrlinks-accounts credentials changed — re-validating', 'info');
+      await verifyCorrlinksAccountsOnBoot({ force: true });
+    }
+
+    return { ok: true, changed: diff.changed, accounts: result.accounts };
+  } catch (error) {
+    setSportsConnected(false);
+    if (reason === 'focus' || reason === 'preflight') {
+      log(error.message || String(error), 'warn');
+    }
+    return { ok: false, message: error.message || String(error) };
+  } finally {
+    accountsAutoRefreshBusy = false;
+  }
+}
+
+/**
  * Single inmate run: CorrLinks login + compose paste. Never sends (loop uses compose only).
  * @param {{ quietToast?: boolean, send?: boolean }} [options]
  * @returns {Promise<object|null>} status or null if skipped/busy
@@ -2099,6 +2297,9 @@ function corrlinksOpStillActive(generation) {
 
 async function startCorrlinksLogin(options = {}) {
   const { quietToast = false, send = false } = options;
+  if (!options._skipAccountsSync) {
+    await syncCorrlinksAccountsQuiet({ reason: 'preflight', force: true });
+  }
   const inmate = selectedInmate();
   if (!inmate) {
     log('Select an inmate first', 'error');
@@ -3046,6 +3247,9 @@ function loopStillActive(generation) {
 
 async function startInmateLoop() {
   if (loopRunning || corrlinksLoginBusy || bootVerifyRunning) return;
+  // Pull latest inmate roster from SportsData before grouping the loop.
+  await syncCorrlinksAccountsQuiet({ reason: 'preflight', force: true });
+  if (loopRunning || corrlinksLoginBusy || bootVerifyRunning) return;
   if (!accountsVerifiedOnce) {
     toast('Wait for account verification to finish', 'warn');
     await verifyCorrlinksAccountsOnBoot({ force: true });
@@ -3575,7 +3779,7 @@ async function refreshInmates({ verifyAccounts = true, forceValidation = false }
     setSportsConnected(true);
     renderAccounts(result.accounts);
     log(`Loaded ${result.accounts.length} inmate(s)`, 'success');
-    if (inmateCount) inmateCount.textContent = `${result.accounts.length} inmate${result.accounts.length === 1 ? '' : 's'}`;
+    setInmateCountLabel(result.accounts.length);
     toast(`Loaded ${result.accounts.length} inmates`, 'success');
     setStatusHint(`${result.accounts.length} inmates ready`);
     setStepState({
@@ -3584,6 +3788,7 @@ async function refreshInmates({ verifyAccounts = true, forceValidation = false }
       active: 1,
     });
     inmateCard?.classList.remove('collapsed');
+    startAccountsAutoRefresh();
     if (verifyAccounts && result.accounts.length) {
       if (forceValidation) {
         // User clicked refresh — always re-probe CorrLinks accounts.
@@ -3718,8 +3923,10 @@ function handleLoginResult(status, { quietToast = false } = {}) {
 }
 
 function resetWorkspaceState() {
+  stopAccountsAutoRefresh();
   accounts = [];
   selectedFileKeys = [];
+  lastAccountsSnapshot = null;
   clearVerifiedAccounts();
   bootProbeByEmail = new Map();
   accountsVerifiedOnce = false;
@@ -4212,6 +4419,16 @@ async function init() {
   wireAppUpdates();
   wireCorrlinksLiveStatus();
   setLoginShortcutHint();
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (mainShell?.hidden) return;
+    void syncCorrlinksAccountsQuiet({ reason: 'focus' });
+  });
+  window.addEventListener('focus', () => {
+    if (mainShell?.hidden) return;
+    void syncCorrlinksAccountsQuiet({ reason: 'focus' });
+  });
 
   try {
     const summary = await window.api.getConfigSummary();
