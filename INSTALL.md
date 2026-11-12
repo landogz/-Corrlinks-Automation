@@ -1,4 +1,4 @@
-# Inmate Exchange Auto — Install Guide
+# Inside Scores — Install Guide
 
 Internal desktop app that logs into CorrLinks, opens compose, and pastes Inmate Exchange text from SportsData.
 
@@ -22,15 +22,15 @@ Built installers are in the `release/` folder after `npm run dist`.
 
 | Mac chip | File |
 |----------|------|
-| Apple Silicon (M1/M2/M3/M4) | `Inmate Exchange Auto-0.1.0-arm64.dmg` |
-| Intel | `Inmate Exchange Auto-0.1.0.dmg` or `…-x64.dmg` |
+| Apple Silicon (M1/M2/M3/M4) | `Inside Scores-0.1.0-arm64.dmg` |
+| Intel | `Inside Scores-0.1.0.dmg` or `…-x64.dmg` |
 
 Unsure: Apple menu → **About This Mac** → look for “Chip” (Apple) or “Processor” (Intel).
 
 ### 2) Install the app
 
 1. Open the `.dmg`
-2. Drag **Inmate Exchange Auto** into **Applications**
+2. Drag **Inside Scores** into **Applications**
 3. Eject the DMG
 
 ### 3) First open (unsigned build)
@@ -38,18 +38,18 @@ Unsure: Apple menu → **About This Mac** → look for “Chip” (Apple) or “
 Because this build is not Apple-notarized:
 
 1. Open **Applications**
-2. Right-click **Inmate Exchange Auto** → **Open**
+2. Right-click **Inside Scores** → **Open**
 3. Click **Open** again in the Gatekeeper dialog
 
 (Only needed the first time.)
 
 ### 4) Run and sign in
 
-Launch **Inmate Exchange Auto** → enter SportsData **email** and **password** → **Save login** (remembered under Application Support) → **Refresh inmates** → select inmate → **Login to CorrLinks**.
+Launch **Inside Scores** → enter SportsData **email** and **password** → **Save login** (remembered under Application Support) → **Refresh inmates** → select inmate → **Login to CorrLinks**.
 
 Optional: a `.env` file still works if you prefer. The in-app login overrides it and is saved to:
 
-`~/Library/Application Support/Inmate Exchange Auto/sportsdata-credentials.json`
+`~/Library/Application Support/Inside Scores/sportsdata-credentials.json`
 
 ---
 
@@ -57,13 +57,13 @@ Optional: a `.env` file still works if you prefer. The in-app login overrides it
 
 ### Option A — Installer (recommended)
 
-1. Run `Inmate Exchange Auto Setup 0.1.0.exe`
+1. Run `Inside Scores Setup 0.1.0.exe`
 2. Follow the setup wizard (choose install folder if asked)
 3. Finish — shortcut is created on Desktop / Start Menu
 
 ### Option B — Portable
 
-1. Copy `Inmate Exchange Auto 0.1.0.exe` (portable) to a folder, e.g. `C:\Tools\InmateExchangeAuto\`
+1. Copy `Inside Scores 0.1.0.exe` (portable) to a folder, e.g. `C:\Tools\InmateExchangeAuto\`
 2. Run that `.exe` (no install needed)
 
 ### First open / SmartScreen
@@ -81,19 +81,19 @@ Example for portable:
 
 ```text
 C:\Tools\InmateExchangeAuto\.env
-C:\Tools\InmateExchangeAuto\Inmate Exchange Auto 0.1.0.exe
+C:\Tools\InmateExchangeAuto\Inside Scores 0.1.0.exe
 ```
 
 Example for installed app (typical):
 
 ```text
-C:\Users\<You>\AppData\Local\Programs\Inmate Exchange Auto\.env
+C:\Users\<You>\AppData\Local\Programs\Inside Scores\.env
 ```
 
 Or:
 
 ```text
-C:\Users\<You>\AppData\Roaming\Inmate Exchange Auto\.env
+C:\Users\<You>\AppData\Roaming\Inside Scores\.env
 ```
 
 Contents:

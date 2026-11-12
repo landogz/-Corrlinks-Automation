@@ -26,15 +26,15 @@ if ! curl -fsS --header "${AUTH_HEADER[@]}" "${API}/releases/${TAG}" >/dev/null 
     --data "$(python3 - <<PY
 import json
 print(json.dumps({
-  "name": f"Inmate Exchange Auto ${VERSION}",
+  "name": f"Inside Scores ${VERSION}",
   "tag_name": "${TAG}",
   "description": f"""## Downloads
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | \`Inmate Exchange Auto-${VERSION}-arm64.dmg\` or \`Inmate Exchange Auto-${VERSION}-arm64-mac.zip\` |
-| macOS (Intel) | \`Inmate Exchange Auto-${VERSION}.dmg\` or \`Inmate Exchange Auto-${VERSION}-mac.zip\` |
-| Windows | \`Inmate Exchange Auto Setup ${VERSION}.exe\` or \`Inmate Exchange Auto ${VERSION}.exe\` (portable) |
+| macOS (Apple Silicon) | \`Inside Scores-${VERSION}-arm64.dmg\` or \`Inside Scores-${VERSION}-arm64-mac.zip\` |
+| macOS (Intel) | \`Inside Scores-${VERSION}.dmg\` or \`Inside Scores-${VERSION}-mac.zip\` |
+| Windows | \`Inside Scores Setup ${VERSION}.exe\` or \`Inside Scores ${VERSION}.exe\` (portable) |
 """
 }))
 PY
@@ -47,12 +47,12 @@ fi
 
 shopt -s nullglob
 FILES=(
-  "release/Inmate Exchange Auto-${VERSION}-arm64.dmg"
-  "release/Inmate Exchange Auto-${VERSION}-arm64-mac.zip"
-  "release/Inmate Exchange Auto-${VERSION}.dmg"
-  "release/Inmate Exchange Auto-${VERSION}-mac.zip"
-  "release/Inmate Exchange Auto Setup ${VERSION}.exe"
-  "release/Inmate Exchange Auto ${VERSION}.exe"
+  "release/Inside Scores-${VERSION}-arm64.dmg"
+  "release/Inside Scores-${VERSION}-arm64-mac.zip"
+  "release/Inside Scores-${VERSION}.dmg"
+  "release/Inside Scores-${VERSION}-mac.zip"
+  "release/Inside Scores Setup ${VERSION}.exe"
+  "release/Inside Scores ${VERSION}.exe"
 )
 
 for file in "${FILES[@]}"; do

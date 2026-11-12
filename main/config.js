@@ -10,7 +10,7 @@ function resolveEnvPath() {
     if (app?.isPackaged) {
       candidates.push(path.join(app.getPath('userData'), '.env'));
       candidates.push(path.join(path.dirname(process.execPath), '.env'));
-      // macOS: Inmate Exchange Auto.app/Contents/MacOS → put .env next to .app
+      // macOS: Inside Scores.app/Contents/MacOS → put .env next to .app
       if (process.platform === 'darwin') {
         const appBundle = path.resolve(process.execPath, '..', '..', '..');
         candidates.push(path.join(path.dirname(appBundle), '.env'));

@@ -75,11 +75,11 @@ function macDmgUrl(version) {
   const v = String(version || '').replace(/^v/, '');
   if (!v) return null;
   const archSuffix = process.arch === 'arm64' ? '-arm64' : '';
-  const file = `Inmate-Exchange-Auto-${v}${archSuffix}.dmg`;
+  const file = `Inside-Scores-${v}${archSuffix}.dmg`;
   return `https://github.com/landogz/-Corrlinks-Automation/releases/download/v${v}/${file}`;
 }
 
-/** Running bundle: …/Inmate Exchange Auto.app */
+/** Running bundle: …/Inside Scores.app */
 function getCurrentAppBundle() {
   return path.resolve(process.execPath, '..', '..', '..');
 }

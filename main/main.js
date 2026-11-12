@@ -105,7 +105,7 @@ function createControlWindow() {
     height: 900,
     minWidth: 960,
     minHeight: 640,
-    title: 'CorrLinks Automation',
+    title: 'Inside Scores',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#0a0f16' : '#f3f6fa',
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     ...(process.platform === 'darwin'

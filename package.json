@@ -1,8 +1,8 @@
 {
   "name": "inmateexchange-auto",
-  "productName": "Inmate Exchange Auto",
-  "version": "0.1.25",
-  "description": "CorrLinks login automation via Electron",
+  "productName": "Inside Scores",
+  "version": "0.1.26",
+  "description": "Inside Scores — CorrLinks login automation via Electron",
   "main": "main/main.js",
   "author": "MJR",
   "private": true,
@@ -36,7 +36,7 @@
   },
   "build": {
     "appId": "com.mjr.inmateexchange.auto",
-    "productName": "Inmate Exchange Auto",
+    "productName": "Inside Scores",
     "copyright": "Copyright © MJR",
     "directories": {
       "output": "release",
@@ -114,7 +114,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Inmate Exchange Auto"
+      "shortcutName": "Inside Scores"
     },
     "publish": [
       {

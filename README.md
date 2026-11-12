@@ -1,4 +1,4 @@
-# CorrLinks Automation (Inmate Exchange Auto)
+# Inside Scores
 
 Desktop app that loads CorrLinks inmate accounts from SportsData, logs into CorrLinks, opens compose, and pastes Inmate Exchange report text.
 
@@ -10,31 +10,31 @@ Get the latest installers from the [Releases](https://github.com/landogz/-Corrli
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inmate Exchange Auto-0.1.13-arm64.dmg` or `Inmate Exchange Auto-0.1.13-arm64-mac.zip` |
-| macOS (Intel) | `Inmate Exchange Auto-0.1.13.dmg` or `Inmate Exchange Auto-0.1.13-mac.zip` |
-| Windows | `Inmate Exchange Auto Setup 0.1.13.exe` or `Inmate Exchange Auto 0.1.13.exe` (portable) |
+| macOS (Apple Silicon) | `Inside Scores-0.1.13-arm64.dmg` or `Inside Scores-0.1.13-arm64-mac.zip` |
+| macOS (Intel) | `Inside Scores-0.1.13.dmg` or `Inside Scores-0.1.13-mac.zip` |
+| Windows | `Inside Scores Setup 0.1.13.exe` or `Inside Scores 0.1.13.exe` (portable) |
 
 ## Install on macOS
 
 Works on macOS 12 or newer, on both Apple Silicon and Intel Macs.
 
-1. Open the matching `.dmg` and drag **Inmate Exchange Auto** into **Applications**.
+1. Open the matching `.dmg` and drag **Inside Scores** into **Applications**.
 2. Run this once in Terminal so macOS allows the unsigned app:
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/Inmate Exchange Auto.app"
+xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 ```
 
-3. Open **Inmate Exchange Auto** from Applications or Launchpad.
+3. Open **Inside Scores** from Applications or Launchpad.
 4. Sign in with SportsData email/password in the app (or use a `.env` — see [Configuration](#configuration)).
 
 ## Install on Windows
 
-1. Run `Inmate Exchange Auto Setup 0.1.13.exe`.
+1. Run `Inside Scores Setup 0.1.13.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
-3. Open **Inmate Exchange Auto** from the Start menu.
+3. Open **Inside Scores** from the Start menu.
 
-`Inmate Exchange Auto 0.1.13.exe` (portable) runs without installing — put `.env` in the same folder as the `.exe` if you use one.
+`Inside Scores 0.1.13.exe` (portable) runs without installing — put `.env` in the same folder as the `.exe` if you use one.
 
 ## Configuration
 
