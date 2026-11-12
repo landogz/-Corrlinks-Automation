@@ -203,6 +203,8 @@ async function openMacInstallerFallback(version = updateState.latestVersion) {
 
 /**
  * Install unsigned Mac update by replacing the .app bundle (bypasses ShipIt codesign).
+ * Relaunch is done from a detached shell after this process fully exits — `open` alone
+ * often fails to bring the new instance frontmost (or races the quitting process).
  */
 function installMacUpdateByReplace(zipPath) {
   if (!zipPath || !fs.existsSync(zipPath)) {
@@ -214,44 +216,99 @@ function installMacUpdateByReplace(zipPath) {
     throw new Error(`Current app bundle not found at ${destApp}`);
   }
 
-  const extractDir = path.join(os.tmpdir(), `iea-update-${Date.now()}`);
-  const scriptPath = path.join(os.tmpdir(), `iea-install-${Date.now()}.sh`);
-  const logPath = path.join(os.tmpdir(), `iea-install-${Date.now()}.log`);
+  const stamp = Date.now();
+  const extractDir = path.join(os.tmpdir(), `iea-update-${stamp}`);
+  const scriptPath = path.join(os.tmpdir(), `iea-install-${stamp}.sh`);
+  const logPath = path.join(os.tmpdir(), `iea-install-${stamp}.log`);
+  const appPid = process.pid;
+  const macOsDir = path.join(destApp, 'Contents/MacOS');
+  const appName = path.basename(destApp, '.app');
+  const binaryPath = path.join(macOsDir, appName);
 
   const script = `#!/bin/bash
-set -euo pipefail
+set -uo pipefail
 ZIP=${JSON.stringify(zipPath)}
 EXTRACT=${JSON.stringify(extractDir)}
 DEST=${JSON.stringify(destApp)}
 LOG=${JSON.stringify(logPath)}
+APP_PID=${JSON.stringify(String(appPid))}
+MACOS_DIR=${JSON.stringify(macOsDir)}
+APP_NAME=${JSON.stringify(appName)}
+BIN=${JSON.stringify(binaryPath)}
+SCRIPT=${JSON.stringify(scriptPath)}
 
 exec > >(tee -a "$LOG") 2>&1
-echo "Installing update from $ZIP"
+echo "Installing update from $ZIP (waiting for pid $APP_PID to exit)"
 rm -rf "$EXTRACT"
 mkdir -p "$EXTRACT"
 ditto -x -k "$ZIP" "$EXTRACT"
-NEW_APP="$(find "$EXTRACT" -name '*.app' -type d | head -n 1 || true)"
+NEW_APP="$(find "$EXTRACT" -name "$APP_NAME.app" -type d | head -n 1 || true)"
+if [[ -z "$NEW_APP" ]]; then
+  NEW_APP="$(find "$EXTRACT" -name '*.app' -type d | head -n 1 || true)"
+fi
 if [[ -z "$NEW_APP" ]]; then
   echo "No .app found inside update zip"
   exit 1
 fi
 echo "Found new app: $NEW_APP"
 
-# Wait until this app process tree exits
-for i in $(seq 1 60); do
-  if ! pgrep -f ${JSON.stringify(path.join(destApp, 'Contents/MacOS'))} >/dev/null 2>&1; then
+# Wait for this Electron process to exit (prefer PID over fuzzy pgrep).
+for i in $(seq 1 120); do
+  if ! kill -0 "$APP_PID" 2>/dev/null; then
+    echo "App pid $APP_PID exited"
     break
   fi
-  sleep 0.5
+  sleep 0.25
 done
+if kill -0 "$APP_PID" 2>/dev/null; then
+  echo "App pid $APP_PID still alive — force kill"
+  kill -TERM "$APP_PID" 2>/dev/null || true
+  sleep 1
+  kill -KILL "$APP_PID" 2>/dev/null || true
+fi
 
+# Sweep leftover helpers still bound to the old bundle path.
+pkill -KILL -f "$MACOS_DIR/" >/dev/null 2>&1 || true
+sleep 1
+
+echo "Replacing $DEST"
 rm -rf "$DEST"
 ditto "$NEW_APP" "$DEST"
 xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
+chmod -R u+rwX "$DEST" 2>/dev/null || true
+
 echo "Launching $DEST"
-open "$DEST"
+launched=0
+for attempt in 1 2 3 4 5 6; do
+  echo "Relaunch attempt $attempt"
+  open -n "$DEST" >/dev/null 2>&1 || true
+  sleep 1.5
+  if pgrep -f "$MACOS_DIR/" >/dev/null 2>&1; then
+    launched=1
+    break
+  fi
+  if [[ -x "$BIN" ]]; then
+    echo "open did not stick — spawning binary directly"
+    nohup "$BIN" >/dev/null 2>&1 &
+    sleep 1.5
+    if pgrep -f "$MACOS_DIR/" >/dev/null 2>&1; then
+      launched=1
+      break
+    fi
+  fi
+done
+
+/usr/bin/osascript -e "tell application \\"$APP_NAME\\" to activate" >/dev/null 2>&1 || \\
+  /usr/bin/osascript -e "tell application \\"System Events\\" to set frontmost of first process whose name is \\"$APP_NAME\\" to true" >/dev/null 2>&1 || true
+
+if [[ "$launched" -eq 1 ]]; then
+  echo "Relaunch ok"
+else
+  echo "Relaunch FAILED — open the app from Applications manually"
+fi
+
 rm -rf "$EXTRACT"
-rm -f ${JSON.stringify(scriptPath)}
+rm -f "$SCRIPT"
 `;
 
   fs.writeFileSync(scriptPath, script, { mode: 0o755 });
@@ -268,10 +325,15 @@ rm -f ${JSON.stringify(scriptPath)}
     installMode: 'replace',
   });
 
+  // Forceful exit so the install script is not stuck waiting on a half-quit app.
   setTimeout(() => {
     markQuitForUpdate();
-    app.quit();
-  }, 400);
+    try {
+      app.exit(0);
+    } catch (_) {
+      app.quit();
+    }
+  }, 350);
 
   return { ok: true, mode: 'replace', logPath, ...updateState };
 }
@@ -410,9 +472,17 @@ function registerUpdateIpc(options = {}) {
 
     const updater = getAutoUpdater();
     markQuitForUpdate();
-    setImmediate(() => {
-      updater.quitAndInstall(false, true);
-    });
+    // isSilent=false, isForceRunAfter=true — quit + relaunch after Windows install.
+    setTimeout(() => {
+      try {
+        updater.quitAndInstall(false, true);
+      } catch (error) {
+        console.error('[updater] quitAndInstall failed:', error);
+        try {
+          app.exit(0);
+        } catch (_) {}
+      }
+    }, 250);
     return { ok: true };
   });
 }

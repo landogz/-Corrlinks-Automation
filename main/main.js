@@ -719,8 +719,12 @@ app.whenReady().then(() => {
   registerIpc();
   registerUpdateIpc({
     allowQuitForUpdate: () => {
-      // Restart-to-update must not show the normal close confirmation.
+      // Restart-to-update must not show the normal close confirmation,
+      // and CorrLinks embeds must not keep the process alive.
       allowAppClose = true;
+      try {
+        forceCloseCorrWindow();
+      } catch (_) {}
     },
   });
   createControlWindow();
