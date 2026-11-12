@@ -87,9 +87,10 @@
             />
           </div>
 
-          <label class="check login-remember">
-            <input id="sdRemember" type="checkbox" checked />
-            Remember email and password on this computer
+          <label class="check login-remember" for="sdRemember">
+            <input id="sdRemember" type="checkbox" />
+            <span class="check-ui" aria-hidden="true"></span>
+            <span class="check-text">Remember email and password on this computer</span>
           </label>
 
           <p id="loginError" class="login-error" hidden role="alert"></p>
@@ -646,13 +647,15 @@
           </select>
         </label>
         <input id="logSearch" type="search" placeholder="Search log…" aria-label="Search log" />
-        <label class="check tight">
+        <label class="check tight" for="logAutoScroll">
           <input id="logAutoScroll" type="checkbox" checked />
-          Auto-scroll
+          <span class="check-ui" aria-hidden="true"></span>
+          <span class="check-text">Auto-scroll</span>
         </label>
-        <label class="check tight">
+        <label class="check tight" for="logMask">
           <input id="logMask" type="checkbox" />
-          Mask emails
+          <span class="check-ui" aria-hidden="true"></span>
+          <span class="check-text">Mask emails</span>
         </label>
         <button id="btnCopyLog" type="button" class="ghost tiny">Copy</button>
         <button id="btnClearLog" type="button" class="ghost tiny" title="Clear log (⌘K)">Clear</button>

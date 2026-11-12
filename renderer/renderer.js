@@ -692,6 +692,12 @@ function showLoginScreen() {
   mainShell.hidden = true;
   document.body.classList.add('is-login');
   document.body.classList.remove('is-app');
+  // Close anything that can sit above the login form and eat clicks.
+  if (logBackdrop) logBackdrop.hidden = true;
+  if (logDrawer) logDrawer.hidden = true;
+  document.body.classList.remove('log-open', 'account-menu-open');
+  hideCorrEmbedNow();
+  Promise.resolve(window.api?.forceStopCorrlinks?.()).catch(() => {});
   scheduleCorrPaneBounds();
 }
 
@@ -3967,7 +3973,13 @@ async function checkUpdatesBeforeLogin() {
     }
     updateBusy = true;
     renderUpdateUi({ ...updateStatus, state: 'checking', message: 'Checking for updates…' });
-    const result = await window.api.checkForUpdates();
+    // Never leave Sign in disabled if the updater hangs.
+    const result = await Promise.race([
+      window.api.checkForUpdates(),
+      new Promise((resolve) =>
+        setTimeout(() => resolve({ state: 'error', error: 'Update check timed out' }), 12000)
+      ),
+    ]);
     // Clear busy BEFORE opening the dialog — otherwise Download stays disabled
     // while we wait for the user to close Updates.
     updateBusy = false;
@@ -4119,8 +4131,19 @@ async function init() {
 }
 
 
+// Direct click fallback — ensures Sign in works even if a parent swallows submit.
+btnSaveLogin?.addEventListener('click', (event) => {
+  if (btnSaveLogin.disabled) return;
+  // Let the form's submit handler run via requestSubmit when available.
+  if (typeof sportsdataForm?.requestSubmit === 'function') {
+    event.preventDefault();
+    sportsdataForm.requestSubmit();
+  }
+});
+
 sportsdataForm.addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (btnSaveLogin?.disabled && btnSaveLogin.classList.contains('loading')) return;
   btnSaveLogin.disabled = true;
   btnSaveLogin.classList.add('loading');
   btnSaveLogin.textContent = 'Signing in…';
@@ -4156,6 +4179,17 @@ sdPassword?.addEventListener('input', () => {
   sdPassword.classList.remove('is-invalid');
   if (loginError && !loginError.hidden) setLoginError('');
 });
+
+// Explicit toggle — native checkbox hit-testing is unreliable under Electron overlays.
+document.querySelector('label.login-remember')?.addEventListener('click', (event) => {
+  if (!sdRemember || sdRemember.disabled) return;
+  // Let the real input handle its own click; otherwise toggle from label/ui click.
+  if (event.target === sdRemember) return;
+  event.preventDefault();
+  sdRemember.checked = !sdRemember.checked;
+  sdRemember.dispatchEvent(new Event('change', { bubbles: true }));
+});
+
 document.getElementById('btnToggleLoginPassword')?.addEventListener('click', () => {
   if (!sdPassword) return;
   const show = sdPassword.type === 'password';
@@ -4490,13 +4524,17 @@ document.addEventListener('keydown', (event) => {
 
 /** Native WebContentsView paints above HTML — hide it under modals/drawers/menus. */
 function isCorrEmbedBlocked() {
+  // Login gate must never leave a native CorrLinks view stealing clicks.
+  if (document.body.classList.contains('is-login')) return true;
+  if (loginScreen && !loginScreen.hidden) return true;
+  if (mainShell?.hidden) return true;
   if (loopInitializingActive || bootVerifyRunning) return true;
   if (loopCountdownActive) return true;
   if (activeMainTab !== 'automate') return true;
   if (document.body.classList.contains('log-open')) return true;
   if (document.body.classList.contains('account-menu-open')) return true;
   if (accountDropdown && !accountDropdown.hidden) return true;
-  const dialogs = [updatesDialog, aboutDialog, shortcutsDialog, loopDoneDialog];
+  const dialogs = [updatesDialog, aboutDialog, shortcutsDialog, loopDoneDialog, closeConfirmDialog];
   if (dialogs.some((dialog) => dialog && dialog.open)) return true;
   return false;
 }

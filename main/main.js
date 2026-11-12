@@ -717,7 +717,12 @@ app.whenReady().then(() => {
   uiPreferences = loadUiPreferences();
   applyThemePreference(uiPreferences.theme, { persist: false });
   registerIpc();
-  registerUpdateIpc();
+  registerUpdateIpc({
+    allowQuitForUpdate: () => {
+      // Restart-to-update must not show the normal close confirmation.
+      allowAppClose = true;
+    },
+  });
   createControlWindow();
   nativeTheme.on('updated', () => {
     applyWindowChromeTheme();

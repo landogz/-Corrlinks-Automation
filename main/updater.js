@@ -7,6 +7,17 @@ const path = require('path');
 /** @type {import('electron').BrowserWindow | null} */
 let hostWindow = null;
 
+/** Optional hook from main — skip close-confirm when quitting to install an update. */
+let allowQuitForUpdate = null;
+
+function markQuitForUpdate() {
+  if (typeof allowQuitForUpdate === 'function') {
+    try {
+      allowQuitForUpdate();
+    } catch (_) {}
+  }
+}
+
 /** @type {import('electron-updater').AppUpdater | null} */
 let autoUpdater = null;
 
@@ -258,6 +269,7 @@ rm -f ${JSON.stringify(scriptPath)}
   });
 
   setTimeout(() => {
+    markQuitForUpdate();
     app.quit();
   }, 400);
 
@@ -287,7 +299,10 @@ function setupAutoUpdater(win) {
   // Renderer checks for updates on the login screen before SportsData auth.
 }
 
-function registerUpdateIpc() {
+function registerUpdateIpc(options = {}) {
+  if (typeof options.allowQuitForUpdate === 'function') {
+    allowQuitForUpdate = options.allowQuitForUpdate;
+  }
   ipcMain.handle('update:getStatus', async () => ({
     ...updateState,
     currentVersion: currentVersion(),
@@ -394,6 +409,7 @@ function registerUpdateIpc() {
     }
 
     const updater = getAutoUpdater();
+    markQuitForUpdate();
     setImmediate(() => {
       updater.quitAndInstall(false, true);
     });
