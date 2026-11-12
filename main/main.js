@@ -587,9 +587,9 @@ function registerIpc() {
   ipcMain.handle('corrlinks:reload', async () => reloadCorrlinksPanel());
   ipcMain.handle('corrlinks:openExternal', async () => openCorrlinksExternal());
   ipcMain.handle('corrlinks:clearSession', async () => clearCorrlinksPanelSession());
-  ipcMain.handle('corrlinks:warmPanel', async () => {
+  ipcMain.handle('corrlinks:warmPanel', async (_event, payload = {}) => {
     try {
-      return await warmCorrlinksPanel();
+      return await warmCorrlinksPanel(payload || {});
     } catch (error) {
       return { ok: false, message: error.message || 'Failed to open CorrLinks panel' };
     }

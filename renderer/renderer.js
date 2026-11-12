@@ -414,8 +414,17 @@ function setAccountMenuOpen(open) {
   scheduleCorrPaneBounds();
 }
 
+/** True once we intentionally opened the native CorrLinks embed for this session. */
+let corrEmbedRevealed = false;
+
 function setCorrPlaceholderVisible(visible) {
-  if (corrPlaceholder) corrPlaceholder.classList.toggle('is-hidden', !visible);
+  if (!corrPlaceholder) return;
+  // Never cover a live/warming WebContentsView with the empty-state HTML.
+  if (corrEmbedRevealed && visible) {
+    corrPlaceholder.classList.add('is-hidden');
+    return;
+  }
+  corrPlaceholder.classList.toggle('is-hidden', !visible);
 }
 
 /** Live compose/login progress shown in the CorrLinks card header. */
@@ -2083,10 +2092,7 @@ function selectInmate(id, { autoSend = false } = {}) {
   updateActionButtons();
   if (autoSend && inmate && !loopRunning && !corrlinksLoginBusy && !bootVerifyRunning) {
     // Selecting an inmate should Send — not compose-only paste.
-    // Close the picker + paint the CorrLinks embed before login prep.
     closeInmateOptions();
-    syncCorrPaneBounds();
-    void window.api?.warmCorrlinksPanel?.().catch(() => {});
     // Start TXT download immediately so compose does not wait after login.
     const files = selectedExchangeFiles(inmate);
     if (files.length && window.api?.prefetchExchangeFiles) {
@@ -2098,11 +2104,14 @@ function selectInmate(id, { autoSend = false } = {}) {
         })
         .catch(() => {});
     }
-    queueMicrotask(() => {
+    // Reveal + size the native webview BEFORE login so CorrLinks is visible immediately.
+    void (async () => {
+      await revealCorrlinksEmbed();
       if (!inmateHasCorrlinksLogin(inmate)) return;
+      if (corrlinksLoginBusy || loopRunning || bootVerifyRunning) return;
       if (files.length > 0) startCorrlinksSend();
       else startCorrlinksLogin();
-    });
+    })();
   }
 }
 
@@ -2327,8 +2336,7 @@ async function startCorrlinksLogin(options = {}) {
   if (corrlinksLoginBusy) return null;
 
   // Show the webview immediately — do not wait on SportsData refresh.
-  syncCorrPaneBounds();
-  void window.api?.warmCorrlinksPanel?.().catch(() => {});
+  void revealCorrlinksEmbed();
   if (send && window.api?.prefetchExchangeFiles) {
     const files = selectedExchangeFiles(inmate);
     if (files.length) {
@@ -3616,6 +3624,7 @@ function forceStopSingleCorrlinks() {
   corrlinksOpGeneration += 1;
   // Keep busy until the panel is actually destroyed — clearing early lets a new
   // Send race the dying login and crash main with "Object has been destroyed".
+  resetCorrEmbedReveal();
   hideCorrEmbedNow();
   setCorrlinksConnected(false);
   setStatusHint('Force-stopped');
@@ -3626,6 +3635,7 @@ function forceStopSingleCorrlinks() {
   Promise.resolve(window.api?.forceStopCorrlinks?.())
     .catch(() => {})
     .finally(() => {
+      resetCorrEmbedReveal();
       hideCorrEmbedNow();
       corrlinksLoginBusy = false;
       updateActionButtons();
@@ -3952,6 +3962,7 @@ function handleLoginResult(status, { quietToast = false } = {}) {
 
 function resetWorkspaceState() {
   stopAccountsAutoRefresh();
+  resetCorrEmbedReveal();
   accounts = [];
   selectedFileKeys = [];
   lastAccountsSnapshot = null;
@@ -4914,18 +4925,12 @@ function hideCorrEmbedNow() {
 }
 
 /**
- * Map #corrPane to the Electron WebContentsView.
- * Clip to the visible .app area above the status bar so a scrolled/off-screen
- * pane never paints the embed over the footer or left column.
+ * Compute #corrPane bounds for the native WebContentsView (null when blocked/too small).
  */
-function syncCorrPaneBounds() {
+function measureCorrPaneBounds() {
   const pane = document.getElementById('corrPane');
-  if (!pane || !window.api?.setCorrBounds) return;
-
-  if (isCorrEmbedBlocked()) {
-    hideCorrEmbedNow();
-    return;
-  }
+  if (!pane) return null;
+  if (isCorrEmbedBlocked()) return null;
 
   const rect = pane.getBoundingClientRect();
   const app = document.querySelector('.app')?.getBoundingClientRect();
@@ -4950,14 +4955,72 @@ function syncCorrPaneBounds() {
   const bottom = Math.max(top, Math.min(rect.bottom, clipBottom));
   const width = Math.max(0, right - left);
   const height = Math.max(0, bottom - top);
-
-  const visible = width >= 8 && height >= 8;
-  window.api.setCorrBounds({
+  if (width < 8 || height < 8) return null;
+  return {
     x: Math.round(left),
     y: Math.round(top),
-    width: visible ? Math.round(width) : 0,
-    height: visible ? Math.round(height) : 0,
+    width: Math.round(width),
+    height: Math.round(height),
+  };
+}
+
+/**
+ * Hide the empty-state HTML and open the native CorrLinks view at real pane bounds.
+ * Await this before login/send so the site is visible immediately.
+ */
+async function revealCorrlinksEmbed() {
+  closeInmateOptions();
+  corrEmbedRevealed = true;
+  setCorrPlaceholderVisible(false);
+  setCorrPanelBusy('Opening CorrLinks…');
+  // Force layout so getBoundingClientRect is accurate after combobox close.
+  void document.getElementById('corrPane')?.offsetWidth;
+  let bounds = measureCorrPaneBounds();
+  if (!bounds) {
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    bounds = measureCorrPaneBounds();
+  }
+  try {
+    if (bounds && window.api?.setCorrBounds) {
+      await window.api.setCorrBounds(bounds);
+    }
+    if (window.api?.warmCorrlinksPanel) {
+      await window.api.warmCorrlinksPanel({ bounds: bounds || undefined });
+    }
+  } catch (_) {}
+  syncCorrPaneBounds();
+  requestAnimationFrame(() => {
+    syncCorrPaneBounds();
+    setTimeout(syncCorrPaneBounds, 50);
   });
+  return bounds;
+}
+
+function resetCorrEmbedReveal() {
+  corrEmbedRevealed = false;
+  setCorrPanelBusy(null);
+  setCorrPlaceholderVisible(true);
+}
+
+/**
+ * Map #corrPane to the Electron WebContentsView.
+ * Clip to the visible .app area above the status bar so a scrolled/off-screen
+ * pane never paints the embed over the footer or left column.
+ */
+function syncCorrPaneBounds() {
+  if (!window.api?.setCorrBounds) return;
+
+  if (isCorrEmbedBlocked()) {
+    hideCorrEmbedNow();
+    return;
+  }
+
+  const bounds = measureCorrPaneBounds();
+  if (!bounds) {
+    hideCorrEmbedNow();
+    return;
+  }
+  window.api.setCorrBounds(bounds);
 }
 
 function escapeHtml(value) {

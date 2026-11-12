@@ -3712,12 +3712,19 @@ async function loginToCorrlinks({
 /**
  * Create the CorrLinks embed and start navigating to login immediately so the
  * webview paints while the renderer finishes prep / SportsData sync.
+ * Pass bounds from the renderer so the view is never created at 0×0.
  */
-async function warmCorrlinksPanel() {
+async function warmCorrlinksPanel(options = {}) {
   if (!hostWindow || hostWindow.isDestroyed()) {
     return { ok: false, message: 'Control window is not ready' };
   }
+  if (options.bounds && typeof options.bounds === 'object') {
+    setCorrBounds(options.bounds);
+  }
   const win = getOrCreateWindow();
+  if (options.bounds && typeof options.bounds === 'object') {
+    setCorrBounds(options.bounds);
+  }
   win.show();
   win.focus();
   setStatus({
@@ -3726,7 +3733,11 @@ async function warmCorrlinksPanel() {
   });
   // Do not await — caller wants the pane visible ASAP.
   void loadLoginPage(win, { clearSession: false, timeoutMs: 9000, fast: true }).catch(() => {});
-  return { ok: true };
+  return {
+    ok: true,
+    bounds: { ...corrBounds },
+    visible: corrBounds.width >= 8 && corrBounds.height >= 8,
+  };
 }
 
 async function loginInmate(

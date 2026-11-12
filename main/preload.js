@@ -44,7 +44,7 @@ contextBridge.exposeInMainWorld('api', {
   reloadCorrlinksPanel: () => ipcRenderer.invoke('corrlinks:reload'),
   openCorrlinksExternal: () => ipcRenderer.invoke('corrlinks:openExternal'),
   clearCorrlinksPanel: () => ipcRenderer.invoke('corrlinks:clearSession'),
-  warmCorrlinksPanel: () => ipcRenderer.invoke('corrlinks:warmPanel'),
+  warmCorrlinksPanel: (payload) => ipcRenderer.invoke('corrlinks:warmPanel', payload || {}),
   prefetchExchangeFiles: (payload) => ipcRenderer.invoke('exchange:prefetch', payload),
   zoomCorrlinksPanel: (payload) => ipcRenderer.invoke('corrlinks:zoom', payload),
   hasCorrlinksSession: () => ipcRenderer.invoke('corrlinks:hasSession'),
