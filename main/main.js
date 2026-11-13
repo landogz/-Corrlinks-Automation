@@ -494,7 +494,7 @@ function registerIpc() {
     }
   });
 
-  /** Compose one recipient on the current CorrLinks session (no login). */
+  /** Compose (+ optional Send) one recipient on the current CorrLinks session (no login). */
   ipcMain.handle('corrlinks:composeInmate', async (_event, payload = {}) => {
     try {
       const inmate = cachedAccounts.find((a) => String(a.id) === String(payload.inmateId));
@@ -508,15 +508,19 @@ function registerIpc() {
         };
       }
       const template = resolveTemplateOptions(payload);
+      const send = Boolean(payload.send);
       const status = await composeForInmate(inmate, {
         fetchFileText: (url) => sportsData.fetchExchangeFileText(url),
         subject: template.subject,
         exchangeFiles: template.exchangeFiles,
+        send,
       });
-      const ok =
-        status.state === 'success' ||
-        Boolean(status.recipient?.ok) ||
-        Boolean(status.bodyResult?.ok);
+      const ok = send
+        ? Boolean(status.sent) ||
+          (Boolean(status.sendSummary?.sent) && !status.sendSummary?.failed)
+        : status.state === 'success' ||
+          Boolean(status.recipient?.ok) ||
+          Boolean(status.bodyResult?.ok);
       return { ok, status };
     } catch (error) {
       return {
@@ -613,7 +617,7 @@ function registerIpc() {
     } catch (error) {
       return {
         ok: false,
-        message: error.message || 'Failed to load Inmate Exchange history',
+        message: error.message || 'Failed to load exchange history',
         rows: [],
       };
     }
@@ -634,7 +638,7 @@ function registerIpc() {
     } catch (error) {
       return {
         ok: false,
-        message: error.message || 'Failed to generate Inmate Exchange All',
+        message: error.message || 'Failed to generate today’s exchange export',
         items: [],
       };
     }
@@ -673,7 +677,7 @@ function registerIpc() {
         payload.suggestedName ||
         (payload.date ? `inmate-exchange-all-${payload.date}.txt` : 'inmate-exchange-all.txt');
       const result = await dialog.showSaveDialog(controlWindow, {
-        title: 'Save Inmate Exchange All',
+        title: 'Save exchange export',
         defaultPath: suggested,
         filters: [{ name: 'Text files', extensions: ['txt'] }],
       });

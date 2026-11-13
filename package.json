@@ -1,7 +1,7 @@
 {
   "name": "inmateexchange-auto",
   "productName": "Inside Scores",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "description": "Inside Scores — CorrLinks login automation via Electron",
   "main": "main/main.js",
   "author": "MJR",

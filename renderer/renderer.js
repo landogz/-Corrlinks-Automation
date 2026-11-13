@@ -107,10 +107,13 @@ const inmateSelectedDisplay = document.getElementById('inmateSelectedDisplay');
 const inmateSelectedName = document.getElementById('inmateSelectedName');
 const inmateSelectedId = document.getElementById('inmateSelectedId');
 const btnClearInmate = document.getElementById('btnClearInmate');
-const historyStatusFilter = document.getElementById('historyStatusFilter');
 const historyDateFilter = document.getElementById('historyDateFilter');
 const historyControls = document.getElementById('historyControls');
+const historyControlsFind = document.getElementById('historyControlsFind');
 const historyToolbarActions = document.getElementById('historyToolbarActions');
+const historyTableEmpty = document.getElementById('historyTableEmpty');
+const historyPreviewHeading = document.getElementById('historyPreviewHeading');
+const btnHistoryEmptyGenerate = document.getElementById('btnHistoryEmptyGenerate');
 const loopCountdown = document.getElementById('loopCountdown');
 const loopCountdownNum = document.getElementById('loopCountdownNum');
 const loopCountdownNext = document.getElementById('loopCountdownNext');
@@ -153,6 +156,8 @@ const inmateCollapsedSummary = document.getElementById('inmateCollapsedSummary')
 const composeCollapsedSummary = document.getElementById('composeCollapsedSummary');
 const inmateSearch = document.getElementById('inmateSearch');
 const inmateOptions = document.getElementById('inmateOptions');
+const inmateEmpty = document.getElementById('inmateEmpty');
+const inmateCombobox = document.getElementById('inmateCombobox');
 const stepIndicator = document.getElementById('stepIndicator');
 const sdConn = document.getElementById('sdConn');
 const clConn = document.getElementById('clConn');
@@ -260,6 +265,7 @@ const mainTabs = document.getElementById('mainTabs');
 const automateView = document.getElementById('automateView');
 const historyView = document.getElementById('historyView');
 const historyHint = document.getElementById('historyHint');
+const historyPreviewEmpty = document.getElementById('historyPreviewEmpty');
 const historyPreviewMeta = document.getElementById('historyPreviewMeta');
 const historyPreviewBody = document.getElementById('historyPreviewBody');
 const btnHistoryRefresh = document.getElementById('btnHistoryRefresh');
@@ -619,11 +625,34 @@ function applyLogFilter() {
   });
 }
 
+/** Map Electron/infra noise to short operator-facing copy (tech detail stays in log). */
+function operatorFriendlyMessage(message, { fallback = 'Something went wrong' } = {}) {
+  const raw = String(message || '').trim();
+  if (!raw) return fallback;
+  if (/object has been destroyed|corrlinks panel was closed|force.?stop/i.test(raw)) {
+    return 'CorrLinks window closed — try again';
+  }
+  if (/script failed to execute|execution context was destroyed/i.test(raw)) {
+    return 'CorrLinks page was still loading — try again';
+  }
+  if (/ERR_ABORTED|-3|net::ERR/i.test(raw)) {
+    return 'Network interrupted while loading CorrLinks';
+  }
+  if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|network error|fetch failed/i.test(raw)) {
+    return 'Could not reach the server — check your connection';
+  }
+  if (/session expired|re-login failed|401|419/i.test(raw)) {
+    return 'SportsData session expired — sign in again';
+  }
+  return raw;
+}
+
 function toast(message, level = 'info') {
   const el = document.createElement('div');
   const kind = normalizeLogLevel(level);
   el.className = `toast ${kind === 'success' ? 'success' : kind === 'error' ? 'error' : kind === 'warn' ? 'warn' : 'info'}`;
-  el.textContent = message;
+  el.textContent =
+    kind === 'error' || kind === 'warn' ? operatorFriendlyMessage(message) : String(message || '');
   toastHost.appendChild(el);
   setTimeout(() => el.remove(), 3200);
 }
@@ -639,10 +668,10 @@ function setSportsConnected(on) {
   sportsConnected = Boolean(on);
   sdConn.classList.toggle('on', sportsConnected);
   sdConn.classList.toggle('warn', !sportsConnected);
-  sdConn.title = sportsConnected ? 'SportsData connected' : 'SportsData not connected';
+  sdConn.title = sportsConnected ? 'SportsData online' : 'SportsData offline';
   const sdLabel = sdConn.querySelector('.status-label');
   if (sdLabel) {
-    sdLabel.textContent = sportsConnected ? 'SportsData connected' : 'SportsData offline';
+    sdLabel.textContent = sportsConnected ? 'SportsData online' : 'SportsData offline';
   }
 }
 
@@ -654,11 +683,12 @@ function setCorrlinksConnected(on, warn = false) {
   const clLabel = clConn.querySelector('.status-label');
   if (clLabel) {
     clLabel.textContent = corrlinksConnected
-      ? 'CorrLinks: connected'
+      ? 'CorrLinks online'
       : warn
-        ? 'CorrLinks: attention'
-        : 'CorrLinks: not logged in';
+        ? 'CorrLinks needs attention'
+        : 'CorrLinks offline';
   }
+  clConn.title = clLabel?.textContent || 'CorrLinks connection';
   setCorrPanelConnection(corrlinksConnected, warn);
 }
 
@@ -700,9 +730,12 @@ function updateSignedInChip(email) {
   if (signedInEmail) {
     signedInEmail.textContent = value || '';
     signedInEmail.title = value;
-    signedInEmail.hidden = !value;
   }
-  if (btnAccountMenu) btnAccountMenu.title = value || 'Account menu';
+  if (btnAccountMenu) {
+    const label = value ? `Account menu · ${value}` : 'Account menu';
+    btnAccountMenu.title = label;
+    btnAccountMenu.setAttribute('aria-label', label);
+  }
   if (accountAvatar) accountAvatar.textContent = initialsFromEmail(value);
   if (accountMenuEmail) {
     accountMenuEmail.textContent = value || 'Not signed in';
@@ -1049,8 +1082,15 @@ function renderFilesList(
     });
   }
   if (filesEmpty) {
-    filesEmpty.textContent = emptyMessage;
-    filesEmpty.hidden = sendable.length > 0 || weeklyLoading;
+    const title = filesEmpty.querySelector('h3');
+    const detail = filesEmpty.querySelector('p');
+    if (title) title.textContent = weeklyLoading ? 'Loading files…' : 'No sendable files';
+    if (detail) {
+      detail.textContent = weeklyLoading
+        ? 'Fetching the weekly update from SportsData…'
+        : emptyMessage || 'This inmate has no exchange files ready to send.';
+    }
+    filesEmpty.hidden = sendable.length > 0;
   }
   if (filesBlock) filesBlock.hidden = false;
 }
@@ -1796,7 +1836,7 @@ function updateActionButtons({ canLogin } = {}) {
   btnStartLoop.title = !accountsVerifiedOnce
     ? 'Wait for account verification to finish'
     : hasLoopQueue
-      ? 'Regroup recipients and run New Message loop (accounts already verified)'
+      ? 'Regroup recipients and auto-send to each (accounts already verified)'
       : 'Load inmates with CorrLinks credentials first';
   btnStopLoop.disabled = !canForceStop;
   btnStopLoop.hidden = !canForceStop;
@@ -2072,11 +2112,18 @@ function setInmateCountLabel(count) {
   inmateCount.textContent = `${n} inmate${n === 1 ? '' : 's'}`;
 }
 
+function syncInmateEmptyState() {
+  const empty = !accounts.length;
+  if (inmateEmpty) inmateEmpty.hidden = !empty;
+  if (inmateCombobox) inmateCombobox.hidden = empty;
+}
+
 function renderAccounts(list) {
   accounts = Array.isArray(list) ? list : [];
   lastAccountsSnapshot = accountsContentSnapshot(accounts);
   selectedFileKeys = [];
   setInmateCountLabel(accounts.length);
+  syncInmateEmptyState();
   if (!accounts.length) {
     accountSelect.value = '';
     inmateSearch.value = '';
@@ -2116,6 +2163,7 @@ function applyAccountsLive(list) {
   lastAccountsSnapshot = snapshot;
   setInmateCountLabel(accounts.length);
   inmateSearch.disabled = !accounts.length;
+  syncInmateEmptyState();
 
   if (!accounts.length) {
     accountSelect.value = '';
@@ -2243,7 +2291,7 @@ async function syncCorrlinksAccountsQuiet({ reason = 'poll', force = false } = {
 }
 
 /**
- * Single inmate run: CorrLinks login + compose paste. Never sends (loop uses compose only).
+ * Single inmate run: CorrLinks login + compose, optionally auto-send.
  * @param {{ quietToast?: boolean, send?: boolean }} [options]
  * @returns {Promise<object|null>} status or null if skipped/busy
  */
@@ -2417,7 +2465,7 @@ async function startCorrlinksLogin(options = {}) {
   }
 }
 
-/** Single-inmate send for every selected exchange file (not used by Start loop). */
+/** Single-inmate send for every selected exchange file. */
 async function startCorrlinksSend(options = {}) {
   return startCorrlinksLogin({ ...options, send: true });
 }
@@ -3077,13 +3125,19 @@ async function waitLoopGap(ms, { current, total, nextLabel }) {
   return !loopAbort;
 }
 
-function statusLooksGood(status) {
+function statusLooksGood(status, { requireSend = false } = {}) {
+  if (!status) return false;
+  if (requireSend) {
+    return Boolean(
+      status.sent ||
+        (Number(status.sendSummary?.sent) > 0 && !status.sendSummary?.failed)
+    );
+  }
   return Boolean(
-    status &&
-      (status.state === 'success' ||
-        (status.state === 'locked' && status.loggedIn) ||
-        status.recipient?.ok ||
-        status.bodyResult?.ok)
+    status.state === 'success' ||
+      (status.state === 'locked' && status.loggedIn) ||
+      status.recipient?.ok ||
+      status.bodyResult?.ok
   );
 }
 
@@ -3175,10 +3229,11 @@ async function startCorrlinksAccountLogin(group, options = {}) {
 }
 
 /**
- * Compose one recipient on the current CorrLinks session (no login).
+ * Compose (+ Send) one recipient on the current CorrLinks session (no login).
+ * Used by Start loop after the account is already logged in.
  */
 async function startCorrlinksCompose(inmate, options = {}) {
-  const { quietToast = false } = options;
+  const { quietToast = false, send = true } = options;
   if (!inmate) return null;
   if (corrlinksLoginBusy) return null;
 
@@ -3192,20 +3247,37 @@ async function startCorrlinksCompose(inmate, options = {}) {
     return null;
   }
   const label = `${inmate.name || 'Inmate'} (${inmate.inmate_id || inmate.id})`;
-  setStatusHint(`Compose: ${label}…`);
-  setCorrPanelBusy('Composing…');
+  setStatusHint(send ? `Sending: ${label}…` : `Compose: ${label}…`);
+  setCorrPanelBusy(send ? 'Sending…' : 'Composing…');
   await revealCorrlinksEmbed().catch(() => null);
   log(
-    `Compose recipient ${label}` +
+    `${send ? 'Send' : 'Compose'} recipient ${label}` +
       (template.mode === 'weekly' ? ` · weekly ${template.league} · subject ${template.subject}` : '') +
-      ' · no send',
+      (send ? ' · auto-send all files' : ' · no send'),
     'info'
   );
   try {
-    const result = await window.api.composeCorrlinksInmate({ inmateId: inmate.id, template });
+    const result = await window.api.composeCorrlinksInmate({
+      inmateId: inmate.id,
+      template,
+      send: Boolean(send),
+    });
     handleLoginResult(result.status || {}, { quietToast });
-    setStatusHint((result.status && result.status.message) || 'Compose finished (not sent)');
-    return result.status || null;
+    const status = result.status || null;
+    if (send) {
+      const summary = status?.sendSummary;
+      if (summary) {
+        log(
+          `Send ${label} · ${summary.sent}/${summary.total} sent` +
+            (summary.failed ? ` · ${summary.failed} failed` : ''),
+          summary.failed ? 'warn' : 'success'
+        );
+      }
+      setStatusHint(status?.message || (status?.sent ? 'Sent' : 'Send did not complete'));
+    } else {
+      setStatusHint(status?.message || 'Compose finished (not sent)');
+    }
+    return status;
   } catch (error) {
     log(error.message || String(error), 'error');
     if (!quietToast) toast(error.message || String(error), 'error');
@@ -3313,10 +3385,10 @@ async function startInmateLoop() {
   const probeOk = [...probeByEmail.values()].filter((s) => probeAccountUsable(s)).length;
   const probeFail = probeTotal - probeOk;
   const probeSummary = `Using startup verify · ${probeOk} usable · ${probeFail} locked/failed · skip re-check`;
-  log(`Loop start — ${probeSummary} · then regroup · then compose`, 'info');
+  log(`Loop start — ${probeSummary} · then regroup · then send`, 'info');
   toast(
     probeOk
-      ? `Starting loop · ${probeOk} verified account(s)`
+      ? `Starting send loop · ${probeOk} verified account(s)`
       : 'No usable accounts from startup verify',
     probeOk ? 'success' : 'error'
   );
@@ -3375,11 +3447,11 @@ async function startInmateLoop() {
 
   if (!loopStillActive(myGeneration)) return;
 
-  // ── Ask user before showing CorrLinks / starting compose ──
+  // ── Open CorrLinks and send to each regrouped recipient ──
   const composeRecipientCount = recipientTotal - skipped.length;
   const planLines = [
-    `========== REGROUPED LOOP PLAN ==========`,
-    `${groups.length} usable account(s) · ${composeRecipientCount} recipient(s)`,
+    `========== REGROUPED SEND LOOP ==========`,
+    `${groups.length} usable account(s) · ${composeRecipientCount} recipient(s) · auto-send`,
     '',
   ];
   groups.forEach((group, i) => {
@@ -3413,23 +3485,23 @@ async function startInmateLoop() {
   const planText = planLines.join('\n').trim();
   log(planText, 'info');
 
-  // Verification done — open CorrLinks and start the regrouped compose plan.
+  // Verification done — open CorrLinks and start the regrouped send plan.
   setLoopInitializingOverlay(null);
   setLoopCountdownOverlay();
   await revealCorrlinksEmbed().catch(() => null);
 
   log(
-    `Phase 3 — one login per account, then compose ${composeRecipientCount} recipient(s) (no send)`,
+    `Phase 3 — one login per account, then send to ${composeRecipientCount} recipient(s)`,
     'info'
   );
   toast(
-    `Starting · ${groups.length} account(s) · ${composeRecipientCount} recipient(s)`,
+    `Sending · ${groups.length} account(s) · ${composeRecipientCount} recipient(s)`,
     'success'
   );
 
   for (let i = 0; i < groups.length; i += 1) {
     if (!loopStillActive(myGeneration)) {
-      log(`Compose force-stopped after account ${i}/${groups.length}`, 'warn');
+      log(`Send loop force-stopped after account ${i}/${groups.length}`, 'warn');
       break;
     }
 
@@ -3437,13 +3509,13 @@ async function startInmateLoop() {
     const viaSecond = group.via === 'second';
     const accountLabel = maskSensitive(group.email);
 
-    // Skip immediate re-login — rest 30s, then login again for compose.
+    // Rest before login so CorrLinks is not hammered between accounts.
     log(
-      `Resting ${LOOP_RELOGIN_REST_MS / 1000}s before login again · ${accountLabel} (${i + 1}/${groups.length})`,
+      `Resting ${LOOP_RELOGIN_REST_MS / 1000}s before login · ${accountLabel} (${i + 1}/${groups.length})`,
       'info'
     );
     setLoopProgress(
-      `Compose account ${i + 1}/${groups.length} · ${accountLabel} · resting ${LOOP_RELOGIN_REST_MS / 1000}s…`
+      `Send account ${i + 1}/${groups.length} · ${accountLabel} · resting ${LOOP_RELOGIN_REST_MS / 1000}s…`
     );
     const rested = await waitLoopGap(LOOP_RELOGIN_REST_MS, {
       current: i,
@@ -3451,17 +3523,17 @@ async function startInmateLoop() {
       nextLabel: accountLabel,
     });
     if (!rested || !loopStillActive(myGeneration)) {
-      log(`Compose stopped during rest before ${accountLabel}`, 'warn');
+      log(`Send loop stopped during rest before ${accountLabel}`, 'warn');
       break;
     }
 
     setLoopProgress(
-      `Compose account ${i + 1}/${groups.length} · ${accountLabel}` +
+      `Send account ${i + 1}/${groups.length} · ${accountLabel}` +
         (viaSecond ? ' (2nd)' : '') +
         ' · logging in…'
     );
     log(
-      `—— Compose account ${i + 1}/${groups.length}: ${accountLabel}` +
+      `—— Send account ${i + 1}/${groups.length}: ${accountLabel}` +
         ` [${viaSecond ? 'SECONDARY' : 'PRIMARY'}]` +
         ` · ${group.inmates.length} recipient(s) ——`,
       viaSecond ? 'warn' : 'info'
@@ -3478,10 +3550,10 @@ async function startInmateLoop() {
     );
     if (!loopStillActive(myGeneration)) break;
 
-    // If compose login soft-failed (not locked), rest 30s and try once more.
+    // If login soft-failed (not locked), rest and try once more.
     if (shouldRetryProbeLogin(loginStatus)) {
       log(
-        `Compose login soft-failed for ${accountLabel} — resting ${LOOP_RELOGIN_REST_MS / 1000}s then retry…`,
+        `Send login soft-failed for ${accountLabel} — resting ${LOOP_RELOGIN_REST_MS / 1000}s then retry…`,
         'warn'
       );
       await logoutCorrlinksQuiet();
@@ -3502,7 +3574,7 @@ async function startInmateLoop() {
       );
       if (!loopStillActive(myGeneration)) break;
     } else if (loginStatus?.state === 'locked' && !probeAccountUsable(loginStatus)) {
-      log(`Compose login locked for ${accountLabel} — not retrying`, 'warn');
+      log(`Send login locked for ${accountLabel} — not retrying`, 'warn');
     }
 
     const loginOk = probeAccountUsable(loginStatus);
@@ -3516,7 +3588,7 @@ async function startInmateLoop() {
 
       for (let r = 0; r < group.inmates.length; r += 1) {
         if (!loopStillActive(myGeneration)) {
-          log(`Compose force-stopped during ${accountLabel} after ${r}/${group.inmates.length}`, 'warn');
+          log(`Send loop force-stopped during ${accountLabel} after ${r}/${group.inmates.length}`, 'warn');
           break;
         }
         const inmate = group.inmates[r];
@@ -3524,13 +3596,13 @@ async function startInmateLoop() {
         setLoopProgress(
           `Account ${i + 1}/${groups.length}` +
             (viaSecond ? ' · 2nd' : '') +
-            ` · Recipient ${r + 1}/${group.inmates.length} · ${recipLabel}`
+            ` · Sending ${r + 1}/${group.inmates.length} · ${recipLabel}`
         );
         log(`—— Recipient ${r + 1}/${group.inmates.length}: ${recipLabel} ——`, 'info');
         selectInmate(inmate.id);
-        const status = await startCorrlinksCompose(inmate, { quietToast: true });
+        const status = await startCorrlinksCompose(inmate, { quietToast: true, send: true });
         if (!loopStillActive(myGeneration)) break;
-        if (statusLooksGood(status)) okCount += 1;
+        if (statusLooksGood(status, { requireSend: true })) okCount += 1;
         else failCount += 1;
       }
     }
@@ -4190,26 +4262,51 @@ async function runUpdateAction(preferredAction) {
 
 /** Remember embed was live before a modal forced it off-screen. */
 let modalPausedCorrReveal = false;
+/** @type {ReturnType<typeof setInterval>|null} */
+let modalCorrHideTimer = null;
+
+function stopModalCorrHideWatch() {
+  if (modalCorrHideTimer) {
+    clearInterval(modalCorrHideTimer);
+    modalCorrHideTimer = null;
+  }
+}
+
+function anyModalDialogOpen() {
+  return [updatesDialog, aboutDialog, shortcutsDialog, loopDoneDialog].some(
+    (dialog) => dialog && dialog.open
+  );
+}
+
+function forceHideCorrForModal() {
+  void window.api?.setCorrBounds?.({ x: 0, y: 0, width: 0, height: 0, force: true });
+}
 
 function openModalDialog(dialog) {
   if (!dialog || typeof dialog.showModal !== 'function') return false;
-  // Native WebContentsView paints above HTML and steals clicks — collapse it fully.
+  // Native WebContentsView paints above HTML and steals clicks — collapse + detach it.
   if (corrEmbedRevealed) modalPausedCorrReveal = true;
   corrEmbedRevealed = false;
-  void window.api?.setCorrBounds?.({ x: 0, y: 0, width: 0, height: 0, force: true });
+  forceHideCorrForModal();
   if (!dialog.open) dialog.showModal();
   // Keep re-asserting hide while open (status sync / ensureVisible can revive the view).
   const keepHidden = () => {
-    if (!dialog.open) return;
-    void window.api?.setCorrBounds?.({ x: 0, y: 0, width: 0, height: 0, force: true });
+    if (!anyModalDialogOpen()) {
+      stopModalCorrHideWatch();
+      return;
+    }
+    forceHideCorrForModal();
   };
   keepHidden();
   requestAnimationFrame(keepHidden);
   setTimeout(keepHidden, 50);
   setTimeout(keepHidden, 200);
+  stopModalCorrHideWatch();
+  modalCorrHideTimer = setInterval(keepHidden, 120);
   if (!dialog.dataset.modalRevealWired) {
     dialog.dataset.modalRevealWired = '1';
     dialog.addEventListener('close', () => {
+      if (!anyModalDialogOpen()) stopModalCorrHideWatch();
       if (modalPausedCorrReveal || corrlinksLoginBusy || loopRunning) {
         corrEmbedRevealed = true;
         setCorrPlaceholderVisible(false);
@@ -4244,16 +4341,16 @@ function showLoopDoneAlert({ aborted = false, okCount = 0, failCount = 0, recipi
   if (loopDoneMessage) {
     if (aborted) {
       loopDoneMessage.textContent =
-        'The loop was stopped before all recipients were processed.';
+        'The send loop was stopped before all recipients were processed.';
     } else if (failCount > 0 && okCount === 0) {
       loopDoneMessage.textContent =
-        'The loop finished, but no recipients were completed successfully.';
+        'The loop finished, but no messages were sent successfully.';
     } else if (failCount > 0) {
       loopDoneMessage.textContent =
-        'The loop finished with some recipients incomplete.';
+        'The loop finished with some recipients not fully sent.';
     } else {
       loopDoneMessage.textContent =
-        'All recipients in this loop were completed successfully.';
+        'All recipients in this loop were sent successfully.';
     }
   }
   if (loopDoneSummary) {
@@ -4517,9 +4614,11 @@ btnSaveLogin?.addEventListener('click', (event) => {
 sportsdataForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (btnSaveLogin?.disabled && btnSaveLogin.classList.contains('loading')) return;
+  const loginLabel = btnSaveLogin?.querySelector('.btn-label');
   btnSaveLogin.disabled = true;
   btnSaveLogin.classList.add('loading');
-  btnSaveLogin.textContent = 'Signing in…';
+  btnSaveLogin.setAttribute('aria-busy', 'true');
+  if (loginLabel) loginLabel.textContent = 'Signing in…';
   setLoginError('');
   showLoginScreen();
   try {
@@ -4533,14 +4632,15 @@ sportsdataForm.addEventListener('submit', async (event) => {
     await refreshInmates();
   } catch (error) {
     const message = error.message || String(error);
-    setLoginError(message);
+    setLoginError(operatorFriendlyMessage(message, { fallback: 'Sign-in failed' }));
     log(message, 'error');
     toast(message, 'error');
     showLoginScreen();
   } finally {
     btnSaveLogin.disabled = false;
     btnSaveLogin.classList.remove('loading');
-    btnSaveLogin.textContent = 'Sign in';
+    btnSaveLogin.setAttribute('aria-busy', 'false');
+    if (loginLabel) loginLabel.textContent = 'Sign in';
   }
 });
 
@@ -4587,20 +4687,28 @@ mainTabs?.addEventListener('click', (event) => {
 
 btnHistoryRefresh?.addEventListener('click', () => loadExchangeHistory());
 btnHistoryGenerate?.addEventListener('click', () => generateExchangeAllManual());
+btnHistoryEmptyGenerate?.addEventListener('click', () => generateExchangeAllManual());
 
 document.getElementById('historyTable')?.addEventListener('click', (event) => {
   const btn = event.target.closest('button[data-url]');
-  if (!btn) return;
-  const url = decodeURIComponent(btn.dataset.url || '');
-  const date = decodeURIComponent(btn.dataset.date || '');
-  const filename = decodeURIComponent(btn.dataset.filename || 'all.txt');
-  if (btn.classList.contains('hist-preview')) {
-    document.querySelectorAll('#historyTable tbody tr').forEach((tr) => tr.classList.remove('is-active-row'));
-    btn.closest('tr')?.classList.add('is-active-row');
-    previewHistoryRow({ url, date, filename });
-  } else if (btn.classList.contains('hist-download')) {
+  if (btn?.classList.contains('hist-download')) {
+    const url = decodeURIComponent(btn.dataset.url || '');
+    const date = decodeURIComponent(btn.dataset.date || '');
+    const filename = decodeURIComponent(btn.dataset.filename || 'all.txt');
     downloadHistoryRow({ url, date, filename });
+    return;
   }
+  const tr = event.target.closest('tbody tr');
+  if (!tr || !historyDataTable) return;
+  const row = historyDataTable.row(tr).data();
+  if (!row?.url) return;
+  document.querySelectorAll('#historyTable tbody tr').forEach((el) => el.classList.remove('is-active-row'));
+  tr.classList.add('is-active-row');
+  previewHistoryRow({
+    url: row.url,
+    date: row.date || '',
+    filename: row.filename || row.file || 'all.txt',
+  });
 });
 
 btnHistoryCopy?.addEventListener('click', async () => {
@@ -4740,7 +4848,6 @@ historyPreviewSearch?.addEventListener('input', () => {
   applyHistoryPreviewSearch(historyPreviewSearch.value);
 });
 
-historyStatusFilter?.addEventListener('change', () => applyHistoryFilters());
 historyDateFilter?.addEventListener('input', () => applyHistoryFilters());
 
 document.getElementById('btnTemplateDaily')?.addEventListener('click', () => {
@@ -5079,16 +5186,24 @@ function setMainTab(tab) {
   }
 }
 
+function setHistoryPreviewEmptyVisible(visible) {
+  if (historyPreviewEmpty) historyPreviewEmpty.hidden = !visible;
+  if (historyPreviewBody) historyPreviewBody.hidden = Boolean(visible);
+  if (historyPreviewLines) historyPreviewLines.hidden = Boolean(visible);
+}
+
 function renderHistoryPreviewLines(text) {
   const content = text || '';
   const lines = content ? content.split('\n') : [];
+  const hasContent = Boolean(historyPreviewState.url || content);
+  setHistoryPreviewEmptyVisible(!hasContent);
   if (historyPreviewLines) {
     historyPreviewLines.textContent = lines.length
       ? lines.map((_, i) => String(i + 1)).join('\n')
       : '';
   }
-  if (historyPreviewBody) {
-    historyPreviewBody.textContent = content || (historyPreviewState.url ? '(empty file)' : 'No file selected.');
+  if (historyPreviewBody && hasContent) {
+    historyPreviewBody.textContent = content || '(empty file)';
   }
 }
 
@@ -5101,6 +5216,7 @@ function applyHistoryPreviewSearch(query) {
     historyPreviewBody.classList.remove('is-filtered');
     return;
   }
+  setHistoryPreviewEmptyVisible(false);
   const matched = raw.split('\n').filter((line) => line.toLowerCase().includes(q));
   const filtered = matched.length ? matched.join('\n') : '(no matches)';
   if (historyPreviewLines) {
@@ -5114,20 +5230,42 @@ function applyHistoryPreviewSearch(query) {
 
 function setHistoryPreview({ url = null, text = '', date = null, filename = null } = {}) {
   historyPreviewState = { url, text: text || '', date, filename };
+  const isLoading = text === 'Loading preview…';
+  if (historyPreviewHeading) {
+    historyPreviewHeading.textContent = url ? date || 'Preview' : 'Preview';
+    historyPreviewHeading.classList.toggle('has-selection', Boolean(url));
+  }
   if (historyPreviewMeta) {
     historyPreviewMeta.textContent = url
-      ? `${date || '—'} · ${filename || 'all.txt'} · ${(text || '').length.toLocaleString()} chars`
-      : 'Select a day to preview all.txt';
+      ? isLoading
+        ? `${filename || 'export'} · Loading…`
+        : `${filename || 'export'} · ${(text || '').length.toLocaleString()} chars`
+      : 'Select a day to preview the export';
     historyPreviewMeta.title = historyPreviewMeta.textContent;
   }
   if (historyPreviewSearch) {
-    historyPreviewSearch.disabled = !text;
+    historyPreviewSearch.disabled = !text || isLoading;
     historyPreviewSearch.value = '';
   }
   renderHistoryPreviewLines(url ? text || '' : '');
-  if (!url && historyPreviewBody) historyPreviewBody.textContent = 'No file selected.';
-  if (btnHistoryCopy) btnHistoryCopy.disabled = !text;
+  if (btnHistoryCopy) btnHistoryCopy.disabled = !text || isLoading;
   if (btnHistoryDownloadPreview) btnHistoryDownloadPreview.disabled = !url;
+  syncHistoryActiveRow();
+}
+
+function syncHistoryTableEmpty(count) {
+  const empty = Number(count) <= 0;
+  if (historyTableEmpty) historyTableEmpty.hidden = !empty;
+  document.querySelector('.history-table-wrap')?.classList.toggle('is-empty', empty);
+}
+
+function syncHistoryActiveRow() {
+  if (!historyDataTable) return;
+  const activeUrl = historyPreviewState.url || '';
+  document.querySelectorAll('#historyTable tbody tr').forEach((tr) => {
+    const data = historyDataTable.row(tr).data();
+    tr.classList.toggle('is-active-row', Boolean(activeUrl && data?.url === activeUrl));
+  });
 }
 
 function destroyHistoryTable() {
@@ -5155,10 +5293,13 @@ function renderHistoryTable(rows) {
   }
 
   const data = Array.isArray(rows) ? rows : [];
+  syncHistoryTableEmpty(data.length);
   if (historyDataTable) {
     historyDataTable.clear();
     historyDataTable.rows.add(data);
     historyDataTable.draw();
+    applyHistoryFilters();
+    syncHistoryActiveRow();
     return;
   }
 
@@ -5173,7 +5314,7 @@ function renderHistoryTable(rows) {
     autoWidth: false,
     ordering: true,
     orderClasses: false,
-    dom: '<"history-dt-toolbar"<"history-dt-search"f><"history-dt-length"l>>rtip',
+    dom: '<"history-dt-toolbar"<"history-dt-search"f>>rt<"history-table-foot"<"history-dt-length"l>ip>',
     columns: [
       { data: 'date', title: 'Date' },
       {
@@ -5193,12 +5334,6 @@ function renderHistoryTable(rows) {
       },
       {
         data: null,
-        title: 'Status',
-        orderable: false,
-        render: () => '<span class="history-status-pill"><span class="chip-dot" aria-hidden="true"></span>Ready</span>',
-      },
-      {
-        data: null,
         title: 'Actions',
         orderable: false,
         searchable: false,
@@ -5207,12 +5342,14 @@ function renderHistoryTable(rows) {
           const date = encodeURIComponent(row.date || '');
           const filename = encodeURIComponent(row.filename || 'all.txt');
           return `<div class="history-row-actions">
-            <button type="button" class="ghost tiny hist-preview" data-url="${url}" data-date="${date}" data-filename="${filename}">Preview</button>
             <button type="button" class="ghost tiny hist-download" data-url="${url}" data-date="${date}" data-filename="${filename}">Download</button>
           </div>`;
         },
       },
     ],
+    createdRow(row) {
+      row.classList.add('history-row-selectable');
+    },
     language: {
       search: '',
       searchPlaceholder: 'Search history…',
@@ -5221,15 +5358,18 @@ function renderHistoryTable(rows) {
       infoEmpty: 'No files',
       zeroRecords: 'No matching exchange files',
     },
+    drawCallback() {
+      syncHistoryActiveRow();
+    },
     initComplete() {
       const toolbar = document.querySelector('.history-dt-toolbar');
-      if (toolbar && historyControls) {
+      if (toolbar && historyControlsFind) {
         const search = toolbar.querySelector('.history-dt-search');
-        const length = toolbar.querySelector('.history-dt-length');
-        if (search) historyControls.insertBefore(search, historyToolbarActions || null);
-        if (length) historyControls.insertBefore(length, historyToolbarActions || null);
+        if (search) historyControlsFind.appendChild(search);
         toolbar.remove();
       }
+      applyHistoryFilters();
+      syncHistoryActiveRow();
     },
   });
 }
@@ -5237,7 +5377,6 @@ function renderHistoryTable(rows) {
 function applyHistoryFilters() {
   if (!historyDataTable) return;
   const dateQ = String(historyDateFilter?.value || '').trim();
-  // Column 0 = Date. Status filter is reserved for future statuses (all rows are Ready today).
   historyDataTable.column(0).search(dateQ, false, true).draw();
 }
 
@@ -5259,9 +5398,9 @@ async function loadExchangeHistory() {
   btnHistoryRefresh.disabled = true;
   btnHistoryRefresh.classList.add('loading');
   if (btnHistoryGenerate) btnHistoryGenerate.disabled = true;
-  if (historyHint) historyHint.textContent = 'Loading from /inmate-exchange/all…';
-  setStatusHint('Loading Inmate Exchange All…');
-  log('Loading Inmate Exchange All from SportsData…', 'info');
+  if (historyHint) historyHint.textContent = 'Loading SportsData exchange files…';
+  setStatusHint('Loading exchange history…');
+  log('Loading SportsData exchange history…', 'info');
   try {
     const result = await window.api.fetchExchangeHistory({ withCharacters: true });
     if (!result?.ok) throw new Error(result?.message || 'Failed to load history');
@@ -5271,15 +5410,16 @@ async function loadExchangeHistory() {
     if (historyHint) {
       historyHint.textContent =
         count > 0
-          ? `${count} file(s) from /inmate-exchange/all` +
+          ? `${count} exchange file(s)` +
             (skippedNoOdds ? ` · ${skippedNoOdds} “No odds” hidden` : '')
           : skippedNoOdds
             ? `No odds days only · ${skippedNoOdds} hidden`
-            : result.message || 'No files returned';
+            : result.message || 'No exchange files found';
     }
     historyRowsCache = result.rows || [];
     if (btnHistoryExport) btnHistoryExport.disabled = historyRowsCache.length === 0;
     renderHistoryTable(historyRowsCache);
+    syncHistoryTableEmpty(historyRowsCache.length);
     log(
       `History loaded · ${count} file(s)` +
         (skippedNoOdds ? ` · skipped ${skippedNoOdds} “No odds”` : ''),
@@ -5312,24 +5452,33 @@ async function generateExchangeAllManual() {
   const date = String(historyGenerateDate?.value || '').trim() || null;
   btnHistoryGenerate.disabled = true;
   btnHistoryGenerate.classList.add('loading');
+  if (btnHistoryEmptyGenerate) btnHistoryEmptyGenerate.disabled = true;
   if (btnHistoryRefresh) btnHistoryRefresh.disabled = true;
   const label = date || 'today';
-  if (historyHint) historyHint.textContent = `Generating All export · ${label}…`;
-  setStatusHint(`Generating Inmate Exchange All · ${label}…`);
-  log(
-    `Manual generate All export` + (date ? ` · date=${date}` : '') + ' · POST /inmate-exchange/all',
-    'info'
-  );
+  if (historyHint) historyHint.textContent = `Exporting for date · ${label}…`;
+  setStatusHint(`Exporting exchange for ${label}…`);
+  log(`Exporting exchange for date` + (date ? ` · date=${date}` : ''), 'info');
   try {
     const result = await window.api.generateExchangeAll({ date });
     if (!result?.ok) throw new Error(result?.message || 'Generate failed');
     const summary =
       result.message ||
-      `All export ready` + (result.date ? ` · ${result.date}` : date ? ` · ${date}` : '');
+      `Export ready` + (result.date ? ` · ${result.date}` : date ? ` · ${date}` : '');
     log(summary, 'success');
     toast(summary, 'success');
     setStatusHint(summary);
     await loadExchangeHistory();
+    const previewDate = result.date || date;
+    if (previewDate) {
+      const row = (historyRowsCache || []).find((r) => r.date === previewDate);
+      if (row?.url) {
+        previewHistoryRow({
+          url: row.url,
+          date: row.date,
+          filename: row.filename || row.file || 'all.txt',
+        });
+      }
+    }
   } catch (error) {
     const message = error.message || String(error);
     if (historyHint) historyHint.textContent = 'Generate failed';
@@ -5339,6 +5488,7 @@ async function generateExchangeAllManual() {
   } finally {
     btnHistoryGenerate.disabled = false;
     btnHistoryGenerate.classList.remove('loading');
+    if (btnHistoryEmptyGenerate) btnHistoryEmptyGenerate.disabled = false;
     if (btnHistoryRefresh) btnHistoryRefresh.disabled = false;
   }
 }
@@ -5364,10 +5514,11 @@ async function previewHistoryRow({ url, date, filename }) {
     log(`Preview ${result.date || date}: ${(result.characters || 0).toLocaleString()} chars`, 'info');
     setStatusHint(`Preview ready · ${(result.characters || 0).toLocaleString()} chars`);
   } catch (error) {
+    const message = error.message || String(error);
     setHistoryPreview({ url: null, text: '', date: null, filename: null });
-    if (historyPreviewBody) historyPreviewBody.textContent = error.message || String(error);
-    log(error.message || String(error), 'error');
-    toast(error.message || String(error), 'error');
+    log(message, 'error');
+    toast(message, 'error');
+    setStatusHint('Preview failed');
   }
 }
 
@@ -5438,9 +5589,11 @@ document.querySelectorAll('.collapse-toggle').forEach((btn) => {
 window.__syncCorrPaneBounds = syncCorrPaneBounds;
 
 function exportHistoryCsv() {
-  const rows = historyRowsCache || [];
+  const rows = historyDataTable
+    ? historyDataTable.rows({ search: 'applied' }).data().toArray()
+    : historyRowsCache || [];
   if (!rows.length) {
-    toast('No history rows to export', 'warn');
+    toast('No filtered rows to export', 'warn');
     return;
   }
   const header = ['date', 'filename', 'characters', 'url'];
@@ -5460,7 +5613,7 @@ function exportHistoryCsv() {
   a.download = 'inmate-exchange-history.csv';
   a.click();
   URL.revokeObjectURL(a.href);
-  toast('CSV exported', 'success');
+  toast(`CSV exported · ${rows.length} row(s)`, 'success');
 }
 
 function wireShellUi() {
@@ -5501,7 +5654,14 @@ function wireShellUi() {
     renderUpdateUi(updateStatus);
     openModalDialog(aboutDialog);
   });
-  btnShortcuts?.addEventListener('click', () => openModalDialog(shortcutsDialog));
+  btnShortcuts?.addEventListener('click', () => {
+    setAccountMenuOpen(false);
+    openModalDialog(shortcutsDialog);
+  });
+  document.getElementById('btnShortcutsClose')?.addEventListener('click', (event) => {
+    event.preventDefault();
+    if (shortcutsDialog?.open) shortcutsDialog.close();
+  });
   logSearch?.addEventListener('input', applyLogFilter);
 
   sdConn?.addEventListener('click', () => {

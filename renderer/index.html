@@ -35,18 +35,18 @@
             alt=""
             aria-hidden="true"
           />
-          <p class="login-kicker">CorrLinks workflow</p>
+          <p class="login-kicker">SportsData operators</p>
           <h1 class="login-title">Inside Scores</h1>
           <p id="loginVersion" class="login-version tabular">v…</p>
           <p class="login-lead">
-            Sign in with your SportsData operator account to load inmates and run CorrLinks workflows.
+            Sign in with your SportsData account to load inmates and send through CorrLinks.
           </p>
         </div>
 
         <ul class="login-points" aria-label="What you can do after sign-in">
           <li>Load inmate accounts</li>
-          <li>Compose &amp; send CorrLinks mail</li>
-          <li>Multi-file continuation</li>
+          <li>Send exchange files via CorrLinks</li>
+          <li>Run multi-recipient loops</li>
         </ul>
 
         <form id="sportsdataForm" class="form login-form" autocomplete="on">
@@ -96,7 +96,10 @@
           <p id="loginError" class="login-error" hidden role="alert"></p>
 
           <div class="row login-actions">
-            <button id="btnSaveLogin" type="submit">Sign in</button>
+            <button id="btnSaveLogin" type="submit" aria-busy="false">
+              <span class="btn-label">Sign in</span>
+              <span class="spinner" aria-hidden="true"></span>
+            </button>
           </div>
         </form>
 
@@ -136,7 +139,7 @@
           />
           <div class="brand-text">
             <h1>Inside Scores</h1>
-            <p class="sub">Inmate to CorrLinks compose</p>
+            <p class="sub">Inmate exchange · CorrLinks</p>
           </div>
         </div>
 
@@ -176,17 +179,6 @@
             <span id="logBadge" class="icon-badge" hidden aria-hidden="true"></span>
           </button>
 
-          <button
-            id="btnShortcuts"
-            type="button"
-            class="icon-only"
-            title="Keyboard shortcuts (?)"
-            aria-label="Keyboard shortcuts"
-            aria-haspopup="dialog"
-          >
-            <span class="shortcut-glyph" aria-hidden="true">?</span>
-          </button>
-
           <div class="account-menu" id="accountMenu">
             <button
               id="btnAccountMenu"
@@ -194,10 +186,11 @@
               class="account-trigger"
               aria-haspopup="menu"
               aria-expanded="false"
-              title=""
+              aria-label="Account menu"
+              title="Account menu"
             >
               <span id="accountAvatar" class="account-avatar" aria-hidden="true">?</span>
-              <span id="signedInEmail" class="signed-in-email truncate"></span>
+              <span id="signedInEmail" class="signed-in-email truncate sr-only"></span>
               <svg class="ui-icon chevron-down" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
@@ -217,6 +210,9 @@
               </div>
               <button type="button" class="account-menu-item" role="menuitem" id="btnCopyEmail">
                 Copy email
+              </button>
+              <button type="button" class="account-menu-item" role="menuitem" id="btnShortcuts" aria-haspopup="dialog">
+                Keyboard shortcuts
               </button>
               <button type="button" class="account-menu-item" role="menuitem" id="btnCheckUpdatesMenu" data-update-action="check">
                 Check for updates
@@ -266,6 +262,10 @@
                   <div class="field-head">
                     <label for="inmateSearch">Inmate account</label>
                     <span id="inmateCount" class="field-meta tabular">0 inmates</span>
+                  </div>
+                  <div id="inmateEmpty" class="empty-state empty-state-inline" hidden>
+                    <h3>No inmates loaded</h3>
+                    <p class="muted">Refresh inmates from SportsData to get started.</p>
                   </div>
                   <div class="combobox" id="inmateCombobox">
                     <div class="combobox-control">
@@ -341,7 +341,10 @@
                         <span id="filesHint" class="muted"></span>
                       </div>
                       <ul id="filesList" class="files-list"></ul>
-                      <p id="filesEmpty" class="empty-inline muted" hidden>No sendable files for this inmate.</p>
+                      <div id="filesEmpty" class="empty-state empty-state-inline" hidden>
+                        <h3>No sendable files</h3>
+                        <p class="muted">This inmate has no exchange files ready to send.</p>
+                      </div>
                     </div>
                   </div>
 
@@ -379,7 +382,7 @@
                         type="button"
                         class="action-secondary"
                         disabled
-                        title="Load inmates with CorrLinks credentials first"
+                        title="Login each CorrLinks account and auto-send to all regrouped recipients"
                       >
                         Start loop
                       </button>
@@ -451,9 +454,9 @@
                       <rect x="3" y="4" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/>
                       <path d="M3 9h18" stroke="currentColor" stroke-width="1.5"/>
                     </svg>
-                    <h3>No active CorrLinks session</h3>
-                    <p class="muted">Select an inmate and log in to open CorrLinks here</p>
-                    <button type="button" class="action-secondary" id="btnCorrLoginCta">Login to CorrLinks</button>
+                    <h3>CorrLinks is ready</h3>
+                    <p class="muted">Select an inmate with exchange files, then send a message.</p>
+                    <button type="button" class="action-secondary" id="btnCorrLoginCta">Send message</button>
                   </div>
                   <div id="corrErrorBanner" class="corr-error-banner" hidden>
                     <p id="corrErrorMessage">CorrLinks failed to load.</p>
@@ -479,41 +482,36 @@
               <div class="history-toolbar">
                 <div class="history-toolbar-text">
                   <h2>Exchange history</h2>
-                  <p class="muted" id="historyHint">From SportsData · /inmate-exchange/all</p>
+                  <p class="muted" id="historyHint">SportsData exchange files</p>
                 </div>
               </div>
               <div class="history-controls" id="historyControls">
-                <label class="history-filter">
-                  <span class="sr-only">Status</span>
-                  <select id="historyStatusFilter" aria-label="Filter by status">
-                    <option value="all">All statuses</option>
-                    <option value="ready">Ready</option>
-                  </select>
-                </label>
-                <label class="history-filter">
-                  <span class="sr-only">Date</span>
-                  <input id="historyDateFilter" type="search" placeholder="Filter date…" aria-label="Filter by date" />
-                </label>
+                <div class="history-controls-find" id="historyControlsFind">
+                  <label class="history-filter">
+                    <span class="sr-only">Date</span>
+                    <input id="historyDateFilter" type="search" placeholder="Filter date…" aria-label="Filter by date" />
+                  </label>
+                </div>
                 <div class="history-toolbar-actions" id="historyToolbarActions">
                   <label class="history-filter history-generate-date">
-                    <span class="sr-only">Generate date</span>
+                    <span class="sr-only">Export date</span>
                     <input
                       id="historyGenerateDate"
                       type="date"
-                      aria-label="Date for Manual generate"
-                      title="Optional date for Manual generate (All export)"
+                      aria-label="Date for exchange export"
+                      title="Date for SportsData exchange export"
                     />
                   </label>
                   <button
                     id="btnHistoryGenerate"
                     type="button"
                     class="ghost history-ctrl-btn"
-                    title="POST /inmate-exchange/all — generate All export"
+                    title="Generate exchange export for the selected date"
                   >
-                    <span class="btn-label">Manual generate</span>
+                    <span class="btn-label">Export for date</span>
                     <span class="spinner" aria-hidden="true"></span>
                   </button>
-                  <button id="btnHistoryExport" type="button" class="ghost history-ctrl-btn" title="Export visible rows as CSV" disabled>
+                  <button id="btnHistoryExport" type="button" class="ghost history-ctrl-btn" title="Export filtered rows as CSV" disabled>
                     Export CSV
                   </button>
                   <button id="btnHistoryRefresh" type="button" class="ghost icon-btn history-ctrl-btn" title="Refresh history">
@@ -524,13 +522,17 @@
                 </div>
               </div>
               <div class="history-table-wrap">
+                <div id="historyTableEmpty" class="empty-state history-table-empty" hidden>
+                  <h3>No exchange files</h3>
+                  <p class="muted">Generate an export for a date to populate this list.</p>
+                  <button type="button" class="action-secondary" id="btnHistoryEmptyGenerate">Export for date</button>
+                </div>
                 <table id="historyTable" class="display history-table" style="width: 100%">
                   <thead>
                     <tr>
                       <th>Date</th>
                       <th>File</th>
                       <th>Characters</th>
-                      <th>Status</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
@@ -541,8 +543,8 @@
             <aside class="history-preview card" aria-label="TXT preview">
               <div class="history-preview-head">
                 <div class="history-preview-titles">
-                  <h2>Preview</h2>
-                  <p id="historyPreviewMeta" class="muted truncate">Select a day to preview all.txt</p>
+                  <h2 id="historyPreviewHeading">Preview</h2>
+                  <p id="historyPreviewMeta" class="muted truncate">Select a day to preview the export</p>
                 </div>
                 <div class="history-preview-actions">
                   <button id="btnHistoryCopy" type="button" class="ghost" disabled>Copy</button>
@@ -561,8 +563,18 @@
                 </label>
               </div>
               <div class="history-preview-frame">
-                <pre id="historyPreviewLines" class="history-preview-lines" aria-hidden="true"></pre>
-                <pre id="historyPreviewBody" class="history-preview-body" aria-live="polite">No file selected.</pre>
+                <div id="historyPreviewEmpty" class="empty-state history-preview-empty">
+                  <svg class="empty-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.5"/>
+                    <path d="M14 3v5h5" stroke="currentColor" stroke-width="1.5"/>
+                  </svg>
+                  <h3>No file selected</h3>
+                  <p class="muted">Choose a day from the history list to preview the export.</p>
+                </div>
+                <div class="history-preview-code" id="historyPreviewCode">
+                  <pre id="historyPreviewLines" class="history-preview-lines" aria-hidden="true"></pre>
+                  <pre id="historyPreviewBody" class="history-preview-body" aria-live="polite" hidden></pre>
+                </div>
               </div>
             </aside>
           </div>
@@ -575,7 +587,7 @@
             <span class="dot"></span><span class="status-label">SportsData offline</span>
           </button>
           <button type="button" class="status-pill" id="clConn" title="CorrLinks connection">
-            <span class="dot"></span><span class="status-label">CorrLinks: not logged in</span>
+            <span class="dot"></span><span class="status-label">CorrLinks offline</span>
           </button>
         </div>
         <span id="statusHint" class="status-hint status-hint-chip">
@@ -680,14 +692,14 @@
         <h3>Keyboard shortcuts</h3>
         <dl class="shortcut-list">
           <div><dt><kbd>⌘/Ctrl</kbd> + <kbd>R</kbd></dt><dd>Refresh inmates</dd></div>
-          <div><dt><kbd>⌘/Ctrl</kbd> + <kbd>L</kbd></dt><dd>Login to CorrLinks</dd></div>
+          <div><dt><kbd>⌘/Ctrl</kbd> + <kbd>L</kbd></dt><dd>Send message</dd></div>
           <div><dt><kbd>⌘/Ctrl</kbd> + <kbd>J</kbd></dt><dd>Toggle status log</dd></div>
           <div><dt><kbd>⌘/Ctrl</kbd> + <kbd>K</kbd></dt><dd>Clear log</dd></div>
           <div><dt><kbd>?</kbd></dt><dd>Show this help</dd></div>
           <div><dt><kbd>Esc</kbd></dt><dd>Close drawers and dialogs</dd></div>
         </dl>
         <div class="row">
-          <button value="cancel" class="ghost">Close</button>
+          <button type="button" class="ghost" id="btnShortcutsClose" value="cancel">Close</button>
         </div>
       </form>
     </dialog>
@@ -704,15 +716,15 @@
             aria-hidden="true"
           />
           <div class="about-hero-text">
-            <p class="about-kicker">CorrLinks workflow</p>
+            <p class="about-kicker">Desktop app</p>
             <h3 class="about-title">Inside Scores</h3>
             <p id="aboutVersion" class="about-version tabular">v…</p>
           </div>
         </div>
 
         <p class="about-lead">
-          Desktop workflow for SportsData inmate exchange files and CorrLinks compose —
-          login, paste, and send with optional multi-file continuation.
+          Inside Scores loads SportsData inmate exchange files and sends them through CorrLinks —
+          with single-inmate send and multi-recipient loops.
         </p>
 
         <dl class="about-meta">

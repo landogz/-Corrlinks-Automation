@@ -33,13 +33,20 @@ function setCorrBoundsHold(on) {
 function applyCorrViewBounds(next) {
   if (!corrView || !hostWindow || hostWindow.isDestroyed()) return;
   try {
+    const visible = next.width >= 8 && next.height >= 8;
     corrView.setBounds(next);
     if (typeof corrView.setVisible === 'function') {
-      corrView.setVisible(next.width >= 8 && next.height >= 8);
+      corrView.setVisible(visible);
     }
-    // Keep the embed above HTML chrome.
-    if (typeof hostWindow.contentView?.addChildView === 'function') {
-      hostWindow.contentView.addChildView(corrView);
+    // Visible: keep above HTML. Hidden (modals/menus): detach so clicks reach dialogs.
+    if (visible) {
+      hostWindow.contentView?.addChildView?.(corrView);
+    } else {
+      try {
+        hostWindow.contentView?.removeChildView?.(corrView);
+      } catch (_) {
+        /* already detached */
+      }
     }
   } catch (_) {}
 }
@@ -3029,8 +3036,8 @@ async function prepareNextCompose(win) {
 
 /**
  * Compose each exchange file as its own CorrLinks message.
- * When send=true (single inmate only): automatically Send part 1, then 2, then 3…
- * When send=false: keep legacy paste-first-part-only behavior for the loop.
+ * When send=true: automatically Send part 1, then 2, then 3… (single inmate or loop).
+ * When send=false: paste first part only (compose preview, no Send click).
  */
 async function composeAllParts(win, {
   recipientName,
