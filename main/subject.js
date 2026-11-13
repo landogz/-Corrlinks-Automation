@@ -63,16 +63,16 @@ function previousWeekday(weekday) {
 
 /**
  * CorrLinks subject from APP_TIMEZONE (default America/New_York):
- * - Outside 1:00–5:59: today's short weekday only — e.g. Tuesday → "tue"
- * - 1:00am up to (but not including) 6:00am: "yesterday & today" e.g. "mon & tue"
+ * - 1:30am up to (but not including) 5:00am: "yesterday & today" e.g. "thu & fri"
+ * - Otherwise: today's short weekday only — e.g. "fri"
  */
 function buildCorrlinksSubject(now = new Date(), timeZone = getAppTimezone()) {
   const today = zonedParts(now, timeZone);
   const todayAbbr = weekdayAbbr(today.weekday);
-  const hour = today.hour;
+  const minutes = today.hour * 60 + today.minute;
 
-  // 1am–6am window: hours 1..5 only. From 6:00 onward → just today ("tue").
-  if (hour >= 1 && hour < 6) {
+  // 1:30am (90) inclusive → 5:00am (300) exclusive.
+  if (minutes >= 90 && minutes < 300) {
     return `${previousWeekday(today.weekday)} & ${todayAbbr}`;
   }
 

@@ -69,7 +69,7 @@ The app will:
 
 - log in with the primary CorrLinks account (fallback to second if locked)
 - open compose
-- set subject from `APP_TIMEZONE` (today’s short day e.g. `tue`; between 1am and 6am → `mon & tue`)
+- set subject from `APP_TIMEZONE` (today’s short day e.g. `fri`; 1:30am–4:59am → `thu & fri`)
 - paste Inmate Exchange TXT file contents (skips `*_empty.txt`; part 1 only for now — no Send yet)
 
 **Start loop:** probes each CorrLinks account for lock first, then composes recipients one-by-one (To cleared each time). 10s pause only when switching accounts.
