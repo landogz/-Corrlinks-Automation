@@ -907,6 +907,101 @@ body.is-login .toast-host {
   padding: 6px 14px;
 }
 
+.app-verifying-card.is-review .loop-initializing-spinner,
+.app-verifying-card.is-review .app-verifying-progress,
+.app-verifying-card.is-review .app-verifying-percent {
+  display: none;
+}
+
+.app-verifying-failed {
+  width: min(420px, 86vw);
+  margin-top: 4px;
+  text-align: left;
+}
+
+.app-verifying-failed[hidden] {
+  display: none !important;
+}
+
+.app-verifying-failed-label {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.app-verifying-failed-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: min(240px, 36vh);
+  overflow: auto;
+}
+
+.app-verifying-failed-list li {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.app-verifying-failed-list li.is-next {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface-2));
+}
+
+.app-verifying-failed-list li.is-locked {
+  border-color: var(--border-subtle);
+  background: var(--bg-surface-2);
+  opacity: 0.85;
+}
+
+.app-verifying-failed-list .fail-email {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.app-verifying-failed-list .fail-reason {
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.app-verifying-failed-list .fail-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--warning);
+}
+
+.app-verifying-failed-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.app-verifying-failed-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.app-verifying-failed-actions .action-secondary,
+.app-verifying-failed-actions .ghost {
+  min-height: 34px;
+  padding: 6px 12px;
+}
+
 .loop-initializing {
   position: absolute;
   inset: 0;

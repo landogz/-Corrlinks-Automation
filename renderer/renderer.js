@@ -131,10 +131,18 @@ const appVerifyingLive = document.getElementById('appVerifyingLive');
 const appVerifyingProgress = document.getElementById('appVerifyingProgress');
 const appVerifyingProgressBar = document.getElementById('appVerifyingProgressBar');
 const appVerifyingPercent = document.getElementById('appVerifyingPercent');
+const appVerifyingSpinner = document.getElementById('appVerifyingSpinner');
+const appVerifyingFailed = document.getElementById('appVerifyingFailed');
+const appVerifyingFailedList = document.getElementById('appVerifyingFailedList');
+const appVerifyingFailedHint = document.getElementById('appVerifyingFailedHint');
+const btnVerifyRetryNext = document.getElementById('btnVerifyRetryNext');
+const btnVerifySkipFailed = document.getElementById('btnVerifySkipFailed');
 const btnStopBootVerify = document.getElementById('btnStopBootVerify');
 const loopInitializing = appVerifying;
 const loopInitializingStatus = appVerifyingStatus;
 const loopInitializingDetail = appVerifyingDetail;
+/** @type {null | ((choice: { action: 'retry'|'skip'|'cancel' }) => void)} */
+let verifyManualRetryResolver = null;
 /** Live one-line probe progress under the verifying overlay. */
 let verifyProbeLive = null;
 let verifyProbeLiveTimer = null;
@@ -143,7 +151,8 @@ let lastVerifyLiveLogKey = '';
 const VERIFY_COPY = {
   title: 'Preparing your workspace',
   status: 'Validating CorrLinks accounts',
-  statusRetry: 'Retrying unavailable accounts',
+  statusRetry: 'Retry failed accounts',
+  statusReview: 'Review failed accounts',
   statusPause: 'Waiting before next login',
   defaultStatus: 'Validating CorrLinks accounts',
   manualTitle: 'Manual validation',
@@ -2770,6 +2779,84 @@ function pushVerifyProbeStep(message, { logLine = true } = {}) {
   );
 }
 
+function resolveVerifyManualRetry(choice) {
+  if (!verifyManualRetryResolver) return;
+  const resolve = verifyManualRetryResolver;
+  verifyManualRetryResolver = null;
+  resolve(choice || { action: 'cancel' });
+}
+
+function waitForVerifyManualRetry() {
+  return new Promise((resolve) => {
+    verifyManualRetryResolver = resolve;
+  });
+}
+
+function hideVerifyFailedReview() {
+  resolveVerifyManualRetry({ action: 'cancel' });
+  document.querySelector('.app-verifying-card')?.classList.remove('is-review');
+  if (appVerifyingFailed) appVerifyingFailed.hidden = true;
+  if (appVerifyingFailedList) appVerifyingFailedList.innerHTML = '';
+  if (appVerifyingSpinner) appVerifyingSpinner.hidden = false;
+  if (btnVerifyRetryNext) btnVerifyRetryNext.disabled = true;
+  if (btnVerifySkipFailed) btnVerifySkipFailed.disabled = true;
+}
+
+function renderVerifyFailedReview({ failed = [], locked = [] } = {}) {
+  const card = document.querySelector('.app-verifying-card');
+  card?.classList.add('is-review');
+  if (appVerifyingSpinner) appVerifyingSpinner.hidden = true;
+  if (!appVerifyingFailed || !appVerifyingFailedList) return;
+  appVerifyingFailed.hidden = false;
+  appVerifyingFailedList.innerHTML = '';
+
+  failed.forEach((row, index) => {
+    const li = document.createElement('li');
+    if (index === 0) li.classList.add('is-next');
+    const email = document.createElement('div');
+    email.className = 'fail-email';
+    email.textContent = row.emailLabel || maskSensitive(row.email);
+    const reason = document.createElement('div');
+    reason.className = 'fail-reason';
+    reason.textContent =
+      (index === 0 ? 'Next · ' : '') + (row.reason || row.status?.message || 'Probe failed');
+    li.append(email, reason);
+    appVerifyingFailedList.appendChild(li);
+  });
+
+  locked.forEach((row) => {
+    const li = document.createElement('li');
+    li.classList.add('is-locked');
+    const tag = document.createElement('div');
+    tag.className = 'fail-tag';
+    tag.textContent = 'Locked · not retried';
+    const email = document.createElement('div');
+    email.className = 'fail-email';
+    email.textContent = row.emailLabel || maskSensitive(row.email);
+    const reason = document.createElement('div');
+    reason.className = 'fail-reason';
+    reason.textContent = row.reason || row.status?.message || 'Account locked';
+    li.append(tag, email, reason);
+    appVerifyingFailedList.appendChild(li);
+  });
+
+  if (appVerifyingFailedHint) {
+    appVerifyingFailedHint.textContent = failed.length
+      ? `${failed.length} can be retried one at a time. Locked accounts stay skipped.`
+      : 'No retriable failures left.';
+  }
+  if (btnVerifyRetryNext) {
+    btnVerifyRetryNext.disabled = failed.length === 0;
+    btnVerifyRetryNext.textContent = failed.length
+      ? `Retry next (${maskSensitive(failed[0].email)})`
+      : 'Retry next';
+  }
+  if (btnVerifySkipFailed) {
+    btnVerifySkipFailed.disabled = false;
+    btnVerifySkipFailed.textContent = failed.length ? 'Skip remaining' : 'Continue';
+  }
+}
+
 function setLoopInitializingOverlay(opts = null) {
   if (!loopInitializing) return;
   if (!opts || opts.active === false) {
@@ -2781,6 +2868,7 @@ function setLoopInitializingOverlay(opts = null) {
     if (loopInitializingDetail) loopInitializingDetail.textContent = '';
     clearVerifyProbeLive();
     setAppVerifyingProgress({ percent: 0 });
+    hideVerifyFailedReview();
     syncCorrPaneBounds();
     return;
   }
@@ -2790,6 +2878,7 @@ function setLoopInitializingOverlay(opts = null) {
     loopInitializing.hidden = true;
     loopInitializing.setAttribute('aria-busy', 'false');
     clearVerifyProbeLive();
+    hideVerifyFailedReview();
     syncCorrPaneBounds();
     return;
   }
@@ -2817,6 +2906,11 @@ function setLoopInitializingOverlay(opts = null) {
       total: opts.total,
       percent: opts.percent,
     });
+  }
+  if (!opts.reviewFailed) {
+    document.querySelector('.app-verifying-card')?.classList.remove('is-review');
+    if (appVerifyingFailed) appVerifyingFailed.hidden = true;
+    if (appVerifyingSpinner) appVerifyingSpinner.hidden = false;
   }
   // WebContentsView paints above HTML — collapse it so the login page never shows.
   hideCorrEmbedNow();
@@ -3074,49 +3168,112 @@ async function verifyAllCorrlinksAccounts({
     return { probeByEmail, probeOk, probeFail: probeTotal - probeOk, probeTotal, aborted: true };
   }
 
-  const failedAccounts = pending.filter((account) =>
-    shouldRetryProbeLogin(probeByEmail.get(emailLoopKey(account.email)))
-  );
-  const lockedSkipped = pending.filter((account) => {
-    const status = probeByEmail.get(emailLoopKey(account.email));
-    return status?.state === 'locked' && !probeAccountUsable(status);
-  });
-  if (lockedSkipped.length) {
+  const buildFailedRows = () =>
+    pending
+      .filter((account) => shouldRetryProbeLogin(probeByEmail.get(emailLoopKey(account.email))))
+      .map((account) => {
+        const status = probeByEmail.get(emailLoopKey(account.email));
+        return {
+          account,
+          email: account.email,
+          emailLabel: maskSensitive(account.email),
+          reason: status?.message || 'Probe failed',
+          status,
+        };
+      });
+  const buildLockedRows = () =>
+    pending
+      .filter((account) => {
+        const status = probeByEmail.get(emailLoopKey(account.email));
+        return status?.state === 'locked' && !probeAccountUsable(status);
+      })
+      .map((account) => {
+        const status = probeByEmail.get(emailLoopKey(account.email));
+        return {
+          account,
+          email: account.email,
+          emailLabel: maskSensitive(account.email),
+          reason: status?.message || 'Account locked',
+          status,
+        };
+      });
+
+  let failedRows = buildFailedRows();
+  const lockedRows = buildLockedRows();
+  if (lockedRows.length) {
     log(
-      `Not retrying ${lockedSkipped.length} locked account(s): ` +
-        lockedSkipped.map((a) => maskSensitive(a.email)).join(', '),
+      `Locked account(s) will not be auto-retried: ` +
+        lockedRows.map((row) => row.emailLabel).join(', '),
       'warn'
     );
   }
-  if (failedAccounts.length && isActive()) {
+
+  // Show every failure first, then let the user retry one account at a time.
+  if ((failedRows.length || lockedRows.length) && isActive()) {
     log(
-      `Retrying ${failedAccounts.length} non-locked failed account(s) after ${LOOP_RELOGIN_REST_MS / 1000}s rest…`,
+      `Probe finished with ${failedRows.length} retriable failure(s)` +
+        (lockedRows.length ? ` · ${lockedRows.length} locked` : '') +
+        ` — waiting for manual Retry next`,
       'warn'
     );
-    for (let r = 0; r < failedAccounts.length; r += 1) {
-      if (!isActive()) break;
-      const account = failedAccounts[r];
-      const accountLabel = maskSensitive(account.email);
-      log(
-        `Resting ${LOOP_RELOGIN_REST_MS / 1000}s before login retry · ${accountLabel} (${r + 1}/${failedAccounts.length})`,
-        'info'
-      );
-      const retryStep = r + 1;
-      const rested = await waitLoopInitGap(LOOP_RELOGIN_REST_MS, {
-        current: retryStep,
-        total: failedAccounts.length,
-        status: VERIFY_COPY.statusRetry,
-        detailPrefix: `Retry ${retryStep} of ${failedAccounts.length}`,
-        progressCurrent: probeTotal,
-        progressTotal: probeTotal,
+    let retryIndex = 0;
+    while (isActive() && (failedRows.length || lockedRows.length)) {
+      setLoopInitializingOverlay({
+        active: true,
+        status: VERIFY_COPY.statusReview,
+        detail:
+          failedRows.length > 0
+            ? `${failedRows.length} failed · retry one at a time`
+            : `${lockedRows.length} locked · nothing left to retry`,
+        current: probeTotal,
+        total: probeTotal,
+        reviewFailed: true,
+        live: '',
       });
-      if (!rested || !isActive()) break;
-      await probeAccountLive(account, {
-        indexLabel: `Retry ${retryStep} of ${failedAccounts.length}`,
+      renderVerifyFailedReview({ failed: failedRows, locked: lockedRows });
+      if (!failedRows.length) {
+        // Only locked leftovers — user can Continue / Skip.
+        const choice = await waitForVerifyManualRetry();
+        if (!isActive() || choice?.action === 'cancel') break;
+        break;
+      }
+      const choice = await waitForVerifyManualRetry();
+      if (!isActive() || choice?.action === 'cancel') break;
+      if (choice?.action === 'skip') {
+        log(
+          `Skipped remaining ${failedRows.length} failed account(s): ` +
+            failedRows.map((row) => row.emailLabel).join(', '),
+          'warn'
+        );
+        break;
+      }
+      if (choice?.action !== 'retry') continue;
+
+      const next = failedRows[0];
+      if (!next?.account) break;
+      retryIndex += 1;
+      document.querySelector('.app-verifying-card')?.classList.remove('is-review');
+      if (appVerifyingFailed) appVerifyingFailed.hidden = true;
+      if (appVerifyingSpinner) appVerifyingSpinner.hidden = false;
+      setLoopInitializingOverlay({
+        active: true,
+        status: VERIFY_COPY.statusRetry,
+        detail: `Retry ${retryIndex} · ${next.emailLabel}`,
+        current: probeTotal,
+        total: probeTotal,
+        live: `Retrying ${next.emailLabel}…`,
+        logLive: true,
+      });
+      log(`Manual retry ${retryIndex}: ${next.emailLabel}`, 'info');
+      await probeAccountLive(next.account, {
+        indexLabel: `Retry ${retryIndex}`,
         current: probeTotal,
         total: probeTotal,
       });
+      if (!isActive()) break;
+      failedRows = buildFailedRows();
     }
+    hideVerifyFailedReview();
   }
 
   if (isActive() && probeTotal > 0) {
@@ -3950,6 +4107,7 @@ function stopBootVerify() {
   corrlinksForceStop = true;
   corrlinksOpGeneration += 1;
   loopInitializingActive = false;
+  resolveVerifyManualRetry({ action: 'cancel' });
   setLoopInitializingOverlay(null);
   hideCorrEmbedNow();
   setCorrlinksConnected(false);
@@ -5163,6 +5321,14 @@ btnStopLoop.addEventListener('click', () => {
 
 btnStopBootVerify?.addEventListener('click', () => {
   stopBootVerify();
+});
+
+btnVerifyRetryNext?.addEventListener('click', () => {
+  resolveVerifyManualRetry({ action: 'retry' });
+});
+
+btnVerifySkipFailed?.addEventListener('click', () => {
+  resolveVerifyManualRetry({ action: 'skip' });
 });
 
 btnSend?.addEventListener('click', () => {

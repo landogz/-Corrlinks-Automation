@@ -624,7 +624,7 @@
 
       <div id="appVerifying" class="app-verifying" hidden aria-live="polite" aria-busy="false">
         <div class="app-verifying-card">
-          <div class="loop-initializing-spinner" aria-hidden="true"></div>
+          <div class="loop-initializing-spinner" id="appVerifyingSpinner" aria-hidden="true"></div>
           <p class="loop-initializing-title" id="appVerifyingTitle">Preparing your workspace</p>
           <p id="appVerifyingStatus" class="loop-initializing-status">Validating CorrLinks accounts</p>
           <p id="appVerifyingDetail" class="loop-initializing-detail tabular"></p>
@@ -641,6 +641,17 @@
             <div class="app-verifying-progress-bar" id="appVerifyingProgressBar"></div>
           </div>
           <p id="appVerifyingPercent" class="app-verifying-percent tabular">0%</p>
+          <div id="appVerifyingFailed" class="app-verifying-failed" hidden>
+            <p class="app-verifying-failed-label">Failed accounts</p>
+            <ul id="appVerifyingFailedList" class="app-verifying-failed-list" aria-label="Failed CorrLinks accounts"></ul>
+            <p id="appVerifyingFailedHint" class="app-verifying-failed-hint muted">
+              Review the list, then retry one account at a time.
+            </p>
+            <div class="app-verifying-failed-actions">
+              <button type="button" class="action-secondary" id="btnVerifyRetryNext">Retry next</button>
+              <button type="button" class="ghost" id="btnVerifySkipFailed">Skip remaining</button>
+            </div>
+          </div>
           <button type="button" class="ghost app-verifying-stop" id="btnStopBootVerify">Cancel</button>
         </div>
       </div>

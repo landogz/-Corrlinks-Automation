@@ -919,7 +919,36 @@ function credentialsMatch(snapshot, email, password) {
   return gotEmail === wantEmail && gotPassword === wantPassword && wantEmail.length > 0 && wantPassword.length > 0;
 }
 
-async function fillAndSubmit(win, email, password) {
+/** Pause after credentials are filled before clicking Login (CorrLinks/Angular settle). */
+const SIGN_IN_DELAY_MS = Math.max(
+  0,
+  Number(process.env.CORRLINKS_SIGNIN_DELAY_MS ?? 10_000) || 0
+);
+
+async function waitBeforeSignInClick({ email = null, attempt = null } = {}) {
+  const totalMs = SIGN_IN_DELAY_MS;
+  if (totalMs <= 0) return;
+  const endsAt = Date.now() + totalMs;
+  let lastShown = -1;
+  while (Date.now() < endsAt) {
+    const left = Math.max(1, Math.ceil((endsAt - Date.now()) / 1000));
+    if (left !== lastShown) {
+      lastShown = left;
+      setStatus({
+        state: 'filling',
+        message:
+          `Filling credentials` +
+          (attempt ? ` (${attempt})` : '') +
+          ` · signing in ${left}s`,
+        email,
+        attempt,
+      });
+    }
+    await new Promise((r) => setTimeout(r, Math.min(250, endsAt - Date.now())));
+  }
+}
+
+async function fillAndSubmit(win, email, password, { attempt = null } = {}) {
   const wantEmail = String(email || '').trim();
   const wantPassword = String(password || '');
   if (!wantEmail || !wantPassword) {
@@ -1018,6 +1047,9 @@ async function fillAndSubmit(win, email, password) {
 
   // Re-assert values one last time immediately before submit (validators were rejecting empty model).
   await syncEj2LoginFields(win, wantEmail, wantPassword);
+
+  // Give CorrLinks time to accept filled fields before Login click.
+  await waitBeforeSignInClick({ email: wantEmail, attempt });
 
   await cdpClick(win, target.x, target.y);
   await new Promise((r) => setTimeout(r, 15));
@@ -3220,7 +3252,7 @@ async function attemptLogin(
       attempt: label,
     });
     void clearAuthToasts(win).catch(() => {});
-    fillResult = await fillAndSubmit(win, email, password);
+    fillResult = await fillAndSubmit(win, email, password, { attempt: label });
   } else if (!fast) {
     await clearAuthToasts(win).catch(() => {});
     await dismissValidationDialog(win, {
@@ -3352,7 +3384,7 @@ async function attemptLogin(
     await dismissValidationDialog(win).catch(() => {});
   }
 
-  fillResult = await fillAndSubmit(win, email, password);
+  fillResult = await fillAndSubmit(win, email, password, { attempt: label });
   } // end !fillResult?.ok (form wait + fill)
   // Missing email/password usually means interstitial / stale session — force logout once.
   const shouldForceLogoutForFill =
@@ -3413,7 +3445,7 @@ async function attemptLogin(
       email,
       attempt: label,
     });
-    fillResult = await fillAndSubmit(win, email, password);
+    fillResult = await fillAndSubmit(win, email, password, { attempt: label });
   }
   if (!fillResult.ok) {
     // Last chance: interstitial for the target account counts as logged in.
