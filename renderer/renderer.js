@@ -1631,12 +1631,13 @@ function restoreVerifiedFromPersistedProbes(probes = {}, uniqueAccounts = []) {
       cached: true,
       persistent: true,
     };
-    // Soft infra failures must not restore as final — they permanently block Send.
+    // Keep soft failures in the probe map so fingerprint coverage skips re-prep,
+    // but do not treat them as verified/logged-in for Send.
+    map.set(key, { ...entry });
     if (probeIsSoftFailure(entry)) continue;
     if (probeAccountUsable(entry)) {
       verifiedCorrlinksAccounts.set(key, entry);
     }
-    map.set(key, { ...entry });
   }
   bootProbeByEmail = map;
   return map;
@@ -1644,35 +1645,34 @@ function restoreVerifiedFromPersistedProbes(probes = {}, uniqueAccounts = []) {
 
 function persistedCacheCoversAccounts(probes = {}, uniqueAccounts = []) {
   if (!uniqueAccounts.length) return true;
+  // Any saved outcome (success, locked, timeout, error) counts as covered.
+  // Missing entries (aborted mid-run / never probed) still force a live pass.
   return uniqueAccounts.every((account) => {
     const key = emailLoopKey(account.email);
     const saved = probes?.[key];
-    if (!saved || typeof saved !== 'object') return false;
-    // "Script failed to execute" / timeout / error do not cover — force live re-probe.
-    return !probeIsSoftFailure(saved);
+    return saved && typeof saved === 'object';
   });
 }
 
 async function persistVerifiedAccountsCache(fingerprint, probeByEmail = bootProbeByEmail) {
   if (!fingerprint || !window.api?.saveCorrlinksVerifyCache) return false;
   const probes = {};
+  // Persist every probe result — including soft failures — so relaunch can skip
+  // "Preparing your workspace" when corrlinks-accounts credentials are unchanged.
   for (const [key, value] of probeByEmail.entries()) {
-    if (probeIsSoftFailure(value)) continue;
     probes[key] = {
       ...value,
       persistent: true,
     };
   }
-  // Also keep usable session cache entries.
   for (const [key, value] of verifiedCorrlinksAccounts.entries()) {
-    if (!probes[key] && !probeIsSoftFailure(value)) {
+    if (!probes[key]) {
       probes[key] = { ...value, persistent: true };
     }
   }
   const saved = await window.api.saveCorrlinksVerifyCache({ fingerprint, probes });
   if (saved?.ok) {
     lastAccountsFingerprint = fingerprint;
-    // Mark in-memory probes as persistent after disk save.
     for (const [key, value] of verifiedCorrlinksAccounts.entries()) {
       verifiedCorrlinksAccounts.set(key, { ...value, persistent: true });
     }
@@ -1684,38 +1684,57 @@ async function persistVerifiedAccountsCache(fingerprint, probeByEmail = bootProb
 /**
  * If live corrlinks-accounts credentials match the saved fingerprint, restore probes and skip login validation.
  * Fingerprint covers every inmate’s primary/second email+password assignment (not exchange files).
- * @returns {Promise<boolean>} true when validation was skipped
+ * @returns {Promise<{ ok: boolean, missing?: object[] }>}
  */
 async function tryRestoreVerifiedFromDisk(uniqueAccounts = collectUniqueCorrlinksAccounts()) {
-  if (!window.api?.loadCorrlinksVerifyCache) return false;
+  if (!window.api?.loadCorrlinksVerifyCache) return { ok: false };
   const fingerprint = await computeAccountsFingerprint(accounts);
   lastAccountsFingerprint = fingerprint;
-  if (!fingerprint) return false;
+  if (!fingerprint) return { ok: false };
 
   const cache = await window.api.loadCorrlinksVerifyCache();
   if (!cache?.ok) {
     log('No saved CorrLinks validation — will validate', 'info');
-    return false;
+    return { ok: false };
   }
   if (cache.fingerprint !== fingerprint) {
     log('Live corrlinks-accounts credentials changed — re-validating', 'info');
-    return false;
-  }
-  if (!persistedCacheCoversAccounts(cache.probes, uniqueAccounts)) {
-    log('Saved validation incomplete for current accounts — re-validating', 'warn');
-    return false;
+    return { ok: false };
   }
 
   restoreVerifiedFromPersistedProbes(cache.probes, uniqueAccounts);
+  const missing = uniqueAccounts.filter(
+    (account) => !bootProbeByEmail.has(emailLoopKey(account.email))
+  );
+
+  // Partial cache (e.g. force-stopped last run): keep restored probes, only live-check missing.
+  if (missing.length > 0) {
+    if (bootProbeByEmail.size > 0) {
+      log(
+        `Saved validation partial · ${bootProbeByEmail.size} cached · ${missing.length} still need probe`,
+        'info'
+      );
+      return { ok: false, missing };
+    }
+    log('Saved validation incomplete for current accounts — re-validating', 'warn');
+    return { ok: false };
+  }
+
   const ok = [...bootProbeByEmail.values()].filter((s) => probeAccountUsable(s)).length;
   const fail = uniqueAccounts.length - ok;
-  // A saved "all failed" cache must not permanently block Send — re-probe live.
+  // Only force a live re-prep when every saved result is a soft infra failure
+  // (timeout/script error). Hard locks with 0 ready still skip the overlay.
   if (ok === 0 && uniqueAccounts.length > 0) {
-    log('Saved validation has no usable accounts — re-validating live', 'warn');
-    clearVerifiedAccounts();
-    bootProbeByEmail = new Map();
-    accountsVerifiedOnce = false;
-    return false;
+    const allSoft = uniqueAccounts.every((account) =>
+      probeIsSoftFailure(bootProbeByEmail.get(emailLoopKey(account.email)))
+    );
+    if (allSoft) {
+      log('Saved validation has no usable accounts — re-validating live', 'warn');
+      clearVerifiedAccounts();
+      bootProbeByEmail = new Map();
+      accountsVerifiedOnce = false;
+      return { ok: false };
+    }
   }
   accountsVerifiedOnce = true;
   const summary =
@@ -1726,7 +1745,7 @@ async function tryRestoreVerifiedFromDisk(uniqueAccounts = collectUniqueCorrlink
   toast(summary, fail > 0 ? 'warn' : 'success');
   setStatusHint(summary);
   updateActionButtons();
-  return true;
+  return { ok: true, missing: [] };
 }
 
 /**
@@ -3313,27 +3332,35 @@ async function verifyAllCorrlinksAccounts({
   };
 }
 
-async function verifyCorrlinksAccountsOnBoot({ force = false, mode = 'boot' } = {}) {
+async function verifyCorrlinksAccountsOnBoot({
+  force = false,
+  mode = 'boot',
+  onlyAccounts = null,
+} = {}) {
   if (bootVerifyRunning || loopRunning || corrlinksLoginBusy) return null;
-  const uniqueAccounts = collectUniqueCorrlinksAccounts();
+  const allAccounts = collectUniqueCorrlinksAccounts();
+  const uniqueAccounts =
+    Array.isArray(onlyAccounts) && onlyAccounts.length ? onlyAccounts : allAccounts;
   const manual = mode === 'manual';
-  if (!uniqueAccounts.length) {
+  if (!allAccounts.length) {
     accountsVerifiedOnce = true;
     bootProbeByEmail = new Map();
     setStatusHint('No CorrLinks accounts to verify');
     return { probeByEmail: bootProbeByEmail, probeOk: 0, probeFail: 0, probeTotal: 0 };
   }
   if (accountsVerifiedOnce && !force) {
-    // Still refresh probe map from cache for any new emails.
-    const map = new Map();
-    uniqueAccounts.forEach((account) => {
+    // Prefer session verified cache, but keep bootProbeByEmail soft failures so we
+    // don't re-open Preparing your workspace for already-known unavailable accounts.
+    const map = new Map(bootProbeByEmail);
+    allAccounts.forEach((account) => {
+      const key = emailLoopKey(account.email);
       const cached = getCachedVerifiedProbe(account.email);
-      if (cached) map.set(emailLoopKey(account.email), cached);
+      if (cached) map.set(key, cached);
     });
-    if (map.size === uniqueAccounts.length) {
+    if (allAccounts.every((account) => map.has(emailLoopKey(account.email)))) {
       bootProbeByEmail = map;
       const ok = [...map.values()].filter((s) => probeAccountUsable(s)).length;
-      const fail = uniqueAccounts.length - ok;
+      const fail = allAccounts.length - ok;
       const summary =
         fail > 0
           ? `Accounts unchanged · using saved validation · ${ok} ready · ${fail} unavailable`
@@ -3341,7 +3368,7 @@ async function verifyCorrlinksAccountsOnBoot({ force = false, mode = 'boot' } = 
       log(summary, fail > 0 ? 'warn' : 'success');
       toast(summary, fail > 0 ? 'warn' : 'success');
       setStatusHint(summary);
-      return { probeByEmail: map, probeOk: ok, probeFail: fail, probeTotal: uniqueAccounts.length };
+      return { probeByEmail: map, probeOk: ok, probeFail: fail, probeTotal: allAccounts.length };
     }
   }
 
@@ -3350,14 +3377,20 @@ async function verifyCorrlinksAccountsOnBoot({ force = false, mode = 'boot' } = 
   updateActionButtons();
   const title = manual ? VERIFY_COPY.manualTitle : VERIFY_COPY.title;
   const statusLabel = manual ? VERIFY_COPY.manualStatus : VERIFY_COPY.status;
+  const priorProbes = new Map(bootProbeByEmail);
   log(
-    `${manual ? 'Manual validation' : 'Workspace setup'} — validating ${uniqueAccounts.length} CorrLinks account(s)`,
+    `${manual ? 'Manual validation' : 'Workspace setup'} — validating ${uniqueAccounts.length} CorrLinks account(s)` +
+      (uniqueAccounts.length < allAccounts.length
+        ? ` (${allAccounts.length - uniqueAccounts.length} already cached)`
+        : ''),
     'info'
   );
   toast(
     manual
       ? 'Manual validation… re-checking CorrLinks accounts'
-      : 'Preparing workspace… validating CorrLinks accounts',
+      : uniqueAccounts.length < allAccounts.length
+        ? `Preparing workspace… checking ${uniqueAccounts.length} remaining account(s)`
+        : 'Preparing workspace… validating CorrLinks accounts',
     'info'
   );
   setLoopInitializingOverlay({
@@ -3376,13 +3409,36 @@ async function verifyCorrlinksAccountsOnBoot({ force = false, mode = 'boot' } = 
       isActive: () => bootVerifyRunning && !bootVerifyAbort,
       statusLabel,
     });
-    bootProbeByEmail = result.probeByEmail;
-    accountsVerifiedOnce = !result.aborted;
-    if (!result.aborted) {
-      const fingerprint = lastAccountsFingerprint || (await computeAccountsFingerprint(accounts));
-      if (fingerprint) {
-        const saved = await persistVerifiedAccountsCache(fingerprint, result.probeByEmail);
-        if (saved) log('Saved CorrLinks validation for next launch', 'info');
+    // Merge with any previously restored probes when only missing accounts were live-checked.
+    const merged = new Map(priorProbes);
+    for (const [key, value] of result.probeByEmail.entries()) {
+      merged.set(key, value);
+    }
+    // Ensure every known account key exists in the merged map for persistence/coverage.
+    for (const account of allAccounts) {
+      const key = emailLoopKey(account.email);
+      if (!merged.has(key) && priorProbes.has(key)) merged.set(key, priorProbes.get(key));
+    }
+    bootProbeByEmail = merged;
+    result.probeByEmail = merged;
+    result.probeOk = [...merged.values()].filter((s) => probeAccountUsable(s)).length;
+    result.probeFail = allAccounts.length - result.probeOk;
+    result.probeTotal = allAccounts.length;
+    // Persist even when force-stopped mid-run so the next launch can skip accounts
+    // already probed (otherwise every relaunch re-opens Preparing your workspace).
+    accountsVerifiedOnce =
+      !result.aborted ||
+      [...result.probeByEmail.values()].some((s) => probeAccountUsable(s) || !probeIsSoftFailure(s));
+    const fingerprint = lastAccountsFingerprint || (await computeAccountsFingerprint(accounts));
+    if (fingerprint && result.probeByEmail.size > 0) {
+      const saved = await persistVerifiedAccountsCache(fingerprint, result.probeByEmail);
+      if (saved) {
+        log(
+          result.aborted
+            ? 'Saved partial CorrLinks validation for next launch'
+            : 'Saved CorrLinks validation for next launch',
+          'info'
+        );
       }
     }
     const summary = result.aborted
@@ -4312,7 +4368,15 @@ async function refreshInmates({ verifyAccounts = true, forceValidation = false }
       } else {
         const uniqueAccounts = collectUniqueCorrlinksAccounts();
         const restored = await tryRestoreVerifiedFromDisk(uniqueAccounts);
-        if (!restored) {
+        if (restored?.ok) {
+          // Fingerprint match — skip Preparing your workspace.
+        } else if (restored?.missing?.length) {
+          log('CorrLinks accounts changed or no saved validation — validating…', 'info');
+          await verifyCorrlinksAccountsOnBoot({
+            force: true,
+            onlyAccounts: restored.missing,
+          });
+        } else {
           clearVerifiedAccounts();
           bootProbeByEmail = new Map();
           accountsVerifiedOnce = false;
