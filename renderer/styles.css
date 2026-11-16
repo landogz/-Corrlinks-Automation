@@ -943,10 +943,9 @@ body.is-login .toast-host {
 }
 
 .app-verifying-failed-list li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px 10px;
+  display: flex;
   align-items: center;
+  gap: 10px;
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid rgba(239, 68, 68, 0.28);
@@ -959,6 +958,7 @@ body.is-login .toast-host {
 }
 
 .app-verifying-failed-list .fail-main {
+  flex: 1 1 auto;
   min-width: 0;
   display: grid;
   gap: 2px;
@@ -1000,11 +1000,13 @@ body.is-login .toast-host {
 }
 
 .app-verifying-failed-list .fail-retry {
-  grid-row: 1 / span 2;
+  flex: 0 0 auto;
   align-self: center;
   min-height: 30px;
   padding: 4px 10px;
   white-space: nowrap;
+  position: relative;
+  z-index: 1;
 }
 
 .app-verifying-failed-hint {

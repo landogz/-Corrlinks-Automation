@@ -1007,7 +1007,9 @@ async function focusLoginField(win, which) {
 }
 
 async function syncEj2LoginFields(win, email, password) {
-  return win.webContents.executeJavaScript(
+  const wc = getLiveWebContents(win);
+  if (!wc) return { ok: false, reason: 'panel-closed' };
+  return wc.executeJavaScript(
     `(() => {
       ${loginDomHelpersScript()}
       const emailInput = findEmailInput();
@@ -1056,7 +1058,91 @@ function credentialsMatch(snapshot, email, password) {
 }
 
 async function readLoginCredentials(win) {
-  return win.webContents.executeJavaScript(loginFieldScript(), true).catch(() => null);
+  const wc = getLiveWebContents(win);
+  if (!wc) return null;
+  return wc.executeJavaScript(loginFieldScript(), true).catch(() => null);
+}
+
+async function locateLoginButton(win) {
+  const wc = getLiveWebContents(win);
+  if (!wc) return null;
+  return wc
+    .executeJavaScript(
+      `(() => {
+        const submitSelectors = ${JSON.stringify(CORRLINKS.submitSelectors)};
+        function firstMatch(selectors) {
+          for (const sel of selectors) {
+            try {
+              const el = document.querySelector(sel);
+              if (el) return el;
+            } catch (_) {}
+          }
+          return null;
+        }
+        let submit = firstMatch(submitSelectors);
+        if (!submit) {
+          submit = [...document.querySelectorAll('button')].find((b) =>
+            /^\\s*login\\s*$/i.test((b.innerText || b.textContent || '').trim())
+          ) || null;
+        }
+        if (!submit) return null;
+        const r = submit.getBoundingClientRect();
+        return {
+          text: (submit.innerText || '').trim(),
+          x: r.left + r.width / 2,
+          y: r.top + r.height / 2,
+          w: r.width,
+          h: r.height,
+          disabled: !!submit.disabled,
+        };
+      })()`,
+      true
+    )
+    .catch(() => null);
+}
+
+async function clickLoginButton(win) {
+  const wc = getLiveWebContents(win);
+  if (!wc) return { ok: false, reason: 'panel-closed' };
+  const target = await locateLoginButton(win);
+  if (!target || target.w < 2 || target.h < 2) {
+    return { ok: false, reason: 'no-button' };
+  }
+  focusCorrPanel(win);
+  try {
+    await withDebugger(win, async (dbg) => cdpClickAt(dbg, target.x, target.y), { timeoutMs: 2500 });
+  } catch (_) {
+    clickAt(win, target.x, target.y);
+  }
+  // Always also fire a DOM click — CDP-only clicks sometimes miss Angular (submit) handlers.
+  await wc
+    .executeJavaScript(
+      `(() => {
+        const submitSelectors = ${JSON.stringify(CORRLINKS.submitSelectors)};
+        function firstMatch(selectors) {
+          for (const sel of selectors) {
+            try {
+              const el = document.querySelector(sel);
+              if (el) return el;
+            } catch (_) {}
+          }
+          return null;
+        }
+        const btn =
+          firstMatch(submitSelectors) ||
+          [...document.querySelectorAll('button')].find((b) =>
+            /^\\s*login\\s*$/i.test((b.innerText || '').trim())
+          ) ||
+          document.querySelector('button.e-primary');
+        if (!btn) return false;
+        try { btn.focus(); } catch (_) {}
+        btn.click();
+        return true;
+      })()`,
+      true
+    )
+    .catch(() => false);
+  return { ok: true, target };
 }
 
 /** Pause after credentials are filled before clicking Login (CorrLinks/Angular settle). */
@@ -1073,6 +1159,7 @@ async function waitBeforeSignInClick(win, { email = null, attempt = null, passwo
   const endsAt = Date.now() + totalMs;
   let lastShown = -1;
   while (Date.now() < endsAt) {
+    if (!getLiveWebContents(win)) return; // force-stop / panel closed
     const left = Math.max(1, Math.ceil((endsAt - Date.now()) / 1000));
     if (left !== lastShown) {
       lastShown = left;
@@ -1268,44 +1355,11 @@ async function fillAndSubmit(win, email, password, { attempt = null } = {}) {
     };
   }
 
-  // Locate Login button for a trusted CDP click.
-  const target = await win.webContents.executeJavaScript(
-    `(() => {
-      const submitSelectors = ${JSON.stringify(CORRLINKS.submitSelectors)};
-      function firstMatch(selectors) {
-        for (const sel of selectors) {
-          try {
-            const el = document.querySelector(sel);
-            if (el) return el;
-          } catch (_) {}
-        }
-        return null;
-      }
-      let submit = firstMatch(submitSelectors);
-      if (!submit) {
-        submit = [...document.querySelectorAll('button')].find((b) =>
-          /^\\s*login\\s*$/i.test((b.innerText || b.textContent || '').trim())
-        ) || null;
-      }
-      if (!submit) return null;
-      const r = submit.getBoundingClientRect();
-      return {
-        text: (submit.innerText || '').trim(),
-        x: r.left + r.width / 2,
-        y: r.top + r.height / 2,
-        w: r.width,
-        h: r.height,
-      };
-    })()`,
-    true
-  );
-
-  if (!target) {
-    return { ok: false, reason: 'Could not find Login button', filled };
-  }
-
   // Give CorrLinks time to accept filled fields before Login click; keep values alive.
   await waitBeforeSignInClick(win, { email: wantEmail, attempt, password: wantPassword });
+  if (!getLiveWebContents(win)) {
+    return { ok: false, reason: 'CorrLinks panel was closed during sign-in delay' };
+  }
 
   // Re-assert immediately before submit (keep this cheap — full CDP refill caused 10s+ gaps).
   filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => filled);
@@ -1321,40 +1375,51 @@ async function fillAndSubmit(win, email, password, { attempt = null } = {}) {
     };
   }
 
-  try {
-    await withDebugger(win, async (wc) => cdpClickAt(wc, target.x, target.y), { timeoutMs: 2500 });
-  } catch (_) {
-    clickAt(win, target.x, target.y);
+  // Locate Login AFTER the settle delay — coords from before the delay go stale.
+  let clicked = await clickLoginButton(win);
+  if (!clicked.ok) {
+    return { ok: false, reason: 'Could not find Login button', filled };
   }
-  await new Promise((r) => setTimeout(r, 15));
 
-  const stillLogin = await win.webContents.executeJavaScript(
-    ` /\\/login/i.test(location.pathname || location.href) `,
-    true
-  );
-  if (stillLogin) {
-    // If validation toasts already appeared, refill once more and click again.
-    const feedback = await readAuthFeedback(win);
-    if (feedback?.some((m) => /password field is required|email address field|not a valid email/i.test(m))) {
-      await fillCredentialsOnce(win, wantEmail, wantPassword);
-      await new Promise((r) => setTimeout(r, 40));
+  // Let Angular process the click before deciding to retry.
+  await new Promise((r) => setTimeout(r, 450));
+
+  const stillOnLogin = async () => {
+    const wc = getLiveWebContents(win);
+    if (!wc) return false;
+    return wc
+      .executeJavaScript(` /\\/login/i.test(location.pathname || location.href) `, true)
+      .catch(() => false);
+  };
+
+  if (await stillOnLogin()) {
+    const feedback = await readAuthFeedback(win).catch(() => []);
+    if (
+      feedback?.some((m) =>
+        /password field is required|email address field|not a valid email|required/i.test(m)
+      )
+    ) {
+      await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => null);
+      await new Promise((r) => setTimeout(r, 80));
     }
-    clickAt(win, target.x, target.y);
-    await cdpClick(win, target.x, target.y);
-    await win.webContents.executeJavaScript(
-      `(() => {
-        const btn = [...document.querySelectorAll('button')].find((b) =>
-          /^\\s*login\\s*$/i.test((b.innerText || '').trim())
-        ) || document.querySelector('button.e-primary');
-        if (!btn) return false;
-        btn.click();
-        return true;
-      })()`,
-      true
-    );
+    clicked = await clickLoginButton(win);
+    await new Promise((r) => setTimeout(r, 350));
   }
 
-  return { ok: true, filled, submitText: target.text, clickedAt: { x: target.x, y: target.y } };
+  // One more nudge if still stuck on /login with no lock toast yet.
+  if (await stillOnLogin()) {
+    await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => null);
+    clicked = await clickLoginButton(win);
+  }
+
+  return {
+    ok: true,
+    filled,
+    submitText: clicked.target?.text || 'Login',
+    clickedAt: clicked.target
+      ? { x: clicked.target.x, y: clicked.target.y }
+      : null,
+  };
 }
 
 function classifyAuthMessage(msg) {
@@ -1714,7 +1779,16 @@ async function waitForLoginResult(win, timeoutMs = 45000) {
   return withTimeoutFallback(
     (async () => {
       const started = Date.now();
+      let reloginNudgeAt = started + Math.min(3500, Math.floor(budget * 0.4));
+      let nudged = false;
       while (Date.now() - started < budget) {
+        if (!getLiveWebContents(win)) {
+          return {
+            ok: false,
+            url: null,
+            message: 'CorrLinks panel was closed while waiting for login',
+          };
+        }
         const url = safeUrl();
         setStatus({ url });
 
@@ -1774,7 +1848,18 @@ async function waitForLoginResult(win, timeoutMs = 45000) {
           }
         }
 
-        await new Promise((r) => setTimeout(r, 35));
+        // Still on /login with no feedback — Login click often missed; nudge once.
+        if (!nudged && Date.now() >= reloginNudgeAt) {
+          nudged = true;
+          setStatus({
+            state: 'submitting',
+            message: 'Still on login — clicking Login again…',
+            url,
+          });
+          await clickLoginButton(win).catch(() => null);
+        }
+
+        await new Promise((r) => setTimeout(r, 50));
       }
 
       return {
@@ -3825,7 +3910,8 @@ async function attemptLogin(
     attempt: label,
   });
 
-  const result = await waitForLoginResult(win, fast ? 8000 : 45000);
+  // Probes previously used 8s — too short when Login click needs a nudge / slow SPA nav.
+  const result = await waitForLoginResult(win, fast ? 22000 : 45000);
 
   if (result.ok) {
     return {
