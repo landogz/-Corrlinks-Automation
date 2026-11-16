@@ -3596,17 +3596,17 @@ async function downloadExchangeParts(
   { exchangeFiles = null, quiet = false } = {}
 ) {
   const exchange = inmate?.inmate_exchange || {};
-  const sendable = Array.isArray(exchangeFiles) && exchangeFiles.length
+  // Explicit array (including []) wins; null/undefined falls back to inmate sendable.
+  const sendable = Array.isArray(exchangeFiles)
     ? exchangeFiles
     : Array.isArray(exchange.sendable)
       ? exchange.sendable
       : [];
-  const skipped =
-    Array.isArray(exchangeFiles) && exchangeFiles.length
-      ? []
-      : Array.isArray(exchange.skipped)
-        ? exchange.skipped
-        : [];
+  const skipped = Array.isArray(exchangeFiles)
+    ? []
+    : Array.isArray(exchange.skipped)
+      ? exchange.skipped
+      : [];
   if (typeof fetchFileText !== 'function' || !sendable.length) {
     return { exchangeParts: [], exchangeSkipped: skipped };
   }

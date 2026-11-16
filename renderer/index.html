@@ -356,6 +356,15 @@
                       <div class="loop-progress-stats" id="loopProgressStats" hidden></div>
                     </div>
                   </div>
+                  <div id="loopFailedPanel" class="loop-failed-panel" hidden>
+                    <div class="loop-failed-head">
+                      <span class="section-label">Failed recipients</span>
+                      <button type="button" class="ghost tiny" id="btnRetryFailed" disabled>
+                        Retry failed
+                      </button>
+                    </div>
+                    <ul id="loopFailedList" class="loop-failed-list" aria-label="Failed recipients"></ul>
+                  </div>
                   <div class="actions-stack" id="actionsRow">
                     <button
                       id="btnSend"
@@ -681,7 +690,12 @@
         <h3 id="loopDoneTitle">Loop completed</h3>
         <p id="loopDoneMessage" class="muted">All recipients in this loop were completed successfully.</p>
         <p id="loopDoneSummary" class="loop-done-summary tabular">—</p>
+        <div id="loopDoneFailedWrap" class="loop-done-failed" hidden>
+          <p class="section-label">Failed</p>
+          <ul id="loopDoneFailedList" class="loop-done-failed-list"></ul>
+        </div>
         <div class="row">
+          <button type="button" class="ghost" id="btnLoopDoneRetry" hidden>Retry failed</button>
           <button value="ok" class="action-primary" id="btnLoopDoneOk">OK</button>
         </div>
       </form>

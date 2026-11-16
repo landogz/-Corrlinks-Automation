@@ -98,6 +98,12 @@ const loopProgressIcon = document.getElementById('loopProgressIcon');
 const loopProgressTitle = document.getElementById('loopProgressTitle');
 const loopProgressTime = document.getElementById('loopProgressTime');
 const loopProgressStats = document.getElementById('loopProgressStats');
+const loopFailedPanel = document.getElementById('loopFailedPanel');
+const loopFailedList = document.getElementById('loopFailedList');
+const btnRetryFailed = document.getElementById('btnRetryFailed');
+const loopDoneFailedWrap = document.getElementById('loopDoneFailedWrap');
+const loopDoneFailedList = document.getElementById('loopDoneFailedList');
+const btnLoopDoneRetry = document.getElementById('btnLoopDoneRetry');
 const historyPreviewLines = document.getElementById('historyPreviewLines');
 const historyPreviewSearch = document.getElementById('historyPreviewSearch');
 const statusHintText = document.getElementById('statusHintText');
@@ -226,6 +232,10 @@ let loopAbort = false;
 /** @type {'idle' | 'running' | 'done' | 'stopped' | 'error'} */
 let loopPhase = 'idle';
 let lastLoopResult = null;
+/** @type {Array<{ id: string|number, name: string, inmate_id?: string|number, reason: string }>} */
+let lastLoopFailed = [];
+/** File selection snapshot used for the active/next loop run. */
+let loopFileSnapshot = { keys: [], parts: [] };
 /** Bumped on force-stop so an in-flight startInmateLoop exits without finishing. */
 let loopGeneration = 0;
 /** When true, hide the CorrLinks embed so the HTML countdown can show. */
@@ -908,11 +918,41 @@ function updateComposePreview({ to, subject, body, chars, parts } = {}) {
 
 function selectedExchangeFiles(inmate) {
   const all = currentSendableFiles(inmate);
-  if (!selectedFileKeys.length) return all;
+  // Only checked files — empty selection means send nothing.
   return all.filter((file, index) => {
     const key = `${file.part}:${file.filename || index}`;
     return selectedFileKeys.includes(key);
   });
+}
+
+/** Snapshot checked files so loop/send keep the user's selection across inmate switches. */
+function snapshotFileSelection() {
+  const keys = selectedFileKeys.slice();
+  const parts = [
+    ...new Set(keys.map((key) => String(key).split(':')[0]).filter((part) => part && part !== 'undefined')),
+  ];
+  return { keys, parts };
+}
+
+/**
+ * Resolve files for an inmate from a checkbox snapshot.
+ * Daily loop matches by part number so File 1/2 stays consistent across inmates.
+ */
+function filesFromSnapshot(inmate, snapshot = loopFileSnapshot) {
+  const keys = Array.isArray(snapshot?.keys) ? snapshot.keys : [];
+  const parts = Array.isArray(snapshot?.parts) ? snapshot.parts : [];
+  if (templateMode === 'weekly') {
+    const all = currentSendableFiles(inmate);
+    if (!keys.length) return [];
+    return all.filter((file, index) => keys.includes(`${file.part}:${file.filename || index}`));
+  }
+  const all = inmate?.inmate_exchange?.sendable || [];
+  if (!keys.length && !parts.length) return [];
+  if (parts.length) {
+    const byPart = all.filter((file) => parts.includes(String(file.part)));
+    if (byPart.length) return byPart;
+  }
+  return all.filter((file, index) => keys.includes(`${file.part}:${file.filename || index}`));
 }
 
 function currentTemplateSubject() {
@@ -925,22 +965,37 @@ function currentSendableFiles(inmate) {
   return inmate?.inmate_exchange?.sendable || [];
 }
 
-function buildTemplatePayload() {
-  if (templateMode !== 'weekly') {
-    return { mode: 'daily', league: null, subject: null, files: null };
+function buildTemplatePayload(inmate = selectedInmate(), snapshot = null) {
+  if (templateMode === 'weekly') {
+    const all = (weeklyCache.updates || []).map((file, index) => ({
+      part: file.part || index + 1,
+      filename: file.filename || `weekly-${index + 1}.txt`,
+      url: file.url,
+      characters: file.characters ?? null,
+      league: file.league || weeklyLeague,
+    }));
+    const keys = snapshot?.keys || selectedFileKeys;
+    const files = keys.length
+      ? all.filter((file, index) => keys.includes(`${file.part}:${file.filename || index}`))
+      : [];
+    return {
+      mode: 'weekly',
+      league: weeklyLeague,
+      subject: weeklyCache.subject || weeklyLeague,
+      files,
+    };
   }
-  const files = (weeklyCache.updates || []).map((file, index) => ({
-    part: file.part || index + 1,
-    filename: file.filename || `weekly-${index + 1}.txt`,
-    url: file.url,
-    characters: file.characters ?? null,
-    league: file.league || weeklyLeague,
-  }));
+  const files = snapshot
+    ? filesFromSnapshot(inmate, snapshot)
+    : inmate
+      ? selectedExchangeFiles(inmate)
+      : [];
   return {
-    mode: 'weekly',
-    league: weeklyLeague,
-    subject: weeklyCache.subject || weeklyLeague,
-    files,
+    mode: 'daily',
+    league: null,
+    subject: null,
+    // Always pass an array so main does not fall back to every sendable file.
+    files: Array.isArray(files) ? files : [],
   };
 }
 
@@ -1022,7 +1077,8 @@ function renderFilesList(
   }
   if (filesHint) {
     filesHint.textContent = sendable.length
-      ? `${selectedFileKeys.length} selected` + (skippedCount ? ` · ${skippedCount} empty skipped` : '')
+      ? `${selectedFileKeys.length} of ${sendable.length} selected` +
+        (skippedCount ? ` · ${skippedCount} empty skipped` : '')
       : weeklyLoading
         ? 'Loading…'
         : '';
@@ -1042,14 +1098,23 @@ function renderFilesList(
       cb.type = 'checkbox';
       cb.checked = selectedFileKeys.includes(key);
       cb.setAttribute('aria-label', `Select file ${order}`);
+      const syncFileSelectionUi = () => {
+        li.classList.toggle('is-unchecked', !cb.checked);
+        if (filesHint) {
+          filesHint.textContent = sendable.length
+            ? `${selectedFileKeys.length} of ${sendable.length} selected` +
+              (skippedCount ? ` · ${skippedCount} empty skipped` : '')
+            : '';
+        }
+        updateActionButtons();
+      };
       cb.addEventListener('change', () => {
         if (cb.checked) {
           if (!selectedFileKeys.includes(key)) selectedFileKeys.push(key);
         } else {
           selectedFileKeys = selectedFileKeys.filter((k) => k !== key);
         }
-        if (filesHint) filesHint.textContent = `${selectedFileKeys.length} selected`;
-        updateActionButtons();
+        syncFileSelectionUi();
       });
       const label = document.createElement('span');
       label.className = 'file-label';
@@ -1077,6 +1142,14 @@ function renderFilesList(
         event.stopPropagation();
         downloadSendableFile(file, { order });
       });
+      li.addEventListener('click', (event) => {
+        if (event.target === cb || event.target === downloadBtn || downloadBtn.contains(event.target)) {
+          return;
+        }
+        cb.checked = !cb.checked;
+        cb.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      li.classList.toggle('is-unchecked', !cb.checked);
       li.append(cb, label, meta, downloadBtn);
       filesList.appendChild(li);
     });
@@ -1827,8 +1900,10 @@ function updateActionButtons({ canLogin } = {}) {
         corrlinksLoginBusy && !loopRunning
           ? 'Sending…'
           : sendableCount > 1
-            ? `Send all ${sendableCount} files`
-            : 'Send message';
+            ? `Send ${sendableCount} selected files`
+            : sendableCount === 1
+              ? 'Send selected file'
+              : 'Send message';
     }
   }
   btnStartLoop.disabled = busy || !hasLoopQueue || !accountsVerifiedOnce;
@@ -1853,6 +1928,10 @@ function updateActionButtons({ canLogin } = {}) {
   actionsRow?.classList.toggle('is-single-busy', singleBusy);
   if (inmateSearch) inmateSearch.disabled = busy || !accounts.length;
   if (btnRefresh) btnRefresh.disabled = busy;
+  if (btnRetryFailed) {
+    btnRetryFailed.disabled =
+      !lastLoopFailed.length || loopRunning || corrlinksLoginBusy || bootVerifyRunning;
+  }
   updateSessionPanel();
 }
 
@@ -1867,8 +1946,54 @@ function clearLoopProgressStats() {
   }
 }
 
+function clearLoopFailedPanel() {
+  lastLoopFailed = [];
+  if (loopFailedList) loopFailedList.innerHTML = '';
+  if (loopFailedPanel) loopFailedPanel.hidden = true;
+  if (btnRetryFailed) btnRetryFailed.disabled = true;
+  if (loopDoneFailedWrap) loopDoneFailedWrap.hidden = true;
+  if (loopDoneFailedList) loopDoneFailedList.innerHTML = '';
+  if (btnLoopDoneRetry) btnLoopDoneRetry.hidden = true;
+}
+
+function renderLoopFailedList(failed = lastLoopFailed) {
+  const rows = Array.isArray(failed) ? failed : [];
+  const renderInto = (listEl) => {
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    rows.forEach((row) => {
+      const li = document.createElement('li');
+      const name = document.createElement('div');
+      name.className = 'fail-name';
+      name.textContent = `${row.name || 'Inmate'}${
+        row.inmate_id != null ? ` (${row.inmate_id})` : ''
+      }`;
+      const reason = document.createElement('div');
+      reason.className = 'fail-reason';
+      reason.textContent = row.reason || 'Send failed';
+      li.append(name, reason);
+      listEl.appendChild(li);
+    });
+  };
+  renderInto(loopFailedList);
+  renderInto(loopDoneFailedList);
+  if (loopFailedPanel) loopFailedPanel.hidden = rows.length === 0;
+  if (btnRetryFailed) {
+    btnRetryFailed.disabled = rows.length === 0 || loopRunning || corrlinksLoginBusy || bootVerifyRunning;
+    btnRetryFailed.textContent =
+      rows.length > 0 ? `Retry failed (${rows.length})` : 'Retry failed';
+  }
+  if (loopDoneFailedWrap) loopDoneFailedWrap.hidden = rows.length === 0;
+  if (btnLoopDoneRetry) {
+    btnLoopDoneRetry.hidden = rows.length === 0;
+    btnLoopDoneRetry.textContent =
+      rows.length > 0 ? `Retry failed (${rows.length})` : 'Retry failed';
+  }
+}
+
 function clearLoopResultBanner() {
   lastLoopResult = null;
+  clearLoopFailedPanel();
   setLoopProgress('');
   updateSessionPanel();
 }
@@ -2351,15 +2476,22 @@ async function startCorrlinksLogin(options = {}) {
   // Open the pane in parallel with login — do not wait for full page load before Send.
   const revealPromise = revealCorrlinksEmbed().catch(() => null);
   syncCorrPaneBounds();
-  const template = buildTemplatePayload();
-  if (template.mode === 'weekly' && !template.files?.length) {
+  const template = buildTemplatePayload(inmate);
+  const files = Array.isArray(template.files) ? template.files : selectedExchangeFiles(inmate);
+  if (template.mode === 'weekly' && !(weeklyCache.updates || []).length) {
     toast(`No ${weeklyLeague} weekly file loaded — pick Weekly update again`, 'error');
     corrlinksLoginBusy = false;
     setCorrPanelBusy(null);
     updateActionButtons();
     return null;
   }
-  const files = selectedExchangeFiles(inmate);
+  if (send && !files.length) {
+    toast('Check at least one sendable file before sending', 'warn');
+    corrlinksLoginBusy = false;
+    setCorrPanelBusy(null);
+    updateActionButtons();
+    return null;
+  }
   const checkedCount = files.length;
   log(
     `${send ? 'Send' : 'Login'} ${assignment.viaLabel} ${maskSensitive(assignment.email)}` +
@@ -2373,7 +2505,7 @@ async function startCorrlinksLogin(options = {}) {
           ? ` · ${checkedCount} exchange file(s) checked`
           : '') +
       (send
-        ? ` · AUTO-SEND all ${files.length} file${files.length === 1 ? '' : 's'} (single inmate)`
+        ? ` · AUTO-SEND ${files.length} selected file${files.length === 1 ? '' : 's'} (single inmate)`
         : ' · no send'),
     assignment.via === 'second' ? 'warn' : 'info'
   );
@@ -3233,18 +3365,27 @@ async function startCorrlinksAccountLogin(group, options = {}) {
  * Used by Start loop after the account is already logged in.
  */
 async function startCorrlinksCompose(inmate, options = {}) {
-  const { quietToast = false, send = true } = options;
+  const { quietToast = false, send = true, fileSnapshot = null } = options;
   if (!inmate) return null;
   if (corrlinksLoginBusy) return null;
 
   corrlinksLoginBusy = true;
   updateActionButtons({ canLogin: true });
-  const template = buildTemplatePayload();
-  if (template.mode === 'weekly' && !template.files?.length) {
+  const snapshot = fileSnapshot || snapshotFileSelection();
+  const template = buildTemplatePayload(inmate, snapshot);
+  const selectedFiles = Array.isArray(template.files) ? template.files : [];
+  if (template.mode === 'weekly' && !(weeklyCache.updates || []).length) {
     corrlinksLoginBusy = false;
     updateActionButtons();
     toast(`No ${weeklyLeague} weekly file loaded — pick Weekly update again`, 'error');
     return null;
+  }
+  if (send && !selectedFiles.length) {
+    corrlinksLoginBusy = false;
+    updateActionButtons();
+    const message = 'No exchange files selected to send';
+    if (!quietToast) toast(message, 'warn');
+    return { state: 'error', message, sent: false };
   }
   const label = `${inmate.name || 'Inmate'} (${inmate.inmate_id || inmate.id})`;
   setStatusHint(send ? `Sending: ${label}…` : `Compose: ${label}…`);
@@ -3253,13 +3394,17 @@ async function startCorrlinksCompose(inmate, options = {}) {
   log(
     `${send ? 'Send' : 'Compose'} recipient ${label}` +
       (template.mode === 'weekly' ? ` · weekly ${template.league} · subject ${template.subject}` : '') +
-      (send ? ' · auto-send all files' : ' · no send'),
+      (send
+        ? ` · auto-send ${selectedFiles.length} file${selectedFiles.length === 1 ? '' : 's'}`
+        : ' · no send'),
     'info'
   );
   try {
     const result = await window.api.composeCorrlinksInmate({
       inmateId: inmate.id,
       template,
+      selectedFiles: snapshot.keys,
+      exchangeFiles: selectedFiles,
       send: Boolean(send),
     });
     handleLoginResult(result.status || {}, { quietToast });
@@ -3316,7 +3461,10 @@ function loopStillActive(generation) {
   return loopRunning && !loopAbort && generation === loopGeneration;
 }
 
-async function startInmateLoop() {
+async function startInmateLoop(options = {}) {
+  const retryIds = Array.isArray(options.inmateIds)
+    ? options.inmateIds.map(String).filter(Boolean)
+    : null;
   if (loopRunning || corrlinksLoginBusy || bootVerifyRunning) return;
   // Pull latest inmate roster from SportsData before grouping the loop.
   await syncCorrlinksAccountsQuiet({ reason: 'preflight', force: true });
@@ -3325,6 +3473,23 @@ async function startInmateLoop() {
     toast('Wait for account verification to finish', 'warn');
     await verifyCorrlinksAccountsOnBoot({ force: true });
     if (!accountsVerifiedOnce) return;
+  }
+
+  // Capture checked files before the loop switches inmates (which re-renders the list).
+  loopFileSnapshot = snapshotFileSelection();
+  const previewInmate = selectedInmate() || accounts[0] || null;
+  const selectedForLoop = previewInmate
+    ? filesFromSnapshot(previewInmate, loopFileSnapshot)
+    : [];
+  if (!selectedForLoop.length && templateMode === 'daily') {
+    // Still allow loop if some inmates have matching parts — validate after regroup.
+  } else if (templateMode === 'weekly' && !loopFileSnapshot.keys.length) {
+    toast('Check at least one weekly file to send', 'warn');
+    return;
+  }
+  if (!loopFileSnapshot.keys.length && !loopFileSnapshot.parts.length) {
+    toast('Check at least one sendable file before starting the loop', 'warn');
+    return;
   }
 
   // Claim the loop immediately so double-clicks / weekly reload cannot start a second run.
@@ -3401,11 +3566,50 @@ async function startInmateLoop() {
   }
 
   // ── Phase 2: regroup recipients onto usable accounts only ──
-  const { groups, duplicates, skipped } = regroupInmatesAfterProbe(accounts, probeByEmail);
+  const sourceAccounts = retryIds?.length
+    ? accounts.filter((inmate) => retryIds.includes(String(inmate.id)))
+    : accounts;
+  if (retryIds?.length && !sourceAccounts.length) {
+    loopRunning = false;
+    loopPhase = 'idle';
+    updateActionButtons();
+    toast('No matching failed recipients left to retry', 'warn');
+    return;
+  }
+  const { groups: rawGroups, duplicates, skipped: rawSkipped } = regroupInmatesAfterProbe(
+    sourceAccounts,
+    probeByEmail
+  );
+  const groups = rawGroups
+    .map((group) => ({
+      ...group,
+      inmates: retryIds?.length
+        ? group.inmates.filter((inmate) => retryIds.includes(String(inmate.id)))
+        : group.inmates.slice(),
+    }))
+    .filter((group) => group.inmates.length > 0);
+  const skipped = retryIds?.length
+    ? rawSkipped.filter((row) =>
+        retryIds.includes(String(row.inmate?.id || row.id || row.key))
+      )
+    : rawSkipped;
+  /** @type {Array<{ id: string|number, name: string, inmate_id?: string|number, reason: string }>} */
+  const failedRecipients = [];
+  const pushFailed = (inmate, reason) => {
+    if (!inmate) return;
+    failedRecipients.push({
+      id: inmate.id,
+      name: inmate.name || 'Inmate',
+      inmate_id: inmate.inmate_id ?? inmate.id,
+      reason: reason || 'Send failed',
+    });
+  };
   log(
     `Phase 2 — regrouped into ${groups.length} usable account(s)` +
+      (retryIds?.length ? ` · retry ${retryIds.length} failed` : '') +
       (duplicates.length ? ` · ${duplicates.length} duplicate(s) skipped` : '') +
-      (skipped.length ? ` · ${skipped.length} recipient(s) with no usable account` : ''),
+      (skipped.length ? ` · ${skipped.length} recipient(s) with no usable account` : '') +
+      ` · files: ${loopFileSnapshot.parts.length ? `parts ${loopFileSnapshot.parts.join(',')}` : `${loopFileSnapshot.keys.length} selected`}`,
     groups.length ? 'info' : 'error'
   );
   logLoopPlan(groups, duplicates);
@@ -3419,6 +3623,12 @@ async function startInmateLoop() {
       'warn',
       row
     );
+    failedRecipients.push({
+      id: row.inmate?.id || row.id || row.key,
+      name: row.name || row.inmate?.name || 'Inmate',
+      inmate_id: row.inmate?.inmate_id || row.key,
+      reason: 'No usable CorrLinks account',
+    });
   }
 
   failCount += skipped.length;
@@ -3582,6 +3792,9 @@ async function startInmateLoop() {
       viaFailed += 1;
       failCount += group.inmates.length;
       log(`Skipping recipients — re-login failed for ${accountLabel}`, 'error');
+      group.inmates.forEach((inmate) =>
+        pushFailed(inmate, loginStatus?.message || `Re-login failed · ${accountLabel}`)
+      );
     } else {
       if (viaSecond) viaSecondCount += 1;
       else viaPrimary += 1;
@@ -3593,17 +3806,34 @@ async function startInmateLoop() {
         }
         const inmate = group.inmates[r];
         const recipLabel = `${inmate.name || 'Inmate'} (${inmate.inmate_id || inmate.id})`;
+        const filesForInmate = filesFromSnapshot(inmate, loopFileSnapshot);
         setLoopProgress(
           `Account ${i + 1}/${groups.length}` +
             (viaSecond ? ' · 2nd' : '') +
             ` · Sending ${r + 1}/${group.inmates.length} · ${recipLabel}`
         );
-        log(`—— Recipient ${r + 1}/${group.inmates.length}: ${recipLabel} ——`, 'info');
+        log(
+          `—— Recipient ${r + 1}/${group.inmates.length}: ${recipLabel} · ${filesForInmate.length} file(s) ——`,
+          'info'
+        );
         selectInmate(inmate.id);
-        const status = await startCorrlinksCompose(inmate, { quietToast: true, send: true });
+        if (!filesForInmate.length) {
+          failCount += 1;
+          pushFailed(inmate, 'No checked sendable files for this inmate');
+          log(`No checked files for ${recipLabel} — skipped`, 'warn');
+          continue;
+        }
+        const status = await startCorrlinksCompose(inmate, {
+          quietToast: true,
+          send: true,
+          fileSnapshot: loopFileSnapshot,
+        });
         if (!loopStillActive(myGeneration)) break;
         if (statusLooksGood(status, { requireSend: true })) okCount += 1;
-        else failCount += 1;
+        else {
+          failCount += 1;
+          pushFailed(inmate, status?.message || 'Send did not complete');
+        }
       }
     }
 
@@ -3632,7 +3862,16 @@ async function startInmateLoop() {
   const title = wasAborted ? 'Loop stopped' : 'Loop done';
   const summary = `${title} · ${okCount} ok · ${failCount} failed · ${recipientTotal} recipients${accountSummaryText}`;
   const level = failCount || wasAborted || viaSecondCount ? 'warn' : 'success';
-  lastLoopResult = { okCount, failCount, recipientTotal, aborted: wasAborted, summary, level };
+  lastLoopFailed = failedRecipients.slice();
+  lastLoopResult = {
+    okCount,
+    failCount,
+    recipientTotal,
+    aborted: wasAborted,
+    summary,
+    level,
+    failed: lastLoopFailed.slice(),
+  };
   setLoopProgress(title, {
     result: true,
     level,
@@ -3641,8 +3880,18 @@ async function startInmateLoop() {
     failCount,
     recipientTotal,
   });
+  renderLoopFailedList(lastLoopFailed);
   setStatusHint(summary);
   log(summary, level);
+  if (lastLoopFailed.length) {
+    log(
+      `Failed recipients (${lastLoopFailed.length}):\n` +
+        lastLoopFailed
+          .map((row, idx) => `  ${idx + 1}. ${row.name} (${row.inmate_id}) — ${row.reason}`)
+          .join('\n'),
+      'warn'
+    );
+  }
   toast(summary, level);
   showLoopDoneAlert({
     aborted: wasAborted,
@@ -3650,7 +3899,23 @@ async function startInmateLoop() {
     failCount,
     recipientTotal,
     summary,
+    failed: lastLoopFailed,
   });
+}
+
+function retryFailedLoopRecipients() {
+  const ids = (lastLoopFailed || []).map((row) => row.id).filter((id) => id != null);
+  if (!ids.length) {
+    toast('No failed recipients to retry', 'warn');
+    return;
+  }
+  if (loopRunning || corrlinksLoginBusy || bootVerifyRunning) {
+    toast('Wait for the current run to finish', 'warn');
+    return;
+  }
+  log(`Retrying ${ids.length} failed recipient(s)…`, 'info');
+  toast(`Retrying ${ids.length} failed recipient(s)…`, 'info');
+  void startInmateLoop({ inmateIds: ids });
 }
 
 function forceStopSingleCorrlinks() {
@@ -4322,7 +4587,14 @@ function openModalDialog(dialog) {
 /**
  * SweetAlert-style completion popup after the send loop finishes.
  */
-function showLoopDoneAlert({ aborted = false, okCount = 0, failCount = 0, recipientTotal = 0, summary = '' } = {}) {
+function showLoopDoneAlert({
+  aborted = false,
+  okCount = 0,
+  failCount = 0,
+  recipientTotal = 0,
+  summary = '',
+  failed = lastLoopFailed,
+} = {}) {
   if (!loopDoneDialog || typeof loopDoneDialog.showModal !== 'function') {
     toast(summary || (aborted ? 'Loop stopped' : 'Loop finished'), aborted || failCount ? 'warn' : 'success');
     return;
@@ -4347,7 +4619,7 @@ function showLoopDoneAlert({ aborted = false, okCount = 0, failCount = 0, recipi
         'The loop finished, but no messages were sent successfully.';
     } else if (failCount > 0) {
       loopDoneMessage.textContent =
-        'The loop finished with some recipients not fully sent.';
+        'The loop finished with some recipients not fully sent. Retry the failed list when ready.';
     } else {
       loopDoneMessage.textContent =
         'All recipients in this loop were sent successfully.';
@@ -4359,6 +4631,7 @@ function showLoopDoneAlert({ aborted = false, okCount = 0, failCount = 0, recipi
       `${okCount} ok · ${failCount} failed · ${recipientTotal} recipient(s)`;
     loopDoneSummary.textContent = `${counts}\n${formatDateTime()}`;
   }
+  renderLoopFailedList(failed);
 
   openModalDialog(loopDoneDialog);
   // Ensure OK can dismiss even if a leftover native view intercepts the first frame.
@@ -4368,6 +4641,14 @@ function showLoopDoneAlert({ aborted = false, okCount = 0, failCount = 0, recipi
     okBtn.addEventListener('click', (event) => {
       event.preventDefault();
       if (loopDoneDialog?.open) loopDoneDialog.close();
+    });
+  }
+  if (btnLoopDoneRetry && !btnLoopDoneRetry.dataset.wired) {
+    btnLoopDoneRetry.dataset.wired = '1';
+    btnLoopDoneRetry.addEventListener('click', (event) => {
+      event.preventDefault();
+      if (loopDoneDialog?.open) loopDoneDialog.close();
+      retryFailedLoopRecipients();
     });
   }
 }
@@ -4870,6 +5151,10 @@ btnLogin.addEventListener('click', () => {
 
 btnStartLoop.addEventListener('click', () => {
   startInmateLoop();
+});
+
+btnRetryFailed?.addEventListener('click', () => {
+  retryFailedLoopRecipients();
 });
 
 btnStopLoop.addEventListener('click', () => {

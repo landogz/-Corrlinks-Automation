@@ -72,20 +72,23 @@ function resolveTemplateOptions(payload = {}, inmate = null) {
   const template = payload.template || {};
   const mode = String(template.mode || payload.mode || 'daily').toLowerCase();
   const league = normalizeWeeklyLeague(template.league || payload.league);
+  // Explicit array (even empty) means the UI chose the file set — do not fall back to all.
   let files = Array.isArray(template.files)
     ? template.files
     : Array.isArray(payload.exchangeFiles)
       ? payload.exchangeFiles
       : null;
   // Daily mode: honor checked files from the UI when no explicit template.files.
-  if ((!files || !files.length) && inmate && Array.isArray(payload.selectedFiles)) {
+  if (files == null && inmate && Array.isArray(payload.selectedFiles)) {
     const sendable = inmate?.inmate_exchange?.sendable || [];
     const keys = payload.selectedFiles.map(String);
-    const filtered = sendable.filter((file, index) => {
+    const parts = new Set(keys.map((k) => String(k).split(':')[0]).filter(Boolean));
+    const byKey = sendable.filter((file, index) => {
       const key = `${file.part}:${file.filename || index}`;
       return keys.includes(key);
     });
-    if (filtered.length) files = filtered;
+    const byPart = sendable.filter((file) => parts.has(String(file.part)));
+    files = byKey.length ? byKey : byPart;
   }
   const subject =
     template.subject ||
@@ -95,7 +98,8 @@ function resolveTemplateOptions(payload = {}, inmate = null) {
     mode,
     league,
     subject: subject || null,
-    exchangeFiles: files && files.length ? files : null,
+    // null = use inmate defaults; [] = intentionally none selected
+    exchangeFiles: Array.isArray(files) ? files : null,
   };
 }
 
@@ -414,6 +418,16 @@ function registerIpc() {
         };
       }
       const template = resolveTemplateOptions(payload, inmate);
+      if (Array.isArray(template.exchangeFiles) && template.exchangeFiles.length === 0) {
+        return {
+          ok: false,
+          status: {
+            state: 'error',
+            message: 'No exchange files selected to send',
+            sent: false,
+          },
+        };
+      }
       const status = await loginInmate(inmate, {
         fetchFileText: (url) => sportsData.fetchExchangeFileText(url),
         subject: template.subject,
@@ -507,8 +521,18 @@ function registerIpc() {
           },
         };
       }
-      const template = resolveTemplateOptions(payload);
+      const template = resolveTemplateOptions(payload, inmate);
       const send = Boolean(payload.send);
+      if (send && Array.isArray(template.exchangeFiles) && template.exchangeFiles.length === 0) {
+        return {
+          ok: false,
+          status: {
+            state: 'error',
+            message: 'No exchange files selected to send',
+            sent: false,
+          },
+        };
+      }
       const status = await composeForInmate(inmate, {
         fetchFileText: (url) => sportsData.fetchExchangeFileText(url),
         subject: template.subject,
