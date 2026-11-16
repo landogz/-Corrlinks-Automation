@@ -769,87 +769,140 @@ async function cdpTypeIntoFocused(win, text) {
   });
 }
 
-function loginFieldScript() {
-  return `(() => {
-    function firstMatch(selectors) {
+/** Shared in-page helpers for CorrLinks Syncfusion/Angular login inputs. */
+function loginDomHelpersScript() {
+  return `
+    function isVisible(el) {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return (
+        r.width > 0 &&
+        r.height > 0 &&
+        style.visibility !== 'hidden' &&
+        style.display !== 'none' &&
+        style.opacity !== '0'
+      );
+    }
+    function firstVisible(selectors) {
       for (const sel of selectors) {
         try {
-          const el = document.querySelector(sel);
-          if (el) return el;
+          const nodes = document.querySelectorAll(sel);
+          for (const el of nodes) {
+            if (isVisible(el) && !el.disabled) return el;
+          }
         } catch (_) {}
       }
       return null;
     }
-    const emailSelectors = ${JSON.stringify(CORRLINKS.emailSelectors)};
-    const passwordSelectors = ${JSON.stringify(CORRLINKS.passwordSelectors)};
-    const emailInput = firstMatch(emailSelectors);
-    const passwordInput = firstMatch(passwordSelectors);
-    return {
-      emailInput: !!emailInput,
-      passwordInput: !!passwordInput,
-      email: emailInput ? (emailInput.value || '') : '',
-      password: passwordInput ? (passwordInput.value || '') : '',
-      emailEj: emailInput?.ej2_instances?.[0]?.value || '',
-      passwordEj: passwordInput?.ej2_instances?.[0]?.value || '',
-    };
+    function resolveEj2(el) {
+      if (!el) return null;
+      if (el.ej2_instances && el.ej2_instances[0]) return el.ej2_instances[0];
+      let p = el.parentElement;
+      for (let i = 0; i < 5 && p; i += 1, p = p.parentElement) {
+        if (p.ej2_instances && p.ej2_instances[0]) return p.ej2_instances[0];
+      }
+      return null;
+    }
+    function ej2Value(el) {
+      const inst = resolveEj2(el);
+      if (!inst) return '';
+      const v = inst.value;
+      return v == null ? '' : String(v);
+    }
+    function findEmailInput() {
+      return firstVisible(${JSON.stringify(CORRLINKS.emailSelectors)});
+    }
+    function findPasswordInput() {
+      let el = firstVisible(${JSON.stringify(CORRLINKS.passwordSelectors)});
+      if (el) return el;
+      // Show-password toggle can turn type=password into type=text.
+      return (
+        firstVisible(['#textbox_1', 'input[name="textbox_1"]']) ||
+        [...document.querySelectorAll('input')].find((input) => {
+          if (!isVisible(input) || input.type === 'hidden' || input.type === 'checkbox') return false;
+          const labelish = [
+            input.getAttribute('aria-label') || '',
+            input.placeholder || '',
+            input.name || '',
+            input.id || '',
+          ]
+            .join(' ')
+            .toLowerCase();
+          return /password|passwd|textbox_1/.test(labelish);
+        }) ||
+        null
+      );
+    }
+    function snapshotFields() {
+      const emailInput = findEmailInput();
+      const passwordInput = findPasswordInput();
+      return {
+        emailInput: !!emailInput,
+        passwordInput: !!passwordInput,
+        emailReady: !!(emailInput && !emailInput.disabled && !emailInput.readOnly),
+        passwordReady: !!(passwordInput && !passwordInput.disabled && !passwordInput.readOnly),
+        emailEjReady: !!(emailInput && resolveEj2(emailInput)),
+        passwordEjReady: !!(passwordInput && resolveEj2(passwordInput)),
+        email: emailInput ? (emailInput.value || '') : '',
+        password: passwordInput ? (passwordInput.value || '') : '',
+        emailEj: emailInput ? ej2Value(emailInput) : '',
+        passwordEj: passwordInput ? ej2Value(passwordInput) : '',
+      };
+    }
+  `;
+}
+
+function loginFieldScript() {
+  return `(() => {
+    ${loginDomHelpersScript()}
+    return snapshotFields();
   })()`;
+}
+
+async function waitForLoginControlsReady(win, timeoutMs = 8000) {
+  const budget = Math.max(500, Number(timeoutMs) || 8000);
+  const started = Date.now();
+  let last = null;
+  while (Date.now() - started < budget) {
+    last = await win.webContents.executeJavaScript(loginFieldScript(), true).catch(() => null);
+    if (
+      last?.emailReady &&
+      last?.passwordReady &&
+      (last.emailEjReady || Date.now() - started > Math.min(2500, budget * 0.45)) &&
+      (last.passwordEjReady || Date.now() - started > Math.min(2500, budget * 0.45))
+    ) {
+      // Prefer EJ2-ready, but after ~2.5s accept plain editable inputs.
+      if (last.emailEjReady && last.passwordEjReady) return { ok: true, ready: last, ej2: true };
+      if (Date.now() - started > Math.min(2500, budget * 0.45)) {
+        return { ok: true, ready: last, ej2: !!(last.emailEjReady && last.passwordEjReady) };
+      }
+    }
+    if (last?.emailReady && last?.passwordReady && last?.emailEjReady && last?.passwordEjReady) {
+      return { ok: true, ready: last, ej2: true };
+    }
+    await new Promise((r) => setTimeout(r, 80));
+  }
+  if (last?.emailReady && last?.passwordReady) {
+    return { ok: true, ready: last, ej2: !!(last.emailEjReady && last.passwordEjReady), timedOut: true };
+  }
+  return { ok: false, ready: last, timedOut: true };
 }
 
 async function focusLoginField(win, which) {
   return runPageScript(
     win,
     `(() => {
-      function isVisible(el) {
-        if (!el) return false;
-        const r = el.getBoundingClientRect();
-        const style = window.getComputedStyle(el);
-        return (
-          r.width > 0 &&
-          r.height > 0 &&
-          style.visibility !== 'hidden' &&
-          style.display !== 'none' &&
-          style.opacity !== '0'
-        );
-      }
-      function firstVisible(selectors) {
-        for (const sel of selectors) {
-          try {
-            const nodes = document.querySelectorAll(sel);
-            for (const el of nodes) {
-              if (isVisible(el)) return el;
-            }
-          } catch (_) {}
-        }
-        return null;
-      }
-      const selectors = ${JSON.stringify(
-        which === 'password' ? CORRLINKS.passwordSelectors : CORRLINKS.emailSelectors
-      )};
-      let el = firstVisible(selectors);
-      // Show-password toggle can turn type=password into type=text; still target #textbox_1.
-      if (!el && which === 'password') {
-        el =
-          firstVisible(['#textbox_1', 'input[name="textbox_1"]']) ||
-          [...document.querySelectorAll('input')].find((input) => {
-            if (!isVisible(input) || input.type === 'hidden' || input.type === 'checkbox') return false;
-            const labelish = [
-              input.getAttribute('aria-label') || '',
-              input.placeholder || '',
-              input.name || '',
-              input.id || '',
-            ]
-              .join(' ')
-              .toLowerCase();
-            return /password|passwd|textbox_1/.test(labelish);
-          }) ||
-          null;
-      }
+      ${loginDomHelpersScript()}
+      const el = ${which === 'password' ? 'findPasswordInput()' : 'findEmailInput()'};
       if (!el) return { ok: false };
       el.scrollIntoView({ block: 'center', inline: 'center' });
+      const inst = resolveEj2(el);
+      try { if (inst && typeof inst.focusIn === 'function') inst.focusIn(); } catch (_) {}
       el.focus();
       el.click();
       try { el.select(); } catch (_) {}
-      return { ok: true, id: el.id || null, type: el.type || null };
+      return { ok: true, id: el.id || null, type: el.type || null, ej2: !!inst };
     })()`
   );
 }
@@ -857,25 +910,19 @@ async function focusLoginField(win, which) {
 async function syncEj2LoginFields(win, email, password) {
   return win.webContents.executeJavaScript(
     `(() => {
-      function firstMatch(selectors) {
-        for (const sel of selectors) {
-          try {
-            const el = document.querySelector(sel);
-            if (el) return el;
-          } catch (_) {}
-        }
-        return null;
-      }
+      ${loginDomHelpersScript()}
       function apply(el, value) {
         if (!el) return false;
-        const inst = el.ej2_instances && el.ej2_instances[0];
+        const inst = resolveEj2(el);
         const proto = window.HTMLInputElement.prototype;
         const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        try { if (inst && typeof inst.focusIn === 'function') inst.focusIn(); } catch (_) {}
+        el.focus();
         if (setter) setter.call(el, value);
         else el.value = value;
         if (inst) {
-          inst.value = value;
-          if (typeof inst.dataBind === 'function') inst.dataBind();
+          try { inst.value = value; } catch (_) {}
+          try { if (typeof inst.dataBind === 'function') inst.dataBind(); } catch (_) {}
           try {
             if (typeof inst.trigger === 'function') {
               inst.trigger('input', { value });
@@ -883,28 +930,28 @@ async function syncEj2LoginFields(win, email, password) {
             }
           } catch (_) {}
         }
-        el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: value, inputType: 'insertText' }));
+        try {
+          el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: value, inputType: 'insertText' }));
+        } catch (_) {
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('blur', { bubbles: true }));
+        try { if (inst && typeof inst.focusOut === 'function') inst.focusOut(); } catch (_) {}
         return true;
       }
-      const emailInput = firstMatch(${JSON.stringify(CORRLINKS.emailSelectors)});
-      const passwordInput = firstMatch(${JSON.stringify(CORRLINKS.passwordSelectors)});
+      const emailInput = findEmailInput();
+      const passwordInput = findPasswordInput();
       if (!emailInput || !passwordInput) {
-        return { ok: false, reason: 'missing-fields' };
+        return { ok: false, reason: 'missing-fields', ...snapshotFields() };
       }
       apply(emailInput, ${JSON.stringify(email)});
       apply(passwordInput, ${JSON.stringify(password)});
-      // Blur password last so validators re-run with both values present.
+      // Nudge Angular validators with both values present.
       try { passwordInput.blur(); } catch (_) {}
       try { emailInput.dispatchEvent(new Event('blur', { bubbles: true })); } catch (_) {}
-      return {
-        ok: true,
-        email: emailInput.value || '',
-        password: passwordInput.value || '',
-        emailEj: emailInput.ej2_instances?.[0]?.value || '',
-        passwordEj: passwordInput.ej2_instances?.[0]?.value || '',
-      };
+      return { ok: true, ...snapshotFields() };
     })()`,
     true
   );
@@ -919,15 +966,21 @@ function credentialsMatch(snapshot, email, password) {
   return gotEmail === wantEmail && gotPassword === wantPassword && wantEmail.length > 0 && wantPassword.length > 0;
 }
 
+async function readLoginCredentials(win) {
+  return win.webContents.executeJavaScript(loginFieldScript(), true).catch(() => null);
+}
+
 /** Pause after credentials are filled before clicking Login (CorrLinks/Angular settle). */
 const SIGN_IN_DELAY_MS = Math.max(
   0,
-  Number(process.env.CORRLINKS_SIGNIN_DELAY_MS ?? 10_000) || 0
+  Number(process.env.CORRLINKS_SIGNIN_DELAY_MS ?? 5_000) || 0
 );
 
-async function waitBeforeSignInClick({ email = null, attempt = null } = {}) {
+async function waitBeforeSignInClick(win, { email = null, attempt = null, password = null } = {}) {
   const totalMs = SIGN_IN_DELAY_MS;
   if (totalMs <= 0) return;
+  const wantEmail = String(email || '');
+  const wantPassword = String(password || '');
   const endsAt = Date.now() + totalMs;
   let lastShown = -1;
   while (Date.now() < endsAt) {
@@ -940,12 +993,49 @@ async function waitBeforeSignInClick({ email = null, attempt = null } = {}) {
           `Filling credentials` +
           (attempt ? ` (${attempt})` : '') +
           ` · signing in ${left}s`,
-        email,
+        email: wantEmail || email,
         attempt,
       });
+      // Keep values alive — Angular/Syncfusion often wipes the model during settle.
+      if (win && wantEmail && wantPassword) {
+        const snap = await readLoginCredentials(win);
+        if (!credentialsMatch(snap, wantEmail, wantPassword)) {
+          await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => null);
+        }
+      }
     }
     await new Promise((r) => setTimeout(r, Math.min(250, endsAt - Date.now())));
   }
+}
+
+async function fillCredentialsOnce(win, wantEmail, wantPassword) {
+  let filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => null);
+  if (credentialsMatch(filled, wantEmail, wantPassword)) {
+    await new Promise((r) => setTimeout(r, 60));
+    filled = await readLoginCredentials(win);
+    if (credentialsMatch(filled, wantEmail, wantPassword)) return filled;
+  }
+
+  const emailFocus = await focusLoginField(win, 'email');
+  if (!emailFocus?.ok) return { ...(filled || {}), ok: false, reason: 'missing-email' };
+  await cdpTypeIntoFocused(win, wantEmail);
+  await new Promise((r) => setTimeout(r, 40));
+
+  let passFocus = await focusLoginField(win, 'password');
+  if (!passFocus?.ok) {
+    for (let wait = 0; wait < 5 && !passFocus?.ok; wait += 1) {
+      await new Promise((r) => setTimeout(r, 60));
+      passFocus = await focusLoginField(win, 'password');
+    }
+  }
+  if (!passFocus?.ok) return { ...(filled || {}), ok: false, reason: 'missing-password' };
+  await cdpTypeIntoFocused(win, wantPassword);
+  await new Promise((r) => setTimeout(r, 40));
+
+  filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => filled);
+  await new Promise((r) => setTimeout(r, 80));
+  const snap = await readLoginCredentials(win);
+  return { ...(filled || {}), ...(snap || {}) };
 }
 
 async function fillAndSubmit(win, email, password, { attempt = null } = {}) {
@@ -969,42 +1059,45 @@ async function fillAndSubmit(win, email, password, { attempt = null } = {}) {
     return { ok: false, reason: `Could not find ${field} field`, needsLogout: true };
   }
 
-  // Fast path: set Syncfusion/Angular values directly (no per-keystroke CDP).
-  let filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => null);
-  if (!credentialsMatch(filled, wantEmail, wantPassword)) {
-    for (let attempt = 1; attempt <= 2 && !credentialsMatch(filled, wantEmail, wantPassword); attempt += 1) {
-      const emailFocus = await focusLoginField(win, 'email');
-      if (!emailFocus?.ok) {
-        if (attempt < 2) {
-          await new Promise((r) => setTimeout(r, 25));
-          continue;
-        }
-        return missingFieldResult('email');
-      }
-      await cdpTypeIntoFocused(win, wantEmail);
+  // Wait for Syncfusion/Angular to finish wiring the TextBoxes before writing.
+  const controls = await waitForLoginControlsReady(win, 9000);
+  if (!controls.ok) {
+    if (!controls.ready?.emailInput) return missingFieldResult('email');
+    if (!controls.ready?.passwordInput) return missingFieldResult('password');
+  }
 
-      let passFocus = await focusLoginField(win, 'password');
-      if (!passFocus?.ok) {
-        for (let wait = 0; wait < 3 && !passFocus?.ok; wait += 1) {
-          await new Promise((r) => setTimeout(r, 30));
-          passFocus = await focusLoginField(win, 'password');
-        }
+  let filled = null;
+  for (let round = 1; round <= 5; round += 1) {
+    setStatus({
+      state: 'filling',
+      message: `Filling credentials${attempt ? ` (${attempt})` : ''} · bind ${round}/5`,
+      email: wantEmail,
+      attempt,
+    });
+    filled = await fillCredentialsOnce(win, wantEmail, wantPassword);
+    if (filled?.reason === 'missing-email') {
+      if (round < 5) {
+        await new Promise((r) => setTimeout(r, 120 * round));
+        continue;
       }
-      if (!passFocus?.ok) {
-        return missingFieldResult('password');
-      }
-      await cdpTypeIntoFocused(win, wantPassword);
-      filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => filled);
-      if (credentialsMatch(filled, wantEmail, wantPassword)) break;
-      const snap = await win.webContents.executeJavaScript(loginFieldScript(), true).catch(() => null);
-      filled = { ...filled, ...snap };
+      return missingFieldResult('email');
     }
+    if (filled?.reason === 'missing-password') {
+      if (round < 5) {
+        await new Promise((r) => setTimeout(r, 120 * round));
+        continue;
+      }
+      return missingFieldResult('password');
+    }
+    if (credentialsMatch(filled, wantEmail, wantPassword)) break;
+    await new Promise((r) => setTimeout(r, 150 * round));
   }
 
   if (!credentialsMatch(filled, wantEmail, wantPassword)) {
     return {
       ok: false,
       reason: 'Fields did not accept values (Angular/Syncfusion still empty)',
+      needsReload: true,
       filled,
     };
   }
@@ -1045,11 +1138,22 @@ async function fillAndSubmit(win, email, password, { attempt = null } = {}) {
     return { ok: false, reason: 'Could not find Login button', filled };
   }
 
-  // Re-assert values one last time immediately before submit (validators were rejecting empty model).
-  await syncEj2LoginFields(win, wantEmail, wantPassword);
+  // Give CorrLinks time to accept filled fields before Login click; keep values alive.
+  await waitBeforeSignInClick(win, { email: wantEmail, attempt, password: wantPassword });
 
-  // Give CorrLinks time to accept filled fields before Login click.
-  await waitBeforeSignInClick({ email: wantEmail, attempt });
+  // Re-assert immediately before submit (Angular often clears during the settle delay).
+  filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => filled);
+  if (!credentialsMatch(filled, wantEmail, wantPassword)) {
+    filled = await fillCredentialsOnce(win, wantEmail, wantPassword);
+  }
+  if (!credentialsMatch(filled, wantEmail, wantPassword)) {
+    return {
+      ok: false,
+      reason: 'Fields did not accept values (Angular/Syncfusion still empty)',
+      needsReload: true,
+      filled,
+    };
+  }
 
   await cdpClick(win, target.x, target.y);
   await new Promise((r) => setTimeout(r, 15));
@@ -1062,11 +1166,8 @@ async function fillAndSubmit(win, email, password, { attempt = null } = {}) {
     // If validation toasts already appeared, refill once more and click again.
     const feedback = await readAuthFeedback(win);
     if (feedback?.some((m) => /password field is required|email address field|not a valid email/i.test(m))) {
-      await syncEj2LoginFields(win, wantEmail, wantPassword);
-      await focusLoginField(win, 'password');
-      await cdpTypeIntoFocused(win, wantPassword);
-      await syncEj2LoginFields(win, wantEmail, wantPassword);
-      await new Promise((r) => setTimeout(r, 20));
+      await fillCredentialsOnce(win, wantEmail, wantPassword);
+      await new Promise((r) => setTimeout(r, 40));
     }
     clickAt(win, target.x, target.y);
     await cdpClick(win, target.x, target.y);
@@ -3386,6 +3487,38 @@ async function attemptLogin(
 
   fillResult = await fillAndSubmit(win, email, password, { attempt: label });
   } // end !fillResult?.ok (form wait + fill)
+  // Syncfusion empty bind: hard-reload login once, wait for EJ2, then refill.
+  if (
+    !fillResult.ok &&
+    (fillResult.needsReload ||
+      /Angular\/Syncfusion still empty/i.test(String(fillResult.reason || '')))
+  ) {
+    setStatus({
+      state: 'loading',
+      message: `Login fields empty — reloading CorrLinks form (${label})`,
+      email,
+      attempt: label,
+    });
+    try {
+      await win.loadURL(CORRLINKS.loginUrl);
+    } catch (error) {
+      const msg = String(error?.message || error);
+      if (!/ERR_ABORTED|-3/.test(msg)) throw error;
+    }
+    const readyAfterReload = await waitForLoginForm(win, fast ? 6000 : 20000, fast ? { pollMs: 20 } : {});
+    if (readyAfterReload?.ok) {
+      await waitForLoginControlsReady(win, fast ? 3500 : 9000);
+      setStatus({
+        state: 'filling',
+        message: `Filling credentials after reload (${label})`,
+        url: win.webContents.getURL(),
+        email,
+        attempt: label,
+      });
+      fillResult = await fillAndSubmit(win, email, password, { attempt: label });
+    }
+  }
+
   // Missing email/password usually means interstitial / stale session — force logout once.
   const shouldForceLogoutForFill =
     !fillResult.ok &&
