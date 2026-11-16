@@ -3064,7 +3064,7 @@ async function verifyAllCorrlinksAccounts({
       log(`  SECONDARY for: ${account.secondFor.join('; ')}`, 'info');
     }
 
-    const PROBE_DEADLINE_MS = 90_000;
+    const PROBE_DEADLINE_MS = 75_000;
     async function loginWithDeadline() {
       let timedOut = false;
       const timer = setTimeout(() => {
@@ -3102,16 +3102,25 @@ async function verifyAllCorrlinksAccounts({
       }
     }
 
+    function isTransientProbeFailure(status) {
+      const msg = String(status?.message || '');
+      const state = String(status?.state || '');
+      return (
+        state === 'timeout' ||
+        /script failed to execute|object has been destroyed|ERR_FAILED|-2|ERR_CONNECTION|ERR_NETWORK|ERR_TIMED_OUT|ERR_ABORTED|debugger session timeout|cdp type timeout|page script timeout/i.test(
+          msg
+        )
+      );
+    }
+
     let status = await loginWithDeadline();
-    // Electron "Script failed to execute" is infra noise — reset panel and retry once.
-    if (
-      isActive() &&
-      status &&
-      !probeAccountUsable(status) &&
-      /script failed to execute|object has been destroyed/i.test(String(status.message || ''))
-    ) {
-      log(`Probe infra glitch · ${accountLabel} — resetting panel and retrying once`, 'warn');
-      pushVerifyProbeStep('Infra glitch — retrying once…');
+    // Transient load / CDP / timeout noise — reset panel and retry once (Locked is final).
+    if (isActive() && status && !probeAccountUsable(status) && isTransientProbeFailure(status)) {
+      log(
+        `Probe transient failure · ${accountLabel} — resetting panel and retrying once`,
+        'warn'
+      );
+      pushVerifyProbeStep('Transient failure — retrying once…');
       await forceResetCorrlinksPanel();
       if (!isActive()) {
         clearVerifyProbeLive();

@@ -701,7 +701,7 @@ function clickAt(win, x, y) {
   });
 }
 
-async function withDebugger(win, fn) {
+async function withDebugger(win, fn, { timeoutMs = 6000 } = {}) {
   const wc = win.webContents;
   if (!wc || wc.isDestroyed?.()) {
     throw new Error('CorrLinks webContents unavailable for debugger');
@@ -711,7 +711,8 @@ async function withDebugger(win, fn) {
     if (attachedHere) {
       wc.debugger.attach('1.3');
     }
-    return await fn(wc);
+    // Intel macOS can hang forever inside CDP sendCommand — always budget the session.
+    return await withTimeout(fn(wc), Math.max(1500, Number(timeoutMs) || 6000), 'debugger session timeout');
   } finally {
     if (attachedHere) {
       try {
@@ -723,7 +724,7 @@ async function withDebugger(win, fn) {
 
 /** Keep CDP attached across a multi-step fill — attach/detach churn fails often on Intel macOS. */
 async function withDebuggerSession(win, fn) {
-  return withDebugger(win, fn);
+  return withDebugger(win, fn, { timeoutMs: 10000 });
 }
 
 function focusCorrPanel(win) {
@@ -795,18 +796,18 @@ async function cdpTypeIntoFocused(win, text) {
   await withDebugger(win, async (wc) => cdpSelectAllAndInsert(wc, text));
 }
 
-/** Native Electron key events — fallback when CDP insertText is ignored (common on Intel). */
-function nativeTypeIntoFocused(win, text) {
+/** Native Electron paste-style insert — avoid per-character typing (too slow for probe budget). */
+function nativeInsertIntoFocused(win, text) {
   const wc = win.webContents;
   const value = String(text ?? '');
-  // Select-all
   const cmd = process.platform === 'darwin';
   wc.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: cmd ? ['meta'] : ['control'] });
   wc.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: cmd ? ['meta'] : ['control'] });
-  for (const ch of value) {
-    wc.sendInputEvent({ type: 'keyDown', keyCode: ch });
-    wc.sendInputEvent({ type: 'char', keyCode: ch });
-    wc.sendInputEvent({ type: 'keyUp', keyCode: ch });
+  // Single insert via key events for short values; longer values rely on CDP/page scripts.
+  if (value.length <= 64) {
+    for (const ch of value) {
+      wc.sendInputEvent({ type: 'char', keyCode: ch });
+    }
   }
 }
 
@@ -954,22 +955,22 @@ function loginFieldScript() {
   })()`;
 }
 
-async function waitForLoginControlsReady(win, timeoutMs = 8000) {
-  const budget = Math.max(500, Number(timeoutMs) || 8000);
+async function waitForLoginControlsReady(win, timeoutMs = 5000) {
+  const budget = Math.max(400, Number(timeoutMs) || 5000);
   const started = Date.now();
   let last = null;
   while (Date.now() - started < budget) {
     last = await win.webContents.executeJavaScript(loginFieldScript(), true).catch(() => null);
     if (last?.emailReady && last?.passwordReady) {
+      // Prefer EJ2, but do not burn probe budget waiting — fill as soon as inputs exist.
       if (last.emailEjReady && last.passwordEjReady) {
         return { ok: true, ready: last, ej2: true };
       }
-      // Give Syncfusion time to attach, then proceed with plain inputs.
-      if (Date.now() - started > Math.min(3500, budget * 0.5)) {
+      if (Date.now() - started > Math.min(1200, budget * 0.35)) {
         return { ok: true, ready: last, ej2: false };
       }
     }
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 70));
   }
   if (last?.emailReady && last?.passwordReady) {
     return { ok: true, ready: last, ej2: !!(last.emailEjReady && last.passwordEjReady), timedOut: true };
@@ -1100,47 +1101,34 @@ async function typeIntoLoginField(win, which, text, { wc = null } = {}) {
   focusCorrPanel(win);
   const focusInfo = await focusLoginField(win, which);
   if (!focusInfo?.ok) return focusInfo;
+  const want = String(text ?? '');
 
   const runType = async (debuggerWc) => {
     if (focusInfo.x != null && focusInfo.y != null) {
       await cdpClickAt(debuggerWc, focusInfo.x, focusInfo.y);
-      await new Promise((r) => setTimeout(r, 30));
-      // Re-focus after click — Syncfusion enables the input on focusIn.
-      await focusLoginField(win, which);
+      await new Promise((r) => setTimeout(r, 20));
     }
-    await cdpSelectAllAndInsert(debuggerWc, text);
+    await cdpSelectAllAndInsert(debuggerWc, want);
   };
 
   try {
-    if (wc) await runType(wc);
-    else await withDebugger(win, runType);
+    if (wc) {
+      await withTimeout(runType(wc), 2500, 'cdp type timeout');
+    } else {
+      await withDebugger(win, runType, { timeoutMs: 2500 });
+    }
   } catch (_) {
-    // CDP unavailable — fall through to native / in-page.
+    // CDP hang/fail — fall through to page script.
   }
 
   let snap = await readLoginCredentials(win);
-  const want = String(text ?? '');
   const got =
     which === 'password'
       ? String(snap?.passwordEj || snap?.password || '')
       : String(snap?.emailEj || snap?.email || '');
   if (got === want) return { ok: true, ...focusInfo, snap };
 
-  // Native key events (Intel often ignores CDP insertText until a real key stream).
-  try {
-    await focusLoginField(win, which);
-    nativeTypeIntoFocused(win, want);
-    await new Promise((r) => setTimeout(r, 40));
-  } catch (_) {}
-
-  snap = await readLoginCredentials(win);
-  const got2 =
-    which === 'password'
-      ? String(snap?.passwordEj || snap?.password || '')
-      : String(snap?.emailEj || snap?.email || '');
-  if (got2 === want) return { ok: true, ...focusInfo, snap };
-
-  // Last resort: in-page execCommand + EJ2 apply for this field only.
+  // Fast in-page apply (no per-keystroke). Native insert only for short values.
   await win.webContents
     .executeJavaScript(
       `(() => {
@@ -1159,41 +1147,48 @@ async function typeIntoLoginField(win, which, text, { wc = null } = {}) {
     )
     .catch(() => null);
 
+  snap = await readLoginCredentials(win);
+  const got2 =
+    which === 'password'
+      ? String(snap?.passwordEj || snap?.password || '')
+      : String(snap?.emailEj || snap?.email || '');
+  if (got2 === want) return { ok: true, ...focusInfo, snap };
+
+  try {
+    await focusLoginField(win, which);
+    nativeInsertIntoFocused(win, want);
+  } catch (_) {}
+
   return { ok: true, ...focusInfo, snap: await readLoginCredentials(win) };
 }
 
 async function fillCredentialsOnce(win, wantEmail, wantPassword) {
   focusCorrPanel(win);
 
+  // Fast path: Syncfusion/Angular model write only (usually enough when EJ2 is ready).
   let filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => null);
   if (credentialsMatch(filled, wantEmail, wantPassword)) {
-    await new Promise((r) => setTimeout(r, 120));
+    await new Promise((r) => setTimeout(r, 50));
     filled = await readLoginCredentials(win);
     if (credentialsMatch(filled, wantEmail, wantPassword)) return filled;
   }
 
-  // One CDP session for both fields — avoids Intel attach/detach races.
+  // CDP once for both fields — hard-budgeted so Intel hangs cannot burn the 90s probe.
   try {
     filled = await withDebuggerSession(win, async (wc) => {
       const emailType = await typeIntoLoginField(win, 'email', wantEmail, { wc });
       if (!emailType?.ok) return { ...(filled || {}), ok: false, reason: 'missing-email' };
-      await new Promise((r) => setTimeout(r, 60));
       const passType = await typeIntoLoginField(win, 'password', wantPassword, { wc });
       if (!passType?.ok) return { ...(filled || {}), ok: false, reason: 'missing-password' };
-      await new Promise((r) => setTimeout(r, 60));
       const synced = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => null);
-      await new Promise((r) => setTimeout(r, 120));
+      await new Promise((r) => setTimeout(r, 40));
       const snap = await readLoginCredentials(win);
       return { ...(synced || {}), ...(snap || {}) };
     });
   } catch (_) {
-    const emailType = await typeIntoLoginField(win, 'email', wantEmail);
-    if (!emailType?.ok) return { ...(filled || {}), ok: false, reason: 'missing-email' };
-    await new Promise((r) => setTimeout(r, 60));
-    const passType = await typeIntoLoginField(win, 'password', wantPassword);
-    if (!passType?.ok) return { ...(filled || {}), ok: false, reason: 'missing-password' };
+    // Debugger timed out — page-only refill.
     filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => filled);
-    await new Promise((r) => setTimeout(r, 120));
+    await new Promise((r) => setTimeout(r, 40));
     const snap = await readLoginCredentials(win);
     filled = { ...(filled || {}), ...(snap || {}) };
   }
@@ -1224,39 +1219,40 @@ async function fillAndSubmit(win, email, password, { attempt = null } = {}) {
 
   focusCorrPanel(win);
 
-  // Wait for Syncfusion/Angular to finish wiring the TextBoxes before writing.
-  const controls = await waitForLoginControlsReady(win, 12000);
+  // Wait briefly for TextBoxes — long waits caused 90s probe timeouts on Intel.
+  const controls = await waitForLoginControlsReady(win, 4500);
   if (!controls.ok) {
     if (!controls.ready?.emailInput) return missingFieldResult('email');
     if (!controls.ready?.passwordInput) return missingFieldResult('password');
   }
 
+  const maxRounds = 3;
   let filled = null;
-  for (let round = 1; round <= 6; round += 1) {
+  for (let round = 1; round <= maxRounds; round += 1) {
     setStatus({
       state: 'filling',
-      message: `Filling credentials${attempt ? ` (${attempt})` : ''} · bind ${round}/6`,
+      message: `Filling credentials${attempt ? ` (${attempt})` : ''} · bind ${round}/${maxRounds}`,
       email: wantEmail,
       attempt,
     });
     focusCorrPanel(win);
     filled = await fillCredentialsOnce(win, wantEmail, wantPassword);
     if (filled?.reason === 'missing-email') {
-      if (round < 6) {
-        await new Promise((r) => setTimeout(r, 200 * round));
+      if (round < maxRounds) {
+        await new Promise((r) => setTimeout(r, 120 * round));
         continue;
       }
       return missingFieldResult('email');
     }
     if (filled?.reason === 'missing-password') {
-      if (round < 6) {
-        await new Promise((r) => setTimeout(r, 200 * round));
+      if (round < maxRounds) {
+        await new Promise((r) => setTimeout(r, 120 * round));
         continue;
       }
       return missingFieldResult('password');
     }
     if (credentialsMatch(filled, wantEmail, wantPassword)) break;
-    await new Promise((r) => setTimeout(r, 220 * round));
+    await new Promise((r) => setTimeout(r, 150 * round));
   }
 
   if (!credentialsMatch(filled, wantEmail, wantPassword)) {
@@ -1311,10 +1307,10 @@ async function fillAndSubmit(win, email, password, { attempt = null } = {}) {
   // Give CorrLinks time to accept filled fields before Login click; keep values alive.
   await waitBeforeSignInClick(win, { email: wantEmail, attempt, password: wantPassword });
 
-  // Re-assert immediately before submit (Angular often clears during the settle delay).
+  // Re-assert immediately before submit (keep this cheap — full CDP refill caused 10s+ gaps).
   filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => filled);
   if (!credentialsMatch(filled, wantEmail, wantPassword)) {
-    filled = await fillCredentialsOnce(win, wantEmail, wantPassword);
+    filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => filled);
   }
   if (!credentialsMatch(filled, wantEmail, wantPassword)) {
     return {
@@ -1325,7 +1321,11 @@ async function fillAndSubmit(win, email, password, { attempt = null } = {}) {
     };
   }
 
-  await cdpClick(win, target.x, target.y);
+  try {
+    await withDebugger(win, async (wc) => cdpClickAt(wc, target.x, target.y), { timeoutMs: 2500 });
+  } catch (_) {
+    clickAt(win, target.x, target.y);
+  }
   await new Promise((r) => setTimeout(r, 15));
 
   const stillLogin = await win.webContents.executeJavaScript(
@@ -2035,14 +2035,44 @@ async function loadLoginPage(win, { clearSession = false, timeoutMs = 25000, fas
   setStatus({ state: 'loading', message: 'Opening CorrLinks login page…' });
   // Cloudflare / SPA redirects often abort the first navigation (-3 ERR_ABORTED)
   // even when the final login page still renders. Treat abort as soft failure.
-  try {
-    await win.loadURL(CORRLINKS.loginUrl);
-  } catch (error) {
-    const msg = String(error?.message || error);
-    if (!/ERR_ABORTED|-3/.test(msg)) {
-      throw error;
+  // ERR_FAILED (-2) is transient on Intel / flaky networks — retry a few times.
+  const maxNavAttempts = 3;
+  let lastNavError = null;
+  for (let navAttempt = 1; navAttempt <= maxNavAttempts; navAttempt += 1) {
+    try {
+      await win.loadURL(CORRLINKS.loginUrl);
+      lastNavError = null;
+      break;
+    } catch (error) {
+      const msg = String(error?.message || error);
+      if (/ERR_ABORTED|-3/.test(msg)) {
+        lastNavError = null;
+        break;
+      }
+      lastNavError = error;
+      const retryable =
+        /ERR_FAILED|-2|ERR_CONNECTION|ERR_NETWORK|ERR_TIMED_OUT|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_ADDRESS_UNREACHABLE|ERR_CONNECTION_RESET|ERR_CONNECTION_CLOSED|ERR_CONNECTION_REFUSED/i.test(
+          msg
+        );
+      if (!retryable || navAttempt >= maxNavAttempts) {
+        // Before giving up, see if the login form somehow rendered anyway.
+        const maybeForm = await waitForLoginForm(win, Math.min(2500, navTimeout), {
+          pollMs: 40,
+        }).catch(() => null);
+        if (maybeForm?.ok) {
+          lastNavError = null;
+          break;
+        }
+        throw error;
+      }
+      setStatus({
+        state: 'loading',
+        message: `CorrLinks load failed — retry ${navAttempt}/${maxNavAttempts - 1}…`,
+      });
+      await new Promise((r) => setTimeout(r, 700 * navAttempt));
     }
   }
+  if (lastNavError) throw lastNavError;
   // Fast Send path: return as soon as login inputs exist — don't wait for full page idle.
   if (fast) {
     const form = await waitForLoginForm(win, navTimeout, { pollMs: 20 });
@@ -2052,7 +2082,20 @@ async function loadLoginPage(win, { clearSession = false, timeoutMs = 25000, fas
   }
   const ready = await waitForCorrPage(win, { timeoutMs: navTimeout });
   if (!ready?.ok && ready?.message && !ready.timedOut) {
-    // Soft-continue on timeout; hard-fail on real navigation errors.
+    // Soft-continue on timeout; hard-fail on real navigation errors — but retry once more.
+    const msg = String(ready.message || '');
+    if (/ERR_FAILED|-2|ERR_CONNECTION|ERR_NETWORK|ERR_TIMED_OUT/i.test(msg)) {
+      setStatus({ state: 'loading', message: 'CorrLinks page error — reloading once…' });
+      try {
+        await win.loadURL(CORRLINKS.loginUrl);
+      } catch (_) {}
+      const again = await waitForLoginForm(win, Math.min(8000, navTimeout), { pollMs: 40 }).catch(
+        () => null
+      );
+      if (again?.ok) {
+        return { reused: false, url: again.info?.url || win.webContents.getURL() || null };
+      }
+    }
     throw new Error(ready.message);
   }
   // Syncfusion/Angular need a short settle after did-finish-load (skip on fast).
