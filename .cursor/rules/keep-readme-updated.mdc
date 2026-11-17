@@ -1,0 +1,28 @@
+---
+description: Keep README.md current on every ship and user-facing change
+alwaysApply: true
+---
+
+# Keep README updated
+
+Whenever you **ship**, **build and push**, bump a version, or change user-facing behavior, update [`README.md`](README.md) in the **same change set** (same commit when committing).
+
+## Always sync in README
+
+- **Current version** in Download / Install sections (match `package.json` `version`)
+- Download table filenames for mac arm64, mac Intel, and Windows
+- New or changed features, env vars, subject/time rules, validation/retry behavior
+- Install or timezone notes that operators need
+- Remove or rewrite outdated claims (e.g. old “no Send yet”, wrong version numbers)
+
+## When shipping (`build and push` / version bump)
+
+1. Bump `package.json` version.
+2. Update README version strings and download filenames to that version.
+3. Adjust Usage / Configuration if this release changes behavior.
+4. Commit README with the ship commit (do not leave README on an old version).
+
+## Do not
+
+- Leave README on an old version after a release
+- Document only in chat — put operator-facing facts in README
