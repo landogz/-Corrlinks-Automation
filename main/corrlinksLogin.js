@@ -25,9 +25,22 @@ function setHostWindow(win) {
 let corrBoundsHold = false;
 /** When true, renderer forced the view off for a modal/menu — do not auto-revive. */
 let corrViewSuppressed = false;
+/**
+ * When true, login/probe fill is in progress. The Preparing-workspace overlay must not
+ * collapse the WebContentsView to 0×0 — Syncfusion/Angular refuse to accept values then.
+ */
+let loginGeometryLock = false;
 
 function setCorrBoundsHold(on) {
   corrBoundsHold = Boolean(on);
+}
+
+function setLoginGeometryLock(on) {
+  loginGeometryLock = Boolean(on);
+  if (loginGeometryLock) {
+    corrViewSuppressed = false;
+    ensureVisibleCorrBounds(corrBounds);
+  }
 }
 
 function applyCorrViewBounds(next) {
@@ -82,13 +95,11 @@ function ensureVisibleCorrBounds(preferred = null) {
   if (corrBounds.width >= 8 && corrBounds.height >= 8) {
     applyCorrViewBounds(corrBounds);
     corrBoundsHold = true;
+    corrViewSuppressed = false;
     return corrBounds;
   }
-  // Modal/menu suppressed the pane — don't resurrect over HTML dialogs.
-  if (corrViewSuppressed) {
-    applyCorrViewBounds(corrBounds);
-    return corrBounds;
-  }
+  // Login/fill must revive even after the renderer hid us for the overlay.
+  // (Old behavior re-applied 0×0 when corrViewSuppressed — Syncfusion stayed empty.)
   return setCorrBounds(windowFallbackCorrBounds(), { force: true });
 }
 
@@ -99,6 +110,19 @@ function setCorrBounds(bounds = {}, { force = false } = {}) {
     width: Math.max(0, Math.round(Number(bounds.width) || 0)),
     height: Math.max(0, Math.round(Number(bounds.height) || 0)),
   };
+  // Mid-login/probe fill: refuse collapse even when the renderer force-hides for overlay.
+  if (loginGeometryLock && next.width < 8) {
+    if (corrBounds.width >= 8 && corrBounds.height >= 8) {
+      applyCorrViewBounds(corrBounds);
+      return corrBounds;
+    }
+    const fallback = windowFallbackCorrBounds();
+    corrBounds = fallback;
+    applyCorrViewBounds(corrBounds);
+    corrBoundsHold = true;
+    corrViewSuppressed = false;
+    return corrBounds;
+  }
   // Mid-send/login: a late sync with log-open / tiny rect was wiping a visible view.
   if (
     !force &&
@@ -919,20 +943,25 @@ function loginDomHelpersScript() {
         passwordRect: fieldRect(passwordInput),
       };
     }
-    function applyValue(el, value) {
+    function applyValue(el, value, opts) {
       if (!el) return false;
+      const commit = !!(opts && opts.commit);
       const inst = resolveEj2(el);
       const proto = window.HTMLInputElement.prototype;
       const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
       try { if (inst && typeof inst.focusIn === 'function') inst.focusIn(); } catch (_) {}
       try { el.removeAttribute('readonly'); el.readOnly = false; } catch (_) {}
-      el.focus();
+      try { el.disabled = false; } catch (_) {}
+      try { el.focus({ preventScroll: true }); } catch (_) { try { el.focus(); } catch (_) {} }
       try { el.select(); } catch (_) {}
       if (setter) setter.call(el, value);
       else el.value = value;
       try { el.setAttribute('value', value); } catch (_) {}
       if (inst) {
+        try { inst.enabled = true; } catch (_) {}
+        try { inst.readonly = false; } catch (_) {}
         try { inst.value = value; } catch (_) {}
+        try { if (inst.element && setter) setter.call(inst.element, value); } catch (_) {}
         try { if (typeof inst.dataBind === 'function') inst.dataBind(); } catch (_) {}
         try {
           if (typeof inst.trigger === 'function') {
@@ -948,6 +977,11 @@ function loginDomHelpersScript() {
       }
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
+      if (commit) {
+        try { if (inst && typeof inst.focusOut === 'function') inst.focusOut(); } catch (_) {}
+        try { el.dispatchEvent(new Event('blur', { bubbles: true })); } catch (_) {}
+        try { el.blur(); } catch (_) {}
+      }
       return true;
     }
   `;
@@ -1022,23 +1056,21 @@ async function syncEj2LoginFields(win, email, password) {
       if (!emailInput || !passwordInput) {
         return { ok: false, reason: 'missing-fields', ...snapshotFields() };
       }
-      // Set both while focused; do NOT blur between fields (Angular clears half-filled models).
-      applyValue(emailInput, ${JSON.stringify(email)});
-      applyValue(passwordInput, ${JSON.stringify(password)});
-      // Trusted insertText while each field is focused (helps Syncfusion/Angular on Intel).
+      // Commit email (focusOut) so Syncfusion keeps it, then set password.
+      applyValue(emailInput, ${JSON.stringify(email)}, { commit: true });
       try {
-        applyValue(emailInput, ${JSON.stringify(email)});
+        emailInput.focus();
         document.execCommand('selectAll', false, null);
         document.execCommand('insertText', false, ${JSON.stringify(email)});
+        applyValue(emailInput, ${JSON.stringify(email)}, { commit: true });
       } catch (_) {}
+      applyValue(passwordInput, ${JSON.stringify(password)});
       try {
-        applyValue(passwordInput, ${JSON.stringify(password)});
+        passwordInput.focus();
         document.execCommand('selectAll', false, null);
         document.execCommand('insertText', false, ${JSON.stringify(password)});
+        applyValue(passwordInput, ${JSON.stringify(password)});
       } catch (_) {}
-      // Re-assert EJ2 model after inserts.
-      applyValue(emailInput, ${JSON.stringify(email)});
-      applyValue(passwordInput, ${JSON.stringify(password)});
       return { ok: true, ...snapshotFields() };
     })()`,
     true
@@ -1056,7 +1088,11 @@ function credentialsMatch(snapshot, email, password) {
   if (gotPassword === wantPassword) return true;
   // Some Syncfusion password boxes keep DOM value empty but length matches after typing.
   const nativePass = String(snapshot.password || '');
-  if (nativePass.length === wantPassword.length && nativePass.length > 0 && gotEmail === wantEmail) {
+  if (nativePass.length === wantPassword.length && nativePass.length > 0) {
+    return true;
+  }
+  // EJ2 may expose length without revealing the password string.
+  if (gotPassword.length === wantPassword.length && gotPassword.length > 0) {
     return true;
   }
   return false;
@@ -1309,16 +1345,22 @@ async function fillAndSubmit(win, email, password, { attempt = null } = {}) {
     return { ok: false, reason: `Could not find ${field} field`, needsLogout: true };
   }
 
+  // Preparing-workspace overlay may have force-hidden the pane to 0×0 — revive before fill.
+  setLoginGeometryLock(true);
+  ensureVisibleCorrBounds(corrBounds);
   focusCorrPanel(win);
 
-  // Wait briefly for TextBoxes — long waits caused 90s probe timeouts on Intel.
-  const controls = await waitForLoginControlsReady(win, 4500);
+  // Wait for TextBoxes; prefer EJ2 ready so Angular model writes stick.
+  let controls = await waitForLoginControlsReady(win, 4500);
+  if (controls.ok && !controls.ej2) {
+    controls = await waitForLoginControlsReady(win, 3500);
+  }
   if (!controls.ok) {
     if (!controls.ready?.emailInput) return missingFieldResult('email');
     if (!controls.ready?.passwordInput) return missingFieldResult('password');
   }
 
-  const maxRounds = 3;
+  const maxRounds = 4;
   let filled = null;
   for (let round = 1; round <= maxRounds; round += 1) {
     setStatus({
@@ -1327,6 +1369,7 @@ async function fillAndSubmit(win, email, password, { attempt = null } = {}) {
       email: wantEmail,
       attempt,
     });
+    ensureVisibleCorrBounds(corrBounds);
     focusCorrPanel(win);
     filled = await fillCredentialsOnce(win, wantEmail, wantPassword);
     if (filled?.reason === 'missing-email') {
@@ -1344,7 +1387,7 @@ async function fillAndSubmit(win, email, password, { attempt = null } = {}) {
       return missingFieldResult('password');
     }
     if (credentialsMatch(filled, wantEmail, wantPassword)) break;
-    await new Promise((r) => setTimeout(r, 150 * round));
+    await new Promise((r) => setTimeout(r, 180 * round));
   }
 
   if (!credentialsMatch(filled, wantEmail, wantPassword)) {
@@ -3633,6 +3676,11 @@ async function attemptLogin(
     attempt: label,
   });
 
+  // Keep CorrLinks view sized for the whole attempt — overlay must not 0×0 it mid-fill.
+  setLoginGeometryLock(true);
+  ensureVisibleCorrBounds(corrBounds);
+
+  try {
   // Always navigate first so executeJavaScript has a real document.
   // Do NOT clear cookies by default — preserves session for multi-file send.
   // pageAlreadyLoaded: caller already ran loadLoginPage in parallel with downloads.
@@ -3960,6 +4008,9 @@ async function attemptLogin(
     attempt: label,
     locked: false,
   };
+  } finally {
+    setLoginGeometryLock(false);
+  }
 }
 
 function summarizeCompose(compose) {

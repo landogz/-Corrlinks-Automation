@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.42**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.43**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.42-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.42.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.42.exe` or portable `Inside-Scores-0.1.42.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.43-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.43.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.43.exe` or portable `Inside-Scores-0.1.43.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.42.exe`.
+1. Run `Inside-Scores-Setup-0.1.43.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.42.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.43.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 
@@ -75,6 +75,10 @@ Do not commit a filled `.env` or `sportsdata-credentials.json`.
 ### Microphone prompt on macOS
 
 Inside Scores does **not** use the microphone. Refresh/CorrLinks loads used to trigger a macOS mic dialog; current builds deny media permissions and strip unused mic/camera usage strings so that prompt should not appear.
+
+### CorrLinks “Syncfusion still empty” on validate
+
+Preparing your workspace used to hide the CorrLinks pane at 0×0 during probes, which made Angular/Syncfusion reject filled email/password. Login/probe fill now keeps a real pane size until credentials bind.
 
 ## Usage
 

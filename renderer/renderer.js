@@ -5743,8 +5743,8 @@ function isCorrEmbedBlocked() {
 
 function hideCorrEmbedNow({ force = false } = {}) {
   if (!window.api?.setCorrBounds) return;
-  // During active send/login, ignore soft hides unless force (menu/dialog/logout).
-  if (!force && (corrEmbedRevealed || corrlinksLoginBusy)) return;
+  // During active send/login/probe fill, never collapse to 0×0 — Syncfusion stays empty.
+  if (corrEmbedRevealed || corrlinksLoginBusy) return;
   window.api.setCorrBounds({ x: 0, y: 0, width: 0, height: 0, force: Boolean(force) });
 }
 

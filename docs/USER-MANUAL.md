@@ -1,6 +1,6 @@
 # Inside Scores — User Manual
 
-**Version:** 0.1.42  
+**Version:** 0.1.43  
 **Product:** Inside Scores  
 **Audience:** SportsData operators who send Inmate Exchange reports through CorrLinks
 
@@ -286,4 +286,4 @@ Do not share a filled `.env` or `sportsdata-credentials.json`.
 
 ---
 
-*Inside Scores · Landogz Web Solutions · User Manual v0.1.42*
+*Inside Scores · Landogz Web Solutions · User Manual v0.1.43*
