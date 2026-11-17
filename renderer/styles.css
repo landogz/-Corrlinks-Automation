@@ -2125,7 +2125,7 @@ button.tiny {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   grid-template-areas:
-    'check order meta download'
+    'check order meta actions'
     'check name  name name';
   column-gap: 10px;
   row-gap: 4px;
@@ -2199,9 +2199,19 @@ button.tiny {
   justify-self: end;
 }
 
+.file-actions {
+  grid-area: actions;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: end;
+  flex-wrap: wrap;
+}
+
+button.file-copy,
 button.file-download,
+button.file-copy:hover:not(:disabled),
 button.file-download:hover:not(:disabled) {
-  grid-area: download;
   min-height: 28px;
   padding: 3px 10px;
   font-size: 12px;
@@ -2210,8 +2220,8 @@ button.file-download:hover:not(:disabled) {
   background: var(--bg-elevated, transparent);
   border: 1px solid var(--border-strong);
   white-space: nowrap;
-  justify-self: end;
 }
+button.file-copy:hover:not(:disabled),
 button.file-download:hover:not(:disabled) {
   background: var(--soft-fill-hover);
   color: var(--accent);
@@ -2222,7 +2232,7 @@ button.file-download:hover:not(:disabled) {
   .file-row {
     grid-template-columns: auto minmax(0, 1fr) auto;
     grid-template-areas:
-      'check order download'
+      'check order actions'
       'check name  name'
       'check meta  meta';
   }

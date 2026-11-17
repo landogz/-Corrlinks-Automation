@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": ".cursor/hooks/session-start.sh"
+      }
+    ],
+    "stop": [
+      {
+        "command": "node .cursor/hooks/loop-gate.js",
+        "loop_limit": 8
+      }
+    ]
+  }
+}

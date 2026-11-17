@@ -1091,6 +1091,44 @@ function syncTemplateControls() {
   }
 }
 
+function withContinuationPrefix(text, order = 1) {
+  const raw = String(text ?? '');
+  const partNum = Number(order);
+  if (!(Number.isFinite(partNum) && partNum > 1)) return raw;
+  if (/^\s*CONT\.\./i.test(raw)) return raw;
+  return `CONT..\n\n${raw}`;
+}
+
+async function copySendableFile(file, { order = 1 } = {}) {
+  const filename = file?.filename || `part-${order}.txt`;
+  if (!file?.url) {
+    toast(`No copy URL for ${filename}`, 'error');
+    return;
+  }
+  if (!window.api?.previewExchangeFile) {
+    toast('Copy is unavailable in this build', 'error');
+    return;
+  }
+  const partNum = Number(file?.part) > 0 ? Number(file.part) : order;
+  setStatusHint(`Copying File ${order}…`);
+  try {
+    const result = await window.api.previewExchangeFile({
+      url: file.url,
+      filename,
+    });
+    if (!result?.ok) throw new Error(result?.message || 'Copy failed');
+    const text = withContinuationPrefix(result.text || '', partNum);
+    await navigator.clipboard.writeText(text);
+    log(`Copied File ${order}: ${filename} · ${text.length.toLocaleString()} chars`, 'success');
+    toast(`Copied File ${order}`, 'success');
+    setStatusHint(`Copied File ${order} · ${text.length.toLocaleString()} chars`);
+  } catch (error) {
+    log(error.message || String(error), 'error');
+    toast(error.message || String(error), 'error');
+    setStatusHint('Copy failed');
+  }
+}
+
 async function downloadSendableFile(file, { order = 1 } = {}) {
   const filename = file?.filename || `part-${order}.txt`;
   if (!file?.url) {
@@ -1189,6 +1227,20 @@ function renderFilesList(
       meta.className = 'file-meta';
       const chars = file.characters != null ? Number(file.characters).toLocaleString() : '—';
       meta.textContent = `${chars} chars`;
+      const actions = document.createElement('div');
+      actions.className = 'file-actions';
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'file-copy ghost tiny';
+      copyBtn.textContent = 'Copy';
+      copyBtn.title = file.url ? `Copy ${filename}` : 'No copy URL';
+      copyBtn.setAttribute('aria-label', `Copy file ${order}`);
+      copyBtn.disabled = !file.url;
+      copyBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        copySendableFile(file, { order });
+      });
       const downloadBtn = document.createElement('button');
       downloadBtn.type = 'button';
       downloadBtn.className = 'file-download ghost tiny';
@@ -1201,15 +1253,21 @@ function renderFilesList(
         event.stopPropagation();
         downloadSendableFile(file, { order });
       });
+      actions.append(copyBtn, downloadBtn);
       li.addEventListener('click', (event) => {
-        if (event.target === cb || event.target === downloadBtn || downloadBtn.contains(event.target)) {
+        if (
+          event.target === cb ||
+          event.target === copyBtn ||
+          event.target === downloadBtn ||
+          actions.contains(event.target)
+        ) {
           return;
         }
         cb.checked = !cb.checked;
         cb.dispatchEvent(new Event('change', { bubbles: true }));
       });
       li.classList.toggle('is-unchecked', !cb.checked);
-      li.append(cb, label, meta, downloadBtn);
+      li.append(cb, label, meta, actions);
       filesList.appendChild(li);
     });
   }

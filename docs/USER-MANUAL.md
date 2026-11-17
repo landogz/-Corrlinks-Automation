@@ -1,6 +1,6 @@
 # Inside Scores — User Manual
 
-**Version:** 0.1.39  
+**Version:** 0.1.40  
 **Product:** Inside Scores  
 **Audience:** SportsData operators who send Inmate Exchange reports through CorrLinks
 
@@ -119,7 +119,7 @@ Click **Refresh** anytime to force a live re-probe.
 3. Choose template:
    - **Daily** — weekday subject from New York time (see §9)
    - **Weekly update** — pick **NFL** or **CFB**
-4. Under **Files sendable**, check the parts to send.
+4. Under **Files sendable**, check the parts to send. Each row has **Copy** (clipboard) and **Download**.
 5. Click **Send all files** (or **Send N selected files**).
 
 The app will:
@@ -278,4 +278,4 @@ Do not share a filled `.env` or `sportsdata-credentials.json`.
 
 ---
 
-*Inside Scores · Landogz Web Solutions · User Manual v0.1.39*
+*Inside Scores · Landogz Web Solutions · User Manual v0.1.40*

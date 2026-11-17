@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.39**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.40**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.39-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.39.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.39.exe` or portable `Inside-Scores-0.1.39.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.40-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.40.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.40.exe` or portable `Inside-Scores-0.1.40.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.39.exe`.
+1. Run `Inside-Scores-Setup-0.1.40.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.39.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.40.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 
@@ -79,7 +79,7 @@ Do not commit a filled `.env` or `sportsdata-credentials.json`.
 3. On first validation (or when CorrLinks credentials change), **Preparing your workspace** probes each unique CorrLinks account.
 4. Later launches reuse **saved validation** when accounts are unchanged (skips the full prep overlay).
 5. Select an inmate, choose **Daily** or **Weekly** template, check which file parts to send.
-6. **Login to CorrLinks** (single inmate) or **Start loop** (all grouped recipients).
+6. Use **Send all files** (single inmate) or **Start loop** (all grouped recipients). Each sendable row also has **Copy** and **Download**.
 
 The app will:
 
@@ -161,7 +161,18 @@ npm run smoke:sportsdata
 npm run smoke:exchange
 npm run smoke:subject
 npm run smoke:corrlinks
+npm run gate              # loop-engineering mechanical check (syntax + subject)
 ```
+
+### Loop engineering (Cursor agents)
+
+This repo embeds [loop engineering](https://github.com/selmakcby/loop-engineering) for Cursor:
+
+- **Every prompt:** `.cursor/rules/loop-engineering.mdc` (`alwaysApply`)
+- **Skill:** `.cursor/skills/loop-engineering/SKILL.md`
+- **Stop gate:** `.cursor/hooks/loop-gate.js` via `.cursor/hooks.json` (re-prompts until green, `loop_limit: 8`)
+
+Rule: the agent must not self-verify “done” — the gate (syntax + `smoke:subject`) is the checker.
 
 ## User manual
 
