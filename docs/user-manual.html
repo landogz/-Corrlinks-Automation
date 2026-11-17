@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Inside Scores — User Manual v0.1.41</title>
+  <title>Inside Scores — User Manual v0.1.42</title>
   <style>
     :root {
       --ink: #142033;
@@ -149,7 +149,7 @@
     <header class="cover">
       <p class="eyebrow">Operator documentation</p>
       <h1>Inside Scores — User Manual</h1>
-      <p class="meta">Version 0.1.41 · SportsData operators · Clock &amp; subject always America/New_York</p>
+      <p class="meta">Version 0.1.42 · SportsData operators · Clock &amp; subject always America/New_York</p>
     </header>
 
     <nav class="toc" aria-label="Contents">
@@ -244,8 +244,9 @@
       <thead><tr><th>Area</th><th>Purpose</th></tr></thead>
       <tbody>
         <tr><td><strong>Automate</strong> tab</td><td>Inmate, template, files, send / loop, CorrLinks pane</td></tr>
+        <tr><td><strong>Accounts</strong> tab</td><td>Unique CorrLinks logins; Validate new / Refresh all / Retry</td></tr>
         <tr><td><strong>History</strong> tab</td><td>Exchange exports by date; preview / copy / download</td></tr>
-        <tr><td><strong>Refresh</strong></td><td>Reload inmates and re-validate CorrLinks</td></tr>
+        <tr><td><strong>Refresh</strong></td><td>Reload inmates and fully re-validate CorrLinks</td></tr>
         <tr><td><strong>Status log</strong></td><td>Detailed activity drawer</td></tr>
         <tr><td><strong>Account menu</strong></td><td>Theme, shortcuts, updates, about, sign out</td></tr>
         <tr><td><strong>Status bar</strong></td><td>Connection pills, hint, NY clock, version / updates</td></tr>
@@ -254,14 +255,14 @@
     <p>Workflow steps: <strong>1 Inmate</strong> → <strong>2 CorrLinks</strong>.</p>
 
     <h2>6. Preparing your workspace</h2>
-    <p>On first validation (or when CorrLinks credentials change), the app probes each unique CorrLinks account.</p>
+    <p>First validation probes each unique CorrLinks account. When a <strong>new</strong> login is added (or a password changes), the overlay probes only those new/changed logins — not every account again.</p>
     <ul>
       <li>Overlay shows status, percent, and failed accounts.</li>
       <li>Tags may include <strong>Locked</strong>, <strong>Timeout</strong>, or <strong>Error</strong>.</li>
       <li>Use per-account <strong>Retry</strong>, or <strong>Continue without retries</strong>.</li>
       <li><strong>Cancel</strong> aborts the prep run.</li>
     </ul>
-    <p>Later launches with the same CorrLinks credentials reuse saved validation and skip the full overlay. Click <strong>Refresh</strong> to force a live re-probe.</p>
+    <p>Use the <strong>Accounts</strong> tab for <strong>Validate new</strong>, <strong>Refresh all</strong>, or per-row <strong>Retry</strong>. Top-bar <strong>Refresh</strong> forces a full re-probe.</p>
 
     <h2>7. Daily work — single inmate</h2>
     <ol>
@@ -388,7 +389,7 @@ CORRLINKS_SIGNIN_DELAY_MS=5000</code></pre>
       </tbody>
     </table>
 
-    <p class="footer">Inside Scores · Landogz Web Solutions · User Manual v0.1.41</p>
+    <p class="footer">Inside Scores · Landogz Web Solutions · User Manual v0.1.42</p>
   </div>
 </body>
 </html>

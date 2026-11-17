@@ -3,7 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 /** Bump when fingerprint shape changes so old caches re-validate once. */
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 
 function getCachePath() {
   try {
@@ -23,20 +23,75 @@ function emailKey(email) {
     .toLowerCase();
 }
 
+function hashText(value) {
+  return crypto.createHash('sha256').update(String(value || ''), 'utf8').digest('hex');
+}
+
 /**
- * Hash of every inmate’s CorrLinks credential assignment.
- * Changes when inmates are added/removed or any primary/second email|password changes.
- * Exchange-file-only edits do not affect this fingerprint.
+ * Per-login credential hash so we can detect password changes for one email
+ * without invalidating every other saved probe.
+ */
+function credentialHashFor(email, password) {
+  const key = emailKey(email);
+  if (!key) return '';
+  return hashText(`${key}\t${String(password || '')}`);
+}
+
+/**
+ * Collect unique CorrLinks email+password rows from inmate list or unique-account payloads.
+ * @param {Array<object>} inmatesOrAccounts
+ * @returns {Array<{ email: string, password: string }>}
+ */
+function collectUniqueCredentialRows(inmatesOrAccounts = []) {
+  const byEmail = new Map();
+
+  function add(email, password) {
+    const key = emailKey(email);
+    const pass = String(password || '');
+    if (!key || !pass) return;
+    // Last write wins if the same email appears with different passwords (treat as changed).
+    byEmail.set(key, { email: key, password: pass });
+  }
+
+  for (const row of Array.isArray(inmatesOrAccounts) ? inmatesOrAccounts : []) {
+    if (!row || typeof row !== 'object') continue;
+    if (row.corrlinks_account || row.second_corrlinks_account) {
+      const primary = row.corrlinks_account || {};
+      const second = row.second_corrlinks_account || {};
+      add(primary.email || primary.gmail || primary.corrlinks_email, primary.password);
+      add(second.email || second.gmail || second.corrlinks_email, second.password);
+      continue;
+    }
+    // Unique-account / flat payload: { email, password }
+    add(row.email, row.password);
+  }
+
+  return [...byEmail.values()].sort((a, b) => a.email.localeCompare(b.email));
+}
+
+/**
+ * Hash of unique CorrLinks email+password pairs only.
+ * New inmates that reuse an existing login do NOT change this fingerprint.
+ * Adding a new login email or changing a password does.
+ */
+function fingerprintCorrlinksCredentials(inmatesOrAccounts = []) {
+  const rows = collectUniqueCredentialRows(inmatesOrAccounts).map(
+    (row) => `${row.email}\t${row.password}`
+  );
+  return hashText(rows.join('\n'));
+}
+
+/**
+ * Legacy roster fingerprint (per-inmate id + credentials). Kept for logging only.
  * @param {Array<object>} inmates
  */
-function fingerprintCorrlinksAccounts(inmates = []) {
+function fingerprintCorrlinksRoster(inmates = []) {
   const rows = (Array.isArray(inmates) ? inmates : [])
     .map((inmate) => {
       const primary = inmate?.corrlinks_account || {};
       const second = inmate?.second_corrlinks_account || {};
       const primaryEmail = emailKey(primary.email || primary.gmail || primary.corrlinks_email);
       const secondEmail = emailKey(second.email || second.gmail || second.corrlinks_email);
-      // Unique-account payload fallback: { email, password } only.
       if (!inmate?.corrlinks_account && (inmate?.email || inmate?.password)) {
         const email = emailKey(inmate.email);
         const password = String(inmate.password || '');
@@ -54,7 +109,15 @@ function fingerprintCorrlinksAccounts(inmates = []) {
     })
     .filter(Boolean)
     .sort();
-  return crypto.createHash('sha256').update(rows.join('\n'), 'utf8').digest('hex');
+  return hashText(rows.join('\n'));
+}
+
+/**
+ * Primary fingerprint used by the app = unique credentials.
+ * Alias kept so existing IPC / renderer call sites keep working.
+ */
+function fingerprintCorrlinksAccounts(inmates = []) {
+  return fingerprintCorrlinksCredentials(inmates);
 }
 
 function loadCorrlinksVerifyCache() {
@@ -71,6 +134,8 @@ function loadCorrlinksVerifyCache() {
     return {
       version: CACHE_VERSION,
       fingerprint,
+      rosterFingerprint:
+        typeof raw.rosterFingerprint === 'string' ? raw.rosterFingerprint : '',
       probes,
       savedAt: Number(raw.savedAt) || 0,
       path: filePath,
@@ -80,7 +145,7 @@ function loadCorrlinksVerifyCache() {
   }
 }
 
-function saveCorrlinksVerifyCache({ fingerprint, probes } = {}) {
+function saveCorrlinksVerifyCache({ fingerprint, rosterFingerprint, probes } = {}) {
   const fp = typeof fingerprint === 'string' ? fingerprint.trim() : '';
   if (!fp) throw new Error('CorrLinks verify cache requires a fingerprint');
   const cleanProbes = {};
@@ -96,6 +161,7 @@ function saveCorrlinksVerifyCache({ fingerprint, probes } = {}) {
       attempt: value.attempt || null,
       usedSecondAccount: Boolean(value.usedSecondAccount),
       verifiedAt: Number(value.verifiedAt) || Date.now(),
+      credentialHash: typeof value.credentialHash === 'string' ? value.credentialHash : '',
       cached: true,
       persistent: true,
     };
@@ -104,6 +170,8 @@ function saveCorrlinksVerifyCache({ fingerprint, probes } = {}) {
   const payload = {
     version: CACHE_VERSION,
     fingerprint: fp,
+    rosterFingerprint:
+      typeof rosterFingerprint === 'string' ? rosterFingerprint.trim() : '',
     probes: cleanProbes,
     savedAt: Date.now(),
   };
@@ -133,6 +201,11 @@ function clearCorrlinksVerifyCache() {
 
 module.exports = {
   CACHE_VERSION,
+  emailKey,
+  credentialHashFor,
+  collectUniqueCredentialRows,
+  fingerprintCorrlinksCredentials,
+  fingerprintCorrlinksRoster,
   fingerprintCorrlinksAccounts,
   loadCorrlinksVerifyCache,
   saveCorrlinksVerifyCache,

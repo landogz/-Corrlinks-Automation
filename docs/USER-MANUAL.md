@@ -1,6 +1,6 @@
 # Inside Scores — User Manual
 
-**Version:** 0.1.41  
+**Version:** 0.1.42  
 **Product:** Inside Scores  
 **Audience:** SportsData operators who send Inmate Exchange reports through CorrLinks
 
@@ -87,8 +87,9 @@ Theme (Auto / Light / Dark) can be set on the login screen or later from the acc
 | Area | Purpose |
 | --- | --- |
 | **Automate** tab | Select inmate, template, files; send or start loop; CorrLinks pane |
+| **Accounts** tab | Unique CorrLinks logins, status, Validate new / Refresh all / Retry |
 | **History** tab | SportsData exchange exports by date; preview / copy / download |
-| **Refresh** | Reload inmates and re-validate CorrLinks accounts |
+| **Refresh** | Reload inmates and fully re-validate CorrLinks accounts |
 | **Status log** | Detailed activity log (drawer) |
 | **Account menu** | Theme, shortcuts, updates, about, sign out |
 | **Status bar** | SportsData / CorrLinks pills, hint text, NY clock, version / updates |
@@ -99,16 +100,23 @@ Workflow steps on Automate: **1 Inmate** → **2 CorrLinks**.
 
 ## 6. Preparing your workspace
 
-On first validation (or when CorrLinks emails/passwords change), the app probes each unique CorrLinks account.
+On first validation, the app probes each unique CorrLinks account. Later, when a **new** CorrLinks login is added (or a password changes), Preparing your workspace runs only for those **new/changed** logins — not every account again.
 
 - Progress overlay shows status, percent, and failed accounts.
 - Tags may include **Locked**, **Timeout**, or **Error**.
 - Use per-account **Retry**, or **Continue without retries**.
 - **Cancel** aborts the prep run.
 
-Later launches with the **same** CorrLinks credentials reuse **saved validation** and skip the full overlay (`Accounts unchanged · using saved validation`).
+Later launches with the **same unique logins** reuse **saved validation** and skip the overlay (`Accounts unchanged · using saved validation`).
 
-Click **Refresh** anytime to force a live re-probe.
+### Accounts tab
+
+- Lists every unique CorrLinks email with role, inmate coverage, status, and last checked time.
+- **Validate new** — probe only unchecked / changed logins.
+- **Refresh all** — re-probe every unique login (same as top-bar Refresh validation).
+- Per-row **Retry** — re-check one account.
+
+Top-bar **Refresh** (Automate or Accounts) also forces a full live re-probe.
 
 ---
 
@@ -278,4 +286,4 @@ Do not share a filled `.env` or `sportsdata-credentials.json`.
 
 ---
 
-*Inside Scores · Landogz Web Solutions · User Manual v0.1.41*
+*Inside Scores · Landogz Web Solutions · User Manual v0.1.42*

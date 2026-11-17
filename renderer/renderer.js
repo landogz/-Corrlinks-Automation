@@ -150,6 +150,7 @@ let lastVerifyLiveLogKey = '';
 const VERIFY_COPY = {
   title: 'Preparing your workspace',
   status: 'Validating CorrLinks accounts',
+  statusNew: 'Validating new CorrLinks account(s)',
   statusRetry: 'Retry failed accounts',
   statusReview: 'Review failed accounts',
   statusPause: 'Waiting before next login',
@@ -257,7 +258,10 @@ let bootVerifyAbort = false;
 let bootProbeByEmail = new Map();
 let accountsVerifiedOnce = false;
 /** Fingerprint of live corrlinks-accounts used for persisted validation skip. */
+/** Unique CorrLinks email+password fingerprint (incremental validation key). */
 let lastAccountsFingerprint = null;
+/** Per-inmate roster fingerprint — logging only. */
+let lastAccountsRosterFingerprint = null;
 /** Snapshot of last applied corrlinks-accounts payload (names, files, credentials). */
 let lastAccountsSnapshot = null;
 /** Quiet poll of SportsData corrlinks-accounts while signed in. */
@@ -1716,10 +1720,34 @@ function clearVerifiedAccounts() {
   verifiedCorrlinksAccounts.clear();
 }
 
-async function computeAccountsFingerprint(inmateList = accounts) {
-  if (!window.api?.fingerprintCorrlinksAccounts) return null;
+async function computeAccountsFingerprints(inmateList = accounts) {
+  if (!window.api?.fingerprintCorrlinksAccounts) {
+    return { fingerprint: null, rosterFingerprint: null };
+  }
   const result = await window.api.fingerprintCorrlinksAccounts(inmateList || []);
-  return result?.fingerprint || null;
+  return {
+    fingerprint: result?.fingerprint || null,
+    rosterFingerprint: result?.rosterFingerprint || null,
+  };
+}
+
+async function computeAccountsFingerprint(inmateList = accounts) {
+  const both = await computeAccountsFingerprints(inmateList);
+  if (both.rosterFingerprint) lastAccountsRosterFingerprint = both.rosterFingerprint;
+  return both.fingerprint;
+}
+
+async function credentialHashForAccount(account) {
+  if (!window.api?.hashCorrlinksCredential || !account?.email) return '';
+  try {
+    const result = await window.api.hashCorrlinksCredential({
+      email: account.email,
+      password: account.password,
+    });
+    return result?.hash || '';
+  } catch (_) {
+    return '';
+  }
 }
 
 function restoreVerifiedFromPersistedProbes(probes = {}, uniqueAccounts = []) {
@@ -1737,6 +1765,7 @@ function restoreVerifiedFromPersistedProbes(probes = {}, uniqueAccounts = []) {
       attempt: saved.attempt || null,
       usedSecondAccount: Boolean(saved.usedSecondAccount),
       verifiedAt: Number(saved.verifiedAt) || Date.now(),
+      credentialHash: typeof saved.credentialHash === 'string' ? saved.credentialHash : '',
       cached: true,
       persistent: true,
     };
@@ -1767,7 +1796,7 @@ async function persistVerifiedAccountsCache(fingerprint, probeByEmail = bootProb
   if (!fingerprint || !window.api?.saveCorrlinksVerifyCache) return false;
   const probes = {};
   // Persist every probe result — including soft failures — so relaunch can skip
-  // "Preparing your workspace" when corrlinks-accounts credentials are unchanged.
+  // "Preparing your workspace" when unique CorrLinks credentials are unchanged.
   for (const [key, value] of probeByEmail.entries()) {
     probes[key] = {
       ...value,
@@ -1779,54 +1808,81 @@ async function persistVerifiedAccountsCache(fingerprint, probeByEmail = bootProb
       probes[key] = { ...value, persistent: true };
     }
   }
-  const saved = await window.api.saveCorrlinksVerifyCache({ fingerprint, probes });
+  const uniqueAccounts = collectUniqueCorrlinksAccounts();
+  for (const account of uniqueAccounts) {
+    const key = emailLoopKey(account.email);
+    if (!probes[key]) continue;
+    const hash = await credentialHashForAccount(account);
+    if (hash) probes[key].credentialHash = hash;
+  }
+  if (!lastAccountsRosterFingerprint) {
+    const both = await computeAccountsFingerprints(accounts);
+    if (both.rosterFingerprint) lastAccountsRosterFingerprint = both.rosterFingerprint;
+  }
+  const saved = await window.api.saveCorrlinksVerifyCache({
+    fingerprint,
+    rosterFingerprint: lastAccountsRosterFingerprint || '',
+    probes,
+  });
   if (saved?.ok) {
     lastAccountsFingerprint = fingerprint;
     for (const [key, value] of verifiedCorrlinksAccounts.entries()) {
       verifiedCorrlinksAccounts.set(key, { ...value, persistent: true });
     }
+    renderAccountsValidationPanel();
     return true;
   }
   return false;
 }
 
 /**
- * If live corrlinks-accounts credentials match the saved fingerprint, restore probes and skip login validation.
- * Fingerprint covers every inmate’s primary/second email+password assignment (not exchange files).
+ * Restore saved probes and return only accounts that still need a live check
+ * (missing email, or password changed for that email). Roster growth that reuses
+ * existing logins does not force a full re-probe.
  * @returns {Promise<{ ok: boolean, missing?: object[] }>}
  */
 async function tryRestoreVerifiedFromDisk(uniqueAccounts = collectUniqueCorrlinksAccounts()) {
   if (!window.api?.loadCorrlinksVerifyCache) return { ok: false };
-  const fingerprint = await computeAccountsFingerprint(accounts);
+  const both = await computeAccountsFingerprints(accounts);
+  const fingerprint = both.fingerprint;
   lastAccountsFingerprint = fingerprint;
+  if (both.rosterFingerprint) lastAccountsRosterFingerprint = both.rosterFingerprint;
   if (!fingerprint) return { ok: false };
 
   const cache = await window.api.loadCorrlinksVerifyCache();
   if (!cache?.ok) {
     log('No saved CorrLinks validation — will validate', 'info');
-    return { ok: false };
-  }
-  if (cache.fingerprint !== fingerprint) {
-    log('Live corrlinks-accounts credentials changed — re-validating', 'info');
-    return { ok: false };
+    return { ok: false, missing: uniqueAccounts.slice() };
   }
 
+  // Merge by email even when the overall credential fingerprint changed (new login added).
   restoreVerifiedFromPersistedProbes(cache.probes, uniqueAccounts);
-  const missing = uniqueAccounts.filter(
-    (account) => !bootProbeByEmail.has(emailLoopKey(account.email))
-  );
 
-  // Partial cache (e.g. force-stopped last run): keep restored probes, only live-check missing.
-  if (missing.length > 0) {
-    if (bootProbeByEmail.size > 0) {
-      log(
-        `Saved validation partial · ${bootProbeByEmail.size} cached · ${missing.length} still need probe`,
-        'info'
-      );
-      return { ok: false, missing };
+  const missing = [];
+  for (const account of uniqueAccounts) {
+    const key = emailLoopKey(account.email);
+    const saved = bootProbeByEmail.get(key);
+    if (!saved) {
+      missing.push(account);
+      continue;
     }
-    log('Saved validation incomplete for current accounts — re-validating', 'warn');
-    return { ok: false };
+    const liveHash = await credentialHashForAccount(account);
+    if (saved.credentialHash && liveHash && saved.credentialHash !== liveHash) {
+      bootProbeByEmail.delete(key);
+      verifiedCorrlinksAccounts.delete(key);
+      missing.push(account);
+    }
+  }
+
+  if (missing.length > 0) {
+    const cachedCount = uniqueAccounts.length - missing.length;
+    log(
+      cachedCount > 0
+        ? `Saved validation · ${cachedCount} cached · ${missing.length} new/changed need probe`
+        : `Saved validation incomplete — ${missing.length} account(s) need probe`,
+      'info'
+    );
+    return { ok: false, missing };
   }
 
   const ok = [...bootProbeByEmail.values()].filter((s) => probeAccountUsable(s)).length;
@@ -1842,7 +1898,7 @@ async function tryRestoreVerifiedFromDisk(uniqueAccounts = collectUniqueCorrlink
       clearVerifiedAccounts();
       bootProbeByEmail = new Map();
       accountsVerifiedOnce = false;
-      return { ok: false };
+      return { ok: false, missing: uniqueAccounts.slice() };
     }
   }
   accountsVerifiedOnce = true;
@@ -1854,6 +1910,7 @@ async function tryRestoreVerifiedFromDisk(uniqueAccounts = collectUniqueCorrlink
   toast(summary, fail > 0 ? 'warn' : 'success');
   setStatusHint(summary);
   updateActionButtons();
+  renderAccountsValidationPanel();
   return { ok: true, missing: [] };
 }
 
@@ -2532,11 +2589,28 @@ async function syncCorrlinksAccountsQuiet({ reason = 'poll', force = false } = {
     lastAccountsFingerprint = nextFingerprint || lastAccountsFingerprint;
 
     if (credentialsChanged && !bootVerifyRunning && !loopRunning && !corrlinksLoginBusy) {
-      clearVerifiedAccounts();
-      bootProbeByEmail = new Map();
-      accountsVerifiedOnce = false;
-      log('Live corrlinks-accounts credentials changed — re-validating', 'info');
-      await verifyCorrlinksAccountsOnBoot({ force: true });
+      const uniqueAccounts = collectUniqueCorrlinksAccounts();
+      const restored = await tryRestoreVerifiedFromDisk(uniqueAccounts);
+      if (restored?.ok) {
+        // Existing probes cover every unique login (e.g. roster-only change).
+      } else if (restored?.missing?.length) {
+        log(
+          `CorrLinks credentials changed — validating ${restored.missing.length} new/changed account(s)`,
+          'info'
+        );
+        await verifyCorrlinksAccountsOnBoot({
+          force: true,
+          onlyAccounts: restored.missing,
+        });
+      } else {
+        clearVerifiedAccounts();
+        bootProbeByEmail = new Map();
+        accountsVerifiedOnce = false;
+        log('CorrLinks credentials changed — re-validating all accounts', 'info');
+        await verifyCorrlinksAccountsOnBoot({ force: true });
+      }
+    } else {
+      renderAccountsValidationPanel();
     }
 
     return { ok: true, changed: diff.changed, accounts: result.accounts };
@@ -3484,21 +3558,24 @@ async function verifyCorrlinksAccountsOnBoot({
   bootVerifyRunning = true;
   bootVerifyAbort = false;
   updateActionButtons();
+  const subset = uniqueAccounts.length < allAccounts.length;
   const title = manual ? VERIFY_COPY.manualTitle : VERIFY_COPY.title;
-  const statusLabel = manual ? VERIFY_COPY.manualStatus : VERIFY_COPY.status;
+  const statusLabel = manual
+    ? VERIFY_COPY.manualStatus
+    : subset
+      ? `Validating ${uniqueAccounts.length} new account(s)`
+      : VERIFY_COPY.status;
   const priorProbes = new Map(bootProbeByEmail);
   log(
     `${manual ? 'Manual validation' : 'Workspace setup'} — validating ${uniqueAccounts.length} CorrLinks account(s)` +
-      (uniqueAccounts.length < allAccounts.length
-        ? ` (${allAccounts.length - uniqueAccounts.length} already cached)`
-        : ''),
+      (subset ? ` (${allAccounts.length - uniqueAccounts.length} already cached)` : ''),
     'info'
   );
   toast(
     manual
       ? 'Manual validation… re-checking CorrLinks accounts'
-      : uniqueAccounts.length < allAccounts.length
-        ? `Preparing workspace… checking ${uniqueAccounts.length} remaining account(s)`
+      : subset
+        ? `Preparing workspace… checking ${uniqueAccounts.length} new/changed account(s)`
         : 'Preparing workspace… validating CorrLinks accounts',
     'info'
   );
@@ -3560,6 +3637,7 @@ async function verifyCorrlinksAccountsOnBoot({
     log(summary, result.probeFail || result.aborted ? 'warn' : 'success');
     toast(summary, result.probeFail || result.aborted ? 'warn' : 'success');
     setStatusHint(summary);
+    renderAccountsValidationPanel();
     return result;
   } finally {
     bootVerifyRunning = false;
@@ -3567,6 +3645,7 @@ async function verifyCorrlinksAccountsOnBoot({
     setLoopInitializingOverlay(null);
     hideCorrEmbedNow();
     updateActionButtons();
+    renderAccountsValidationPanel();
   }
 }
 
@@ -4468,19 +4547,23 @@ async function refreshInmates({ verifyAccounts = true, forceValidation = false }
     startAccountsAutoRefresh();
     if (verifyAccounts && result.accounts.length) {
       if (forceValidation) {
-        // User clicked refresh — always re-probe CorrLinks accounts.
+        // User clicked Refresh — always re-probe every unique CorrLinks account.
         clearVerifiedAccounts();
         bootProbeByEmail = new Map();
         accountsVerifiedOnce = false;
-        lastAccountsFingerprint = (await computeAccountsFingerprint(accounts)) || lastAccountsFingerprint;
+        lastAccountsFingerprint =
+          (await computeAccountsFingerprint(accounts)) || lastAccountsFingerprint;
         await verifyCorrlinksAccountsOnBoot({ force: true, mode: 'manual' });
       } else {
         const uniqueAccounts = collectUniqueCorrlinksAccounts();
         const restored = await tryRestoreVerifiedFromDisk(uniqueAccounts);
         if (restored?.ok) {
-          // Fingerprint match — skip Preparing your workspace.
+          // Cached probes cover every unique login — skip Preparing your workspace.
         } else if (restored?.missing?.length) {
-          log('CorrLinks accounts changed or no saved validation — validating…', 'info');
+          log(
+            `CorrLinks validation needed for ${restored.missing.length} new/changed account(s)…`,
+            'info'
+          );
           await verifyCorrlinksAccountsOnBoot({
             force: true,
             onlyAccounts: restored.missing,
@@ -4493,6 +4576,7 @@ async function refreshInmates({ verifyAccounts = true, forceValidation = false }
           await verifyCorrlinksAccountsOnBoot({ force: true });
         }
       }
+      renderAccountsValidationPanel();
     }
   } catch (error) {
     setSportsConnected(false);
@@ -4617,6 +4701,7 @@ function resetWorkspaceState() {
   bootProbeByEmail = new Map();
   accountsVerifiedOnce = false;
   lastAccountsFingerprint = null;
+  lastAccountsRosterFingerprint = null;
   bootVerifyRunning = false;
   bootVerifyAbort = false;
   setLoopInitializingOverlay(null);
@@ -5304,6 +5389,7 @@ document.getElementById('btnToggleLoginPassword')?.addEventListener('click', () 
 
 btnRefresh.addEventListener('click', () => {
   if (activeMainTab === 'history') loadExchangeHistory();
+  else if (activeMainTab === 'accounts') void refreshAllCorrlinksAccountsValidation();
   else refreshInmates({ forceValidation: true });
 });
 
@@ -5311,6 +5397,20 @@ mainTabs?.addEventListener('click', (event) => {
   const btn = event.target.closest('.main-tab');
   if (!btn?.dataset?.tab) return;
   setMainTab(btn.dataset.tab);
+});
+
+document.getElementById('btnAccountsValidateNew')?.addEventListener('click', () => {
+  void validateNewCorrlinksAccounts();
+});
+document.getElementById('btnAccountsRefreshAll')?.addEventListener('click', () => {
+  void refreshAllCorrlinksAccountsValidation();
+});
+document.getElementById('accountsTableBody')?.addEventListener('click', (event) => {
+  const btn = event.target.closest('button[data-accounts-retry]');
+  if (!btn) return;
+  const email = decodeURIComponent(btn.getAttribute('data-accounts-retry') || '');
+  if (!email) return;
+  void retryOneCorrlinksAccountValidation(email);
 });
 
 btnHistoryRefresh?.addEventListener('click', () => loadExchangeHistory());
@@ -5804,8 +5904,207 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function accountValidationStatusMeta(probe) {
+  if (!probe) {
+    return { label: 'Not checked', className: 'is-pending' };
+  }
+  if (probeAccountUsable(probe)) {
+    return { label: probe.state === 'locked' ? 'OK (locked session)' : 'OK', className: 'is-ok' };
+  }
+  if (probe.state === 'locked') return { label: 'Locked', className: 'is-locked' };
+  if (probe.state === 'timeout') return { label: 'Timeout', className: 'is-timeout' };
+  if (probe.state === 'manual') return { label: 'Manual', className: 'is-error' };
+  return { label: 'Error', className: 'is-error' };
+}
+
+function formatAccountsCheckedAt(probe) {
+  const ts = Number(probe?.verifiedAt || 0);
+  if (!ts) return '—';
+  try {
+    return formatDateTime(new Date(ts));
+  } catch (_) {
+    return '—';
+  }
+}
+
+function renderAccountsValidationPanel() {
+  const body = document.getElementById('accountsTableBody');
+  const empty = document.getElementById('accountsTableEmpty');
+  const hint = document.getElementById('accountsHint');
+  const summaryReady = document.getElementById('accountsSummaryReady');
+  const summaryFail = document.getElementById('accountsSummaryFail');
+  const summaryPending = document.getElementById('accountsSummaryPending');
+  if (!body) return;
+
+  const uniqueAccounts = collectUniqueCorrlinksAccounts();
+  let ready = 0;
+  let fail = 0;
+  let pending = 0;
+
+  body.innerHTML = '';
+  if (!uniqueAccounts.length) {
+    if (empty) empty.hidden = false;
+    if (summaryReady) summaryReady.textContent = '0 ready';
+    if (summaryFail) summaryFail.textContent = '0 unavailable';
+    if (summaryPending) summaryPending.textContent = '0 not checked';
+    if (hint) {
+      hint.textContent =
+        'Load inmates from SportsData to see unique CorrLinks logins here.';
+    }
+    return;
+  }
+
+  if (empty) empty.hidden = true;
+
+  for (const account of uniqueAccounts) {
+    const key = emailLoopKey(account.email);
+    const probe =
+      bootProbeByEmail.get(key) || getCachedVerifiedProbe(account.email) || null;
+    const status = accountValidationStatusMeta(probe);
+    if (!probe) pending += 1;
+    else if (probeAccountUsable(probe)) ready += 1;
+    else fail += 1;
+
+    const inmateLabels = [...(account.primaryFor || []), ...(account.secondFor || [])];
+    const inmateSummary =
+      inmateLabels.length <= 2
+        ? inmateLabels.join(' · ') || '—'
+        : `${inmateLabels.slice(0, 2).join(' · ')} +${inmateLabels.length - 2}`;
+    const inmatesTooltipHtml = inmateLabels.length
+      ? `<ul class="accounts-inmates-tooltip-list">${inmateLabels
+          .map((label) => `<li>${escapeHtml(label)}</li>`)
+          .join('')}</ul>`
+      : '';
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="accounts-email" title="${escapeHtml(account.email)}">${escapeHtml(
+        maskSensitive(account.email)
+      )}</td>
+      <td class="accounts-role">${escapeHtml(accountRoleLabel(account))}</td>
+      <td class="accounts-inmates${inmateLabels.length ? ' has-tooltip' : ''}${
+        inmateLabels.length > 2 ? ' has-more' : ''
+      }" tabindex="${inmateLabels.length ? '0' : '-1'}">
+        <span class="accounts-inmates-text">${escapeHtml(inmateSummary)}</span>
+        ${
+          inmateLabels.length
+            ? `<div class="accounts-inmates-tooltip" role="tooltip">${inmatesTooltipHtml}</div>`
+            : ''
+        }
+      </td>
+      <td>
+        <span class="accounts-status-badge ${status.className}" title="${escapeHtml(
+          probe?.message || status.label
+        )}">${escapeHtml(status.label)}</span>
+      </td>
+      <td class="accounts-checked">${escapeHtml(formatAccountsCheckedAt(probe))}</td>
+      <td>
+        <div class="accounts-row-actions">
+          <button
+            type="button"
+            class="ghost tiny"
+            data-accounts-retry="${encodeURIComponent(account.email)}"
+            ${bootVerifyRunning || loopRunning || corrlinksLoginBusy ? 'disabled' : ''}
+          >Retry</button>
+        </div>
+      </td>
+    `;
+    body.appendChild(tr);
+  }
+
+  if (summaryReady) summaryReady.textContent = `${ready} ready`;
+  if (summaryFail) summaryFail.textContent = `${fail} unavailable`;
+  if (summaryPending) summaryPending.textContent = `${pending} not checked`;
+  if (hint) {
+    hint.textContent =
+      pending > 0
+        ? `${pending} account(s) not checked yet — use Validate new, or Refresh all to re-check every login.`
+        : 'New logins are validated automatically. Refresh all to re-check every account.';
+  }
+}
+
+async function listAccountsNeedingLiveProbe(uniqueAccounts = collectUniqueCorrlinksAccounts()) {
+  // Prefer in-memory probes; if empty, hydrate quietly from disk without toasts.
+  if (!bootProbeByEmail.size && window.api?.loadCorrlinksVerifyCache) {
+    try {
+      const cache = await window.api.loadCorrlinksVerifyCache();
+      if (cache?.ok && cache.probes) {
+        restoreVerifiedFromPersistedProbes(cache.probes, uniqueAccounts);
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  const missing = [];
+  for (const account of uniqueAccounts) {
+    const key = emailLoopKey(account.email);
+    const probe =
+      bootProbeByEmail.get(key) || getCachedVerifiedProbe(account.email) || null;
+    if (!probe) {
+      missing.push(account);
+      continue;
+    }
+    const liveHash = await credentialHashForAccount(account);
+    if (probe.credentialHash && liveHash && probe.credentialHash !== liveHash) {
+      bootProbeByEmail.delete(key);
+      verifiedCorrlinksAccounts.delete(key);
+      missing.push(account);
+    }
+  }
+  return missing;
+}
+
+async function validateNewCorrlinksAccounts() {
+  if (bootVerifyRunning || loopRunning || corrlinksLoginBusy) {
+    toast('Validation already running', 'warn');
+    return;
+  }
+  const uniqueAccounts = collectUniqueCorrlinksAccounts();
+  if (!uniqueAccounts.length) {
+    toast('No CorrLinks accounts to validate', 'warn');
+    return;
+  }
+  const missing = await listAccountsNeedingLiveProbe(uniqueAccounts);
+  if (!missing.length) {
+    toast('All CorrLinks accounts already validated', 'success');
+    renderAccountsValidationPanel();
+    return;
+  }
+  await verifyCorrlinksAccountsOnBoot({ force: true, onlyAccounts: missing });
+}
+
+async function refreshAllCorrlinksAccountsValidation() {
+  if (bootVerifyRunning || loopRunning || corrlinksLoginBusy) {
+    toast('Validation already running', 'warn');
+    return;
+  }
+  // Refresh inmates list then force full CorrLinks re-probe.
+  await refreshInmates({ forceValidation: true });
+}
+
+async function retryOneCorrlinksAccountValidation(email) {
+  if (bootVerifyRunning || loopRunning || corrlinksLoginBusy) {
+    toast('Validation already running', 'warn');
+    return;
+  }
+  const key = emailLoopKey(email);
+  const account = collectUniqueCorrlinksAccounts().find(
+    (row) => emailLoopKey(row.email) === key
+  );
+  if (!account) {
+    toast('Account not found on the current inmate list', 'warn');
+    return;
+  }
+  bootProbeByEmail.delete(key);
+  verifiedCorrlinksAccounts.delete(key);
+  accountsVerifiedOnce = false;
+  await verifyCorrlinksAccountsOnBoot({ force: true, onlyAccounts: [account] });
+}
+
 function setMainTab(tab) {
-  activeMainTab = tab === 'history' ? 'history' : 'automate';
+  const allowed = new Set(['automate', 'accounts', 'history']);
+  activeMainTab = allowed.has(tab) ? tab : 'automate';
   document.querySelectorAll('.main-tab').forEach((btn) => {
     btn.classList.toggle('is-active', btn.dataset.tab === activeMainTab);
   });
@@ -5814,8 +6113,9 @@ function setMainTab(tab) {
     panel.hidden = !on;
     panel.classList.toggle('is-active', on);
   });
-  stepIndicator?.classList.toggle('is-hidden', activeMainTab === 'history');
+  stepIndicator?.classList.toggle('is-hidden', activeMainTab !== 'automate');
   scheduleCorrPaneBounds();
+  if (activeMainTab === 'accounts') renderAccountsValidationPanel();
   if (activeMainTab === 'history') ensureHistoryGenerateDateDefault();
   if (activeMainTab === 'history' && !historyLoaded) {
     loadExchangeHistory();

@@ -3014,6 +3014,298 @@ button.close-confirm-danger:focus-visible {
   }
 }
 
+/* —— Accounts validation tab —— */
+.accounts-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.accounts-main {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px;
+  overflow: hidden;
+}
+
+.accounts-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.accounts-toolbar h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.accounts-toolbar-text {
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.accounts-toolbar .muted {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.accounts-toolbar-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.accounts-ctrl-btn {
+  min-height: 34px;
+  white-space: nowrap;
+}
+
+.accounts-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex: 0 0 auto;
+}
+
+.accounts-summary-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border-subtle);
+}
+
+.accounts-table-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--bg-surface-2);
+  /* Keep tooltips above sibling rows while scrolling. */
+  isolation: isolate;
+}
+
+.accounts-table-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  z-index: 1;
+  background: var(--bg-surface-2);
+}
+
+.accounts-table-empty[hidden] {
+  display: none !important;
+}
+
+.accounts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.accounts-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-elevated, var(--bg-surface-2));
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.accounts-table tbody td {
+  padding: 10px 12px;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.accounts-table tbody tr {
+  position: relative;
+  z-index: 0;
+}
+
+.accounts-table tbody tr:hover,
+.accounts-table tbody tr:focus-within {
+  z-index: 6;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-surface-2));
+}
+
+.accounts-email {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.accounts-role,
+.accounts-inmates,
+.accounts-checked {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.accounts-inmates {
+  position: relative;
+  max-width: 320px;
+  overflow: visible;
+}
+
+.accounts-inmates-text {
+  display: inline;
+  overflow-wrap: anywhere;
+}
+
+.accounts-inmates.has-tooltip .accounts-inmates-text {
+  cursor: help;
+}
+
+.accounts-inmates.has-more .accounts-inmates-text {
+  border-bottom: 1px dotted color-mix(in srgb, var(--text-muted) 70%, transparent);
+}
+
+.accounts-inmates-tooltip {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 100;
+  min-width: 240px;
+  max-width: min(420px, 70vw);
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  /* Must be fully opaque — --bg-elevated/--bg-surface are undefined in this theme. */
+  background-color: var(--bg-surface-1);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--border-strong) 70%, transparent),
+    0 14px 32px rgba(0, 0, 0, 0.45);
+  color: var(--text-primary);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s ease;
+  isolation: isolate;
+}
+
+.accounts-inmates:hover .accounts-inmates-tooltip,
+.accounts-inmates:focus-within .accounts-inmates-tooltip {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.accounts-inmates-tooltip-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  position: relative;
+  z-index: 1;
+  background-color: var(--bg-surface-1);
+}
+
+.accounts-inmates-tooltip-list li {
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.accounts-status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.accounts-status-badge.is-ok {
+  color: #0f766e;
+  background: rgba(45, 212, 191, 0.14);
+  border-color: rgba(45, 212, 191, 0.35);
+}
+
+.accounts-status-badge.is-locked {
+  color: #a16207;
+  background: rgba(250, 204, 21, 0.16);
+  border-color: rgba(250, 204, 21, 0.4);
+}
+
+.accounts-status-badge.is-error,
+.accounts-status-badge.is-timeout {
+  color: #b91c1c;
+  background: rgba(248, 113, 113, 0.14);
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.accounts-status-badge.is-pending {
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.accounts-row-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+@media (max-width: 900px) {
+  .accounts-toolbar {
+    flex-direction: column;
+  }
+
+  .accounts-table thead th:nth-child(3),
+  .accounts-table tbody td:nth-child(3) {
+    display: none;
+  }
+}
+
+@media (max-width: 639px) {
+  .accounts-table thead th:nth-child(5),
+  .accounts-table tbody td:nth-child(5) {
+    display: none;
+  }
+}
+
 /* —— History tab (DataTables) —— */
 .history-layout {
   flex: 1;

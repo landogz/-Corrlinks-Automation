@@ -30,6 +30,9 @@ const {
 } = require('./config');
 const {
   fingerprintCorrlinksAccounts,
+  fingerprintCorrlinksCredentials,
+  fingerprintCorrlinksRoster,
+  credentialHashFor,
   loadCorrlinksVerifyCache,
   saveCorrlinksVerifyCache,
   clearCorrlinksVerifyCache,
@@ -316,14 +319,22 @@ function registerIpc() {
 
   ipcMain.handle('corrlinksVerify:fingerprint', async (_event, accounts = []) => ({
     ok: true,
-    fingerprint: fingerprintCorrlinksAccounts(accounts),
+    fingerprint: fingerprintCorrlinksCredentials(accounts),
+    rosterFingerprint: fingerprintCorrlinksRoster(accounts),
+    // Alias for older call sites.
+    accountsFingerprint: fingerprintCorrlinksAccounts(accounts),
+  }));
+
+  ipcMain.handle('corrlinksVerify:credentialHash', async (_event, payload = {}) => ({
+    ok: true,
+    hash: credentialHashFor(payload.email, payload.password),
   }));
 
   ipcMain.handle('corrlinksVerify:load', async () => {
     const cache = loadCorrlinksVerifyCache();
     return cache
       ? { ok: true, ...cache }
-      : { ok: false, fingerprint: null, probes: {}, savedAt: 0 };
+      : { ok: false, fingerprint: null, rosterFingerprint: null, probes: {}, savedAt: 0 };
   });
 
   ipcMain.handle('corrlinksVerify:save', async (_event, payload = {}) => {

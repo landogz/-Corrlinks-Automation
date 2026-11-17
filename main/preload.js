@@ -55,6 +55,8 @@ contextBridge.exposeInMainWorld('api', {
   logoutSportsData: () => ipcRenderer.invoke('config:logoutSportsData'),
   fingerprintCorrlinksAccounts: (accounts) =>
     ipcRenderer.invoke('corrlinksVerify:fingerprint', accounts),
+  hashCorrlinksCredential: (payload) =>
+    ipcRenderer.invoke('corrlinksVerify:credentialHash', payload || {}),
   loadCorrlinksVerifyCache: () => ipcRenderer.invoke('corrlinksVerify:load'),
   saveCorrlinksVerifyCache: (payload) => ipcRenderer.invoke('corrlinksVerify:save', payload),
   clearCorrlinksVerifyCache: () => ipcRenderer.invoke('corrlinksVerify:clear'),

@@ -147,6 +147,9 @@
           <button type="button" class="main-tab is-active" data-tab="automate" id="tabAutomate">
             Automate
           </button>
+          <button type="button" class="main-tab" data-tab="accounts" id="tabAccounts">
+            Accounts
+          </button>
           <button type="button" class="main-tab" data-tab="history" id="tabHistory">
             History
           </button>
@@ -482,6 +485,63 @@
                 </div>
               </section>
             </div>
+          </div>
+        </div>
+
+        <div id="accountsView" class="tab-panel" data-tab-panel="accounts" hidden>
+          <div class="accounts-layout">
+            <section class="accounts-main card">
+              <div class="accounts-toolbar">
+                <div class="accounts-toolbar-text">
+                  <h2>CorrLinks accounts</h2>
+                  <p class="muted" id="accountsHint">
+                    New logins are validated automatically. Refresh all to re-check every account.
+                  </p>
+                </div>
+                <div class="accounts-toolbar-actions">
+                  <button
+                    type="button"
+                    class="ghost accounts-ctrl-btn"
+                    id="btnAccountsValidateNew"
+                    title="Validate only new or changed CorrLinks accounts"
+                  >
+                    Validate new
+                  </button>
+                  <button
+                    type="button"
+                    class="action-secondary accounts-ctrl-btn"
+                    id="btnAccountsRefreshAll"
+                    title="Re-check every unique CorrLinks account"
+                  >
+                    Refresh all
+                  </button>
+                </div>
+              </div>
+              <div class="accounts-summary" id="accountsSummary" aria-live="polite">
+                <span class="accounts-summary-pill" id="accountsSummaryReady">0 ready</span>
+                <span class="accounts-summary-pill" id="accountsSummaryFail">0 unavailable</span>
+                <span class="accounts-summary-pill" id="accountsSummaryPending">0 not checked</span>
+              </div>
+              <div class="accounts-table-wrap">
+                <div id="accountsTableEmpty" class="empty-state accounts-table-empty" hidden>
+                  <h3>No CorrLinks accounts</h3>
+                  <p class="muted">Load inmates from SportsData to see unique CorrLinks logins here.</p>
+                </div>
+                <table class="accounts-table" id="accountsTable" aria-label="CorrLinks account validation">
+                  <thead>
+                    <tr>
+                      <th scope="col">Email</th>
+                      <th scope="col">Role</th>
+                      <th scope="col">Inmates</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Last checked</th>
+                      <th scope="col">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="accountsTableBody"></tbody>
+                </table>
+              </div>
+            </section>
           </div>
         </div>
 
