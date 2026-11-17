@@ -952,18 +952,18 @@ async function cdpTypeIntoFocused(win, text) {
   await withDebugger(win, async (wc) => cdpSelectAllAndInsert(wc, text));
 }
 
-/** Native Electron paste-style insert — avoid per-character typing (too slow for probe budget). */
+/** Native Electron char insert into the focused field (used when CDP is unreliable). */
 function nativeInsertIntoFocused(win, text) {
   const wc = win.webContents;
   const value = String(text ?? '');
   const cmd = process.platform === 'darwin';
+  // Select-all then replace — always type every character (old ≤64 cutoff left long passwords empty).
   wc.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: cmd ? ['meta'] : ['control'] });
   wc.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: cmd ? ['meta'] : ['control'] });
-  // Single insert via key events for short values; longer values rely on CDP/page scripts.
-  if (value.length <= 64) {
-    for (const ch of value) {
-      wc.sendInputEvent({ type: 'char', keyCode: ch });
-    }
+  wc.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' });
+  wc.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' });
+  for (const ch of value) {
+    wc.sendInputEvent({ type: 'char', keyCode: ch });
   }
 }
 
@@ -1177,6 +1177,10 @@ function loginDomHelpersScript() {
     function snapshotFields() {
       const emailInput = findEmailInput();
       const passwordInput = findPasswordInput();
+      const emailVal = emailInput ? (emailInput.value || '') : '';
+      const passVal = passwordInput ? (passwordInput.value || '') : '';
+      const emailEj = emailInput ? ej2Value(emailInput) : '';
+      const passEj = passwordInput ? ej2Value(passwordInput) : '';
       return {
         emailInput: !!emailInput,
         passwordInput: !!passwordInput,
@@ -1185,48 +1189,88 @@ function loginDomHelpersScript() {
         passwordReady: !!(passwordInput && !passwordInput.disabled),
         emailEjReady: !!(emailInput && resolveEj2(emailInput)),
         passwordEjReady: !!(passwordInput && resolveEj2(passwordInput)),
-        email: emailInput ? (emailInput.value || '') : '',
-        password: passwordInput ? (passwordInput.value || '') : '',
-        emailEj: emailInput ? ej2Value(emailInput) : '',
-        passwordEj: passwordInput ? ej2Value(passwordInput) : '',
+        email: emailVal,
+        password: passVal,
+        emailEj,
+        passwordEj,
+        emailMark: emailInput ? Number(emailInput.getAttribute('data-is-len') || 0) : 0,
+        passwordMark: passwordInput ? Number(passwordInput.getAttribute('data-is-len') || 0) : 0,
         emailRect: fieldRect(emailInput),
         passwordRect: fieldRect(passwordInput),
       };
     }
-    function applyValue(el, value, opts) {
-      if (!el) return false;
-      const commit = !!(opts && opts.commit);
-      const inst = resolveEj2(el);
+    function setNativeValue(el, value) {
       const proto = window.HTMLInputElement.prototype;
       const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-      try { if (inst && typeof inst.focusIn === 'function') inst.focusIn(); } catch (_) {}
-      try { el.removeAttribute('readonly'); el.readOnly = false; } catch (_) {}
-      try { el.disabled = false; } catch (_) {}
-      try { el.focus({ preventScroll: true }); } catch (_) { try { el.focus(); } catch (_) {} }
-      try { el.select(); } catch (_) {}
       if (setter) setter.call(el, value);
       else el.value = value;
       try { el.setAttribute('value', value); } catch (_) {}
-      if (inst) {
-        try { inst.enabled = true; } catch (_) {}
-        try { inst.readonly = false; } catch (_) {}
-        try { inst.value = value; } catch (_) {}
-        try { if (inst.element && setter) setter.call(inst.element, value); } catch (_) {}
-        try { if (typeof inst.dataBind === 'function') inst.dataBind(); } catch (_) {}
-        try {
-          if (typeof inst.trigger === 'function') {
-            inst.trigger('input', { value });
-            inst.trigger('change', { value });
-          }
-        } catch (_) {}
-      }
+      try { el.setAttribute('data-is-len', String((value || '').length)); } catch (_) {}
+    }
+    function fireInputEvents(el, value, data) {
       try {
-        el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: value, inputType: 'insertText' }));
+        el.dispatchEvent(
+          new InputEvent('input', {
+            bubbles: true,
+            composed: true,
+            data: data == null ? value : data,
+            inputType: 'insertText',
+          })
+        );
       } catch (_) {
         el.dispatchEvent(new Event('input', { bubbles: true }));
       }
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
+      try { el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true })); } catch (_) {}
+    }
+    function applyValue(el, value, opts) {
+      if (!el) return false;
+      const commit = !!(opts && opts.commit);
+      const slow = !!(opts && opts.slow);
+      const inst = resolveEj2(el);
+      try { if (inst && typeof inst.focusIn === 'function') inst.focusIn(); } catch (_) {}
+      try { el.removeAttribute('readonly'); el.readOnly = false; } catch (_) {}
+      try { el.disabled = false; } catch (_) {}
+      try { el.focus({ preventScroll: true }); } catch (_) { try { el.focus(); } catch (_) {} }
+      try { el.select(); } catch (_) {}
+      // Clear first so Syncfusion/Angular do not append onto stale text.
+      setNativeValue(el, '');
+      if (inst) {
+        try { inst.value = ''; } catch (_) {}
+      }
+      if (slow && value) {
+        let built = '';
+        for (const ch of String(value)) {
+          built += ch;
+          setNativeValue(el, built);
+          if (inst) {
+            try { inst.value = built; } catch (_) {}
+          }
+          fireInputEvents(el, built, ch);
+        }
+      } else {
+        setNativeValue(el, value);
+      }
+      if (inst) {
+        try { inst.enabled = true; } catch (_) {}
+        try { inst.readonly = false; } catch (_) {}
+        try { inst.value = value; } catch (_) {}
+        try {
+          const proto = window.HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          if (inst.element && setter) setter.call(inst.element, value);
+        } catch (_) {}
+        try { if (typeof inst.dataBind === 'function') inst.dataBind(); } catch (_) {}
+        try {
+          if (typeof inst.trigger === 'function') {
+            inst.trigger('input', { value });
+            inst.trigger('change', { value });
+            try { inst.trigger('focusOut', { value }); } catch (_) {}
+          }
+        } catch (_) {}
+      }
+      fireInputEvents(el, value, value);
       if (commit) {
         try { if (inst && typeof inst.focusOut === 'function') inst.focusOut(); } catch (_) {}
         try { el.dispatchEvent(new Event('blur', { bubbles: true })); } catch (_) {}
@@ -1306,7 +1350,7 @@ async function focusLoginField(win, which) {
   );
 }
 
-async function syncEj2LoginFields(win, email, password) {
+async function syncEj2LoginFields(win, email, password, { slow = false } = {}) {
   const wc = getLiveWebContents(win);
   if (!wc) return { ok: false, reason: 'panel-closed' };
   return wc.executeJavaScript(
@@ -1314,36 +1358,33 @@ async function syncEj2LoginFields(win, email, password) {
       ${loginDomHelpersScript()}
       const emailWant = ${JSON.stringify(email)};
       const passWant = ${JSON.stringify(password)};
+      const slow = ${slow ? 'true' : 'false'};
       const emailInput = findEmailInput();
-      const passwordInput = findPasswordInput();
-      if (!emailInput || !passwordInput) {
-        return { ok: false, reason: 'missing-fields', ...snapshotFields() };
+      let passwordInput = findPasswordInput();
+      if (!emailInput) {
+        return { ok: false, reason: 'missing-email', ...snapshotFields() };
       }
-      if (emailInput === passwordInput) {
-        return { ok: false, reason: 'same-field', ...snapshotFields() };
-      }
-      // Email first — commit so Syncfusion keeps it. Never insertText without focus check
-      // (undirected insertText was dumping password into the email box).
-      applyValue(emailInput, emailWant, { commit: true });
+      // Email first — commit so Syncfusion keeps it.
+      applyValue(emailInput, emailWant, { commit: true, slow });
       try {
         emailInput.focus({ preventScroll: true });
         insertOnlyIfFocused(emailInput, emailWant);
         applyValue(emailInput, emailWant, { commit: true });
       } catch (_) {}
 
-      // Password only into the password control. Re-resolve in case DOM refreshed.
-      const passEl = findPasswordInput() || passwordInput;
-      if (!passEl || passEl === findEmailInput()) {
+      // Re-find password after email focusOut (Angular may remount the second TextBox).
+      passwordInput = findPasswordInput();
+      if (!passwordInput || passwordInput === findEmailInput()) {
         return { ok: false, reason: 'missing-password', ...snapshotFields() };
       }
-      applyValue(passEl, passWant, { commit: false });
+      applyValue(passwordInput, passWant, { commit: false, slow });
       try {
-        passEl.focus({ preventScroll: true });
-        insertOnlyIfFocused(passEl, passWant);
-        applyValue(passEl, passWant, { commit: false });
+        passwordInput.focus({ preventScroll: true });
+        insertOnlyIfFocused(passwordInput, passWant);
+        applyValue(passwordInput, passWant, { commit: false, slow });
       } catch (_) {}
 
-      // If password typing leaked into email, restore email without touching password again.
+      // If password typing leaked into email, restore email then re-assert password.
       const emailNow = findEmailInput();
       if (emailNow) {
         const gotEmail = String(emailNow.value || ej2Value(emailNow) || '');
@@ -1354,8 +1395,9 @@ async function syncEj2LoginFields(win, email, password) {
       const passNow = findPasswordInput();
       if (passNow && passNow !== findEmailInput()) {
         const gotPass = String(passNow.value || ej2Value(passNow) || '');
-        if (gotPass !== passWant && gotPass.length !== passWant.length) {
-          applyValue(passNow, passWant, { commit: false });
+        const mark = Number(passNow.getAttribute('data-is-len') || 0);
+        if (gotPass !== passWant && gotPass.length !== passWant.length && mark !== passWant.length) {
+          applyValue(passNow, passWant, { commit: false, slow: true });
         }
       }
       return { ok: true, ...snapshotFields() };
@@ -1380,6 +1422,11 @@ function credentialsMatch(snapshot, email, password) {
   }
   // EJ2 may expose length without revealing the password string.
   if (gotPassword.length === wantPassword.length && gotPassword.length > 0) {
+    return true;
+  }
+  // Our applyValue stamps data-is-len when the model hides the real password string.
+  const passMark = Number(snapshot.passwordMark || 0);
+  if (passMark === wantPassword.length && wantPassword.length > 0) {
     return true;
   }
   return false;
@@ -1644,61 +1691,62 @@ async function fillCredentialsOnce(win, wantEmail, wantPassword) {
   focusCorrPanel(win);
   await awakenLoginFields(win).catch(() => null);
 
-  // DOM/EJ2 first — on Intel Mac CDP insertText often never types into Syncfusion.
-  const ej2Rounds = IS_INTEL_MAC ? 4 : 2;
+  // DOM/EJ2 first on every Mac — CDP insertText is flaky (especially Intel) and
+  // previously skipped long passwords entirely in the native path.
   let filled = null;
-  for (let i = 0; i < ej2Rounds; i += 1) {
-    filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => filled);
+  const attempts = [
+    { slow: false },
+    { slow: false },
+    { slow: true },
+    { slow: true },
+  ];
+  for (let i = 0; i < attempts.length; i += 1) {
+    const { slow } = attempts[i];
+    // Bind email alone, verify, then password — avoids dumping both into one box.
+    filled = await syncEj2LoginFields(win, wantEmail, wantPassword, { slow }).catch(() => filled);
     filled = await restoreEmailIfClobbered(win, wantEmail, wantPassword);
     if (credentialsMatch(filled, wantEmail, wantPassword)) {
-      await new Promise((r) => setTimeout(r, 40));
+      await new Promise((r) => setTimeout(r, 50));
       filled = await readLoginCredentials(win);
       if (credentialsMatch(filled, wantEmail, wantPassword)) return filled;
     }
-    await awakenLoginFields(win).catch(() => null);
-    await new Promise((r) => setTimeout(r, 60 + i * 40));
-  }
-
-  if (IS_INTEL_MAC) {
-    // Intel: native + EJ2 only (skip CDP — hangs / no-ops on many Intel Macs).
+    // Native char typing into each field, then re-assert EJ2 model.
     await typeViaNativeOnly(win, 'email', wantEmail);
+    await new Promise((r) => setTimeout(r, 40));
     await awakenLoginFields(win).catch(() => null);
     await typeViaNativeOnly(win, 'password', wantPassword);
-    filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => filled);
+    filled = await syncEj2LoginFields(win, wantEmail, wantPassword, { slow: true }).catch(() => filled);
     filled = await restoreEmailIfClobbered(win, wantEmail, wantPassword);
-    return { ...(filled || {}), ...(await readLoginCredentials(win) || {}) };
+    if (credentialsMatch(filled, wantEmail, wantPassword)) return filled;
+    await awakenLoginFields(win).catch(() => null);
+    await new Promise((r) => setTimeout(r, 80 + i * 50));
   }
 
-  // Apple Silicon / others: CDP once for both fields.
-  try {
-    filled = await withDebuggerSession(win, async (wc) => {
-      const emailType = await typeIntoLoginField(win, 'email', wantEmail, { wc });
-      if (!emailType?.ok) return { ...(filled || {}), ok: false, reason: 'missing-email' };
-      let mid = await readLoginCredentials(win);
-      if (String(mid?.emailEj || mid?.email || '') !== wantEmail) {
+  // Optional CDP assist (skip on Intel — often hangs / no-ops).
+  if (!IS_INTEL_MAC) {
+    try {
+      filled = await withDebuggerSession(win, async (wc) => {
         await typeIntoLoginField(win, 'email', wantEmail, { wc });
-        mid = await readLoginCredentials(win);
-      }
-      const passType = await typeIntoLoginField(win, 'password', wantPassword, { wc });
-      if (!passType?.ok) return { ...(filled || {}), ok: false, reason: 'missing-password' };
-      let snap = await restoreEmailIfClobbered(win, wantEmail, wantPassword);
-      if (!credentialsMatch(snap, wantEmail, wantPassword)) {
-        const synced = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => null);
-        snap = await restoreEmailIfClobbered(win, wantEmail, wantPassword);
-        snap = { ...(synced || {}), ...(snap || {}) };
-      }
-      await new Promise((r) => setTimeout(r, 40));
-      return { ...(snap || {}), ...(await readLoginCredentials(win) || {}) };
-    });
-  } catch (_) {
-    filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => filled);
-    filled = await restoreEmailIfClobbered(win, wantEmail, wantPassword);
-    await new Promise((r) => setTimeout(r, 40));
-    const snap = await readLoginCredentials(win);
-    filled = { ...(filled || {}), ...(snap || {}) };
+        await typeIntoLoginField(win, 'password', wantPassword, { wc });
+        let snap = await restoreEmailIfClobbered(win, wantEmail, wantPassword);
+        if (!credentialsMatch(snap, wantEmail, wantPassword)) {
+          const synced = await syncEj2LoginFields(win, wantEmail, wantPassword, {
+            slow: true,
+          }).catch(() => null);
+          snap = await restoreEmailIfClobbered(win, wantEmail, wantPassword);
+          snap = { ...(synced || {}), ...(snap || {}) };
+        }
+        return { ...(snap || {}), ...(await readLoginCredentials(win) || {}) };
+      });
+    } catch (_) {
+      filled = await syncEj2LoginFields(win, wantEmail, wantPassword, { slow: true }).catch(
+        () => filled
+      );
+      filled = await restoreEmailIfClobbered(win, wantEmail, wantPassword);
+    }
   }
 
-  return filled;
+  return { ...(filled || {}), ...(await readLoginCredentials(win) || {}) };
 }
 
 async function fillAndSubmit(
@@ -1749,7 +1797,7 @@ async function fillAndSubmit(
     if (!controls.ready?.passwordInput) return missingFieldResult('password');
   }
 
-  const maxRounds = 4;
+  const maxRounds = 5;
   let filled = null;
   for (let round = 1; round <= maxRounds; round += 1) {
     setStatus({
@@ -1760,28 +1808,40 @@ async function fillAndSubmit(
     });
     ensureVisibleCorrBounds(corrBounds);
     focusCorrPanel(win);
+    await awakenLoginFields(win).catch(() => null);
     filled = await fillCredentialsOnce(win, wantEmail, wantPassword);
     if (filled?.reason === 'missing-email') {
       if (round < maxRounds) {
-        await new Promise((r) => setTimeout(r, 120 * round));
+        await new Promise((r) => setTimeout(r, 150 * round));
         continue;
       }
       return missingFieldResult('email');
     }
     if (filled?.reason === 'missing-password') {
       if (round < maxRounds) {
-        await new Promise((r) => setTimeout(r, 120 * round));
+        await awakenLoginFields(win).catch(() => null);
+        await new Promise((r) => setTimeout(r, 150 * round));
         continue;
       }
       return missingFieldResult('password');
     }
     if (credentialsMatch(filled, wantEmail, wantPassword)) break;
-    await new Promise((r) => setTimeout(r, 180 * round));
+    // Last chance in-round: slow per-character Syncfusion bind.
+    filled = await syncEj2LoginFields(win, wantEmail, wantPassword, { slow: true }).catch(
+      () => filled
+    );
+    filled = await restoreEmailIfClobbered(win, wantEmail, wantPassword);
+    if (credentialsMatch(filled, wantEmail, wantPassword)) break;
+    await new Promise((r) => setTimeout(r, 200 * round));
   }
 
   if (!credentialsMatch(filled, wantEmail, wantPassword)) {
     const detail = filled
-      ? `email=${Boolean(filled.email || filled.emailEj)} pass=${Boolean(filled.password || filled.passwordEj)} ej2=${Boolean(filled.emailEjReady && filled.passwordEjReady)}`
+      ? `email=${Boolean(filled.email || filled.emailEj)} pass=${Boolean(
+          filled.password || filled.passwordEj || filled.passwordMark
+        )} ej2=${Boolean(filled.emailEjReady && filled.passwordEjReady)} mark=${Number(
+          filled.passwordMark || 0
+        )}`
       : 'no-snapshot';
     return {
       ok: false,

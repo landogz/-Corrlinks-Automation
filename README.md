@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.48**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.49**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.48-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.48.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.48.exe` or portable `Inside-Scores-0.1.48.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.49-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.49.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.49.exe` or portable `Inside-Scores-0.1.49.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.48.exe`.
+1. Run `Inside-Scores-Setup-0.1.49.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.48.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.49.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 
@@ -78,7 +78,7 @@ Inside Scores does **not** use the microphone. Refresh/CorrLinks loads used to t
 
 ### CorrLinks “Syncfusion still empty” on validate
 
-Preparing your workspace used to hide the CorrLinks pane at 0×0 during probes, which made Angular/Syncfusion reject filled email/password. The overlay is now split: progress / failed accounts on the left, live CorrLinks login on the right. Account checks click Login immediately (no 5s countdown). Failed-account review centers **Continue without retries** (Cancel is hidden on that screen). Email and password are written into separate fields. On **Intel Mac**, fill uses DOM/EJ2 (not CDP typing), which was skipping password entry on some probes.
+Preparing your workspace used to hide the CorrLinks pane at 0×0 during probes, which made Angular/Syncfusion reject filled email/password. The overlay is now split: progress / failed accounts on the left, live CorrLinks login on the right. Account checks click Login immediately (no 5s countdown). Failed-account review centers **Continue without retries** (Cancel is hidden on that screen). Email and password are written into separate fields. Login fill is DOM/EJ2-first on every Mac (CDP is optional assist only): clear-then-set each field, per-character fallback when Syncfusion drops values, and native typing no longer skips passwords longer than 64 characters.
 
 ## Usage
 
