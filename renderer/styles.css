@@ -848,9 +848,11 @@ body.is-login .toast-host {
   inset: 0;
   z-index: 80;
   display: grid;
-  place-content: center;
-  justify-items: center;
-  padding: clamp(16px, 4vw, 32px);
+  place-content: stretch;
+  align-items: stretch;
+  justify-items: stretch;
+  padding: clamp(12px, 2.4vw, 24px);
+  padding-bottom: calc(var(--footer-h, 48px) + clamp(12px, 2vw, 20px));
   background: var(--overlay-bg);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -860,11 +862,24 @@ body.is-login .toast-host {
   display: none !important;
 }
 
+.app-verifying-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.95fr) minmax(300px, 1.25fr);
+  gap: clamp(12px, 2vw, 20px);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  align-items: stretch;
+}
+
 .app-verifying-card {
   display: grid;
   justify-items: center;
+  align-content: center;
   gap: 10px;
-  min-width: min(360px, 92vw);
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
   padding: 28px 24px 20px;
   border-radius: 14px;
   border: 1px solid var(--border-strong);
@@ -873,6 +888,62 @@ body.is-login .toast-host {
     var(--bg-surface-1);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
   text-align: center;
+}
+
+.app-verifying-corr {
+  position: relative;
+  min-width: 0;
+  min-height: 280px;
+  border-radius: 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface-2);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  /* Native WebContentsView sits on top of this slot and receives clicks. */
+  pointer-events: none;
+}
+
+.app-verifying-corr-frame {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  padding: 20px;
+  text-align: center;
+}
+
+.app-verifying-corr-label {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.app-verifying-corr-hint {
+  margin: 0;
+  font-size: 12px;
+  max-width: 28ch;
+  line-height: 1.35;
+}
+
+@media (max-width: 900px) {
+  .app-verifying-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, auto) minmax(220px, 1fr);
+  }
+
+  .app-verifying-card {
+    align-content: start;
+    padding: 20px 16px 16px;
+  }
+
+  .app-verifying-corr {
+    min-height: 220px;
+  }
 }
 
 .app-verifying-progress {
@@ -909,7 +980,8 @@ body.is-login .toast-host {
 
 .app-verifying-card.is-review .loop-initializing-spinner,
 .app-verifying-card.is-review .app-verifying-progress,
-.app-verifying-card.is-review .app-verifying-percent {
+.app-verifying-card.is-review .app-verifying-percent,
+.app-verifying-card.is-review .app-verifying-stop {
   display: none;
 }
 
@@ -1018,8 +1090,11 @@ body.is-login .toast-host {
 .app-verifying-failed-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
   gap: 8px;
   margin-top: 10px;
+  width: 100%;
 }
 
 .app-verifying-failed-actions .action-secondary,

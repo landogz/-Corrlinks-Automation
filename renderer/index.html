@@ -683,35 +683,47 @@
       </footer>
 
       <div id="appVerifying" class="app-verifying" hidden aria-live="polite" aria-busy="false">
-        <div class="app-verifying-card">
-          <div class="loop-initializing-spinner" id="appVerifyingSpinner" aria-hidden="true"></div>
-          <p class="loop-initializing-title" id="appVerifyingTitle">Preparing your workspace</p>
-          <p id="appVerifyingStatus" class="loop-initializing-status">Validating CorrLinks accounts</p>
-          <p id="appVerifyingDetail" class="loop-initializing-detail tabular"></p>
-          <p id="appVerifyingLive" class="loop-initializing-live tabular" aria-live="polite"></p>
-          <div
-            class="app-verifying-progress"
-            role="progressbar"
-            aria-valuemin="0"
-            aria-valuemax="100"
-            aria-valuenow="0"
-            aria-labelledby="appVerifyingStatus"
-            id="appVerifyingProgress"
-          >
-            <div class="app-verifying-progress-bar" id="appVerifyingProgressBar"></div>
+        <div class="app-verifying-layout">
+          <div class="app-verifying-card">
+            <div class="loop-initializing-spinner" id="appVerifyingSpinner" aria-hidden="true"></div>
+            <p class="loop-initializing-title" id="appVerifyingTitle">Preparing your workspace</p>
+            <p id="appVerifyingStatus" class="loop-initializing-status">Validating CorrLinks accounts</p>
+            <p id="appVerifyingDetail" class="loop-initializing-detail tabular"></p>
+            <p id="appVerifyingLive" class="loop-initializing-live tabular" aria-live="polite"></p>
+            <div
+              class="app-verifying-progress"
+              role="progressbar"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+              aria-labelledby="appVerifyingStatus"
+              id="appVerifyingProgress"
+            >
+              <div class="app-verifying-progress-bar" id="appVerifyingProgressBar"></div>
+            </div>
+            <p id="appVerifyingPercent" class="app-verifying-percent tabular">0%</p>
+            <div id="appVerifyingFailed" class="app-verifying-failed" hidden>
+              <p class="app-verifying-failed-label">Failed accounts</p>
+              <ul id="appVerifyingFailedList" class="app-verifying-failed-list" aria-label="Failed CorrLinks accounts"></ul>
+              <p id="appVerifyingFailedHint" class="app-verifying-failed-hint muted">
+                Each account shows its error. Retry one at a time, or continue without them.
+              </p>
+              <div class="app-verifying-failed-actions">
+                <button type="button" class="ghost" id="btnVerifySkipFailed">Continue without retries</button>
+              </div>
+            </div>
+            <button type="button" class="ghost app-verifying-stop" id="btnStopBootVerify">Cancel</button>
           </div>
-          <p id="appVerifyingPercent" class="app-verifying-percent tabular">0%</p>
-          <div id="appVerifyingFailed" class="app-verifying-failed" hidden>
-            <p class="app-verifying-failed-label">Failed accounts</p>
-            <ul id="appVerifyingFailedList" class="app-verifying-failed-list" aria-label="Failed CorrLinks accounts"></ul>
-            <p id="appVerifyingFailedHint" class="app-verifying-failed-hint muted">
-              Each account shows its error. Retry one at a time, or continue without them.
-            </p>
-            <div class="app-verifying-failed-actions">
-              <button type="button" class="ghost" id="btnVerifySkipFailed">Continue without retries</button>
+          <div
+            class="app-verifying-corr"
+            id="appVerifyingCorrPane"
+            aria-label="CorrLinks login preview"
+          >
+            <div class="app-verifying-corr-frame">
+              <p class="app-verifying-corr-label">CorrLinks</p>
+              <p class="app-verifying-corr-hint muted">Login runs here while accounts are validated</p>
             </div>
           </div>
-          <button type="button" class="ghost app-verifying-stop" id="btnStopBootVerify">Cancel</button>
         </div>
       </div>
     </div>

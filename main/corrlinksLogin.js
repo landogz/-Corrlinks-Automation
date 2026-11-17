@@ -1413,8 +1413,12 @@ const SIGN_IN_DELAY_MS = Math.max(
   Number(process.env.CORRLINKS_SIGNIN_DELAY_MS ?? 5_000) || 0
 );
 
-async function waitBeforeSignInClick(win, { email = null, attempt = null, password = null } = {}) {
-  const totalMs = SIGN_IN_DELAY_MS;
+async function waitBeforeSignInClick(
+  win,
+  { email = null, attempt = null, password = null, skipDelay = false } = {}
+) {
+  // Account validation / fast probes click Login immediately — no 5s settle countdown.
+  const totalMs = skipDelay ? 0 : SIGN_IN_DELAY_MS;
   if (totalMs <= 0) return;
   const wantEmail = String(email || '');
   const wantPassword = String(password || '');
@@ -1616,7 +1620,12 @@ async function fillCredentialsOnce(win, wantEmail, wantPassword) {
   return filled;
 }
 
-async function fillAndSubmit(win, email, password, { attempt = null } = {}) {
+async function fillAndSubmit(
+  win,
+  email,
+  password,
+  { attempt = null, skipSignInDelay = false } = {}
+) {
   const wantEmail = String(email || '').trim();
   const wantPassword = String(password || '');
   if (!wantEmail || !wantPassword) {
@@ -1695,8 +1704,13 @@ async function fillAndSubmit(win, email, password, { attempt = null } = {}) {
     };
   }
 
-  // Give CorrLinks time to accept filled fields before Login click; keep values alive.
-  await waitBeforeSignInClick(win, { email: wantEmail, attempt, password: wantPassword });
+  // Send/login can pause before Login; Preparing-workspace checks skip the countdown.
+  await waitBeforeSignInClick(win, {
+    email: wantEmail,
+    attempt,
+    password: wantPassword,
+    skipDelay: Boolean(skipSignInDelay),
+  });
   if (!getLiveWebContents(win)) {
     return { ok: false, reason: 'CorrLinks panel was closed during sign-in delay' };
   }
@@ -3959,8 +3973,18 @@ async function composeAllParts(win, {
 
 async function attemptLogin(
   win,
-  { email, password, label, clearSession = false, pageAlreadyLoaded = false, fast = false } = {}
+  {
+    email,
+    password,
+    label,
+    clearSession = false,
+    pageAlreadyLoaded = false,
+    fast = false,
+    /** Skip CORRLINKS_SIGNIN_DELAY_MS (account validation / Preparing workspace). */
+    skipSignInDelay = false,
+  } = {}
 ) {
+  const fillOpts = { attempt: label, skipSignInDelay: Boolean(skipSignInDelay) };
   setStatus({
     state: 'loading',
     message: `Loading CorrLinks login (${label}: ${email})`,
@@ -3996,7 +4020,7 @@ async function attemptLogin(
       attempt: label,
     });
     void clearAuthToasts(win).catch(() => {});
-    fillResult = await fillAndSubmit(win, email, password, { attempt: label });
+    fillResult = await fillAndSubmit(win, email, password, fillOpts);
   } else if (!fast) {
     await clearAuthToasts(win).catch(() => {});
     await dismissValidationDialog(win, {
@@ -4128,7 +4152,7 @@ async function attemptLogin(
     await dismissValidationDialog(win).catch(() => {});
   }
 
-  fillResult = await fillAndSubmit(win, email, password, { attempt: label });
+  fillResult = await fillAndSubmit(win, email, password, fillOpts);
   } // end !fillResult?.ok (form wait + fill)
   // Syncfusion empty bind: hard-reload login once, wait for EJ2, then refill.
   if (
@@ -4158,7 +4182,7 @@ async function attemptLogin(
         email,
         attempt: label,
       });
-      fillResult = await fillAndSubmit(win, email, password, { attempt: label });
+      fillResult = await fillAndSubmit(win, email, password, fillOpts);
     }
   }
 
@@ -4221,7 +4245,7 @@ async function attemptLogin(
       email,
       attempt: label,
     });
-    fillResult = await fillAndSubmit(win, email, password, { attempt: label });
+    fillResult = await fillAndSubmit(win, email, password, fillOpts);
   }
   if (!fillResult.ok) {
     // Last chance: interstitial for the target account counts as logged in.
@@ -4554,6 +4578,7 @@ async function loginToCorrlinks({
   }
 
   const useFast = Boolean(fast) || Boolean(skipCompose);
+  const skipSignInDelay = Boolean(skipCompose);
   const primary = await attemptLogin(win, {
     email,
     password,
@@ -4562,6 +4587,8 @@ async function loginToCorrlinks({
     pageAlreadyLoaded: Boolean(pageAlreadyLoaded),
     // Account probes + single-inmate send use shorter nav/form/result waits.
     fast: useFast,
+    // Preparing-workspace / account checks: click Login immediately (no 5s countdown).
+    skipSignInDelay,
   });
   setStatus(primary);
 
@@ -4600,6 +4627,7 @@ async function loginToCorrlinks({
       label: 'second',
       clearSession: true,
       fast: useFast,
+      skipSignInDelay,
     });
 
     const finalSecond = {

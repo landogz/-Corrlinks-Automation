@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.46**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.47**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.46-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.46.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.46.exe` or portable `Inside-Scores-0.1.46.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.47-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.47.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.47.exe` or portable `Inside-Scores-0.1.47.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.46.exe`.
+1. Run `Inside-Scores-Setup-0.1.47.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.46.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.47.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 
@@ -62,7 +62,7 @@ CORRLINKS_SIGNIN_DELAY_MS=5000
 | `SPORTSDATA_EMAIL` | SportsData operator login |
 | `SPORTSDATA_PASSWORD` | SportsData password |
 | `APP_TIMEZONE` | Documented as `America/New_York` — app is hard-locked to NY |
-| `CORRLINKS_SIGNIN_DELAY_MS` | Pause after filling login before clicking Login (default `5000`) |
+| `CORRLINKS_SIGNIN_DELAY_MS` | Pause after filling login before clicking Login on send/login (default `5000`). Account validation / Preparing workspace skips this delay. |
 
 Do not commit a filled `.env` or `sportsdata-credentials.json`.
 
@@ -78,7 +78,7 @@ Inside Scores does **not** use the microphone. Refresh/CorrLinks loads used to t
 
 ### CorrLinks “Syncfusion still empty” on validate
 
-Preparing your workspace used to hide the CorrLinks pane at 0×0 during probes, which made Angular/Syncfusion reject filled email/password. Probes now park a full-size pane just past the window edge (hidden under the overlay, still laid out), find email and password separately (including when Syncfusion has not fully “shown” the password box yet), and bind each field on its own.
+Preparing your workspace used to hide the CorrLinks pane at 0×0 during probes, which made Angular/Syncfusion reject filled email/password. The overlay is now split: progress / failed accounts on the left, live CorrLinks login on the right. Account checks click Login immediately (no 5s countdown). Failed-account review centers **Continue without retries** (Cancel is hidden on that screen). Email and password are written into separate fields.
 
 ## Usage
 

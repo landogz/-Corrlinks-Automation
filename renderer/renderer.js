@@ -3096,6 +3096,7 @@ function setLoopInitializingOverlay(opts = null) {
     loopInitializingActive = false;
     loopInitializing.hidden = true;
     loopInitializing.setAttribute('aria-busy', 'false');
+    document.body.classList.remove('is-preparing-workspace');
     if (appVerifyingTitle) appVerifyingTitle.textContent = VERIFY_COPY.title;
     if (loopInitializingStatus) loopInitializingStatus.textContent = VERIFY_COPY.defaultStatus;
     if (loopInitializingDetail) loopInitializingDetail.textContent = '';
@@ -3110,6 +3111,7 @@ function setLoopInitializingOverlay(opts = null) {
     loopInitializingActive = false;
     loopInitializing.hidden = true;
     loopInitializing.setAttribute('aria-busy', 'false');
+    document.body.classList.remove('is-preparing-workspace');
     clearVerifyProbeLive();
     hideVerifyFailedReview();
     syncCorrPaneBounds();
@@ -3145,8 +3147,11 @@ function setLoopInitializingOverlay(opts = null) {
     if (appVerifyingFailed) appVerifyingFailed.hidden = true;
     if (appVerifyingSpinner) appVerifyingSpinner.hidden = false;
   }
-  // WebContentsView paints above HTML — collapse it so the login page never shows.
-  hideCorrEmbedNow();
+  document.body.classList.add('is-preparing-workspace');
+  // Show CorrLinks in the overlay's right pane (not parked off-screen).
+  requestAnimationFrame(() => {
+    syncCorrPaneBounds();
+  });
 }
 
 /** Quiet wait during init (updates initializing overlay, not account countdown). */
@@ -3709,10 +3714,9 @@ async function startCorrlinksAccountLogin(group, options = {}) {
   setStatusHint(`Logging in ${maskSensitive(group.email)}…`);
   setCorrPanelBusy('Logging in…');
   setCorrlinksConnected(false, true);
-  // Preparing-workspace / quiet probes: keep CorrLinks off-screen (sized) so the
-  // login page does not paint over the verifying overlay. Loop/manual login still reveals.
+  // Preparing-workspace: show CorrLinks in the overlay's right pane. Otherwise open the main pane.
   if (quietToast || bootVerifyRunning || loopInitializingActive) {
-    await parkCorrlinksEmbedForFill().catch(() => null);
+    await revealCorrlinksForPrepare().catch(() => null);
   } else {
     await revealCorrlinksEmbed().catch(() => null);
   }
@@ -5736,7 +5740,8 @@ function isCorrEmbedBlocked() {
   if (document.body.classList.contains('is-login')) return true;
   if (loginScreen && !loginScreen.hidden) return true;
   if (mainShell?.hidden) return true;
-  if (loopInitializingActive || bootVerifyRunning) return true;
+  // Preparing workspace uses its own right-side CorrLinks slot (not blocked).
+  if (loopInitializingActive || bootVerifyRunning) return false;
   // Loop countdown overlay must not blank a live loop session.
   if (loopCountdownActive && !(loopRunning || corrEmbedRevealed || corrlinksLoginBusy)) return true;
   if (activeMainTab !== 'automate') return true;
@@ -5753,13 +5758,40 @@ function hideCorrEmbedNow({ force = false } = {}) {
   if (!window.api?.setCorrBounds) return;
   // During active send/login/probe fill, never collapse to 0×0 — Syncfusion stays empty.
   if (corrEmbedRevealed || corrlinksLoginBusy) return;
+  // Preparing workspace: keep the right-hand slot sized (avoid 0×0 flash between probes).
+  if (!force && (loopInitializingActive || bootVerifyRunning)) {
+    const bounds = measureVerifyCorrPaneBounds();
+    if (bounds) {
+      window.api.setCorrBounds({ ...bounds, force: true });
+      return;
+    }
+  }
   window.api.setCorrBounds({ x: 0, y: 0, width: 0, height: 0, force: Boolean(force) });
+}
+
+/** Bounds for the Preparing-workspace right-hand CorrLinks preview slot. */
+function measureVerifyCorrPaneBounds() {
+  const pane = document.getElementById('appVerifyingCorrPane');
+  if (!pane || loopInitializing?.hidden) return null;
+  const rect = pane.getBoundingClientRect();
+  const width = Math.max(0, rect.width);
+  const height = Math.max(0, rect.height);
+  if (width < 80 || height < 80) return null;
+  return {
+    x: Math.round(rect.left),
+    y: Math.round(rect.top),
+    width: Math.round(width),
+    height: Math.round(height),
+  };
 }
 
 /**
  * Compute #corrPane bounds for the native WebContentsView (null when blocked/too small).
  */
 function measureCorrPaneBounds() {
+  if (loopInitializingActive || bootVerifyRunning) {
+    return measureVerifyCorrPaneBounds();
+  }
   const pane = document.getElementById('corrPane');
   if (!pane) return null;
   if (isCorrEmbedBlocked()) return null;
@@ -5797,30 +5829,44 @@ function measureCorrPaneBounds() {
 }
 
 /**
- * Size the CorrLinks WebContentsView off-screen for probe/fill.
- * Syncfusion needs real width/height; Preparing overlay must stay unobstructed.
+ * Show CorrLinks inside the Preparing-workspace right pane while accounts validate.
  */
-async function parkCorrlinksEmbedForFill() {
-  // Park just past the right edge (positive coords). Negative x made Syncfusion
-  // skip laying out the password field → "Could not find password field".
-  const park = {
-    x: Math.round((window.innerWidth || 1200) + 120),
-    y: 0,
-    width: 960,
-    height: 800,
-  };
-  setCorrPlaceholderVisible(true);
+async function revealCorrlinksForPrepare() {
+  document.body.classList.add('is-preparing-workspace');
+  void document.getElementById('appVerifyingCorrPane')?.offsetWidth;
+  let bounds = measureVerifyCorrPaneBounds();
+  if (!bounds) {
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    bounds = measureVerifyCorrPaneBounds();
+  }
+  if (!bounds) {
+    // Fallback: right half of the window until the overlay finishes layout.
+    const w = Math.max(320, Math.round((window.innerWidth || 1200) * 0.52));
+    const h = Math.max(280, Math.round((window.innerHeight || 800) * 0.72));
+    bounds = {
+      x: Math.max(280, Math.round((window.innerWidth || 1200) - w - 20)),
+      y: Math.max(64, Math.round(((window.innerHeight || 800) - h) / 2)),
+      width: w,
+      height: h,
+    };
+  }
   try {
     if (window.api?.setCorrBounds) {
-      await window.api.setCorrBounds({ ...park, force: true });
+      await window.api.setCorrBounds({ ...bounds, force: true });
     }
     if (window.api?.warmCorrlinksPanel) {
-      await window.api.warmCorrlinksPanel({ bounds: park });
+      await window.api.warmCorrlinksPanel({ bounds });
+    }
+    const again = measureVerifyCorrPaneBounds() || bounds;
+    if (again && window.api?.setCorrBounds) {
+      await window.api.setCorrBounds({ ...again, force: true });
+      bounds = again;
     }
   } catch (error) {
     log(error?.message || String(error), 'warn');
   }
-  return park;
+  requestAnimationFrame(() => syncCorrPaneBounds());
+  return bounds;
 }
 
 /**
@@ -5909,12 +5955,22 @@ function resetCorrEmbedReveal() {
 }
 
 /**
- * Map #corrPane to the Electron WebContentsView.
+ * Map #corrPane (or Preparing-workspace right slot) to the Electron WebContentsView.
  * Clip to the visible .app area above the status bar so a scrolled/off-screen
  * pane never paints the embed over the footer or left column.
  */
 function syncCorrPaneBounds() {
   if (!window.api?.setCorrBounds) return;
+
+  if (loopInitializingActive || bootVerifyRunning) {
+    const verifyBounds = measureVerifyCorrPaneBounds();
+    if (verifyBounds) {
+      window.api.setCorrBounds({ ...verifyBounds, force: true });
+      return;
+    }
+    // Mid-probe layout thrash — keep the current sized view.
+    if (corrlinksLoginBusy) return;
+  }
 
   if (isCorrEmbedBlocked()) {
     // Dialogs/menus must always win over the native view (otherwise OK is unclickable).
