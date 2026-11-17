@@ -163,6 +163,13 @@ npm run smoke:subject
 npm run smoke:corrlinks
 ```
 
+## User manual
+
+Operator guide (install, sign-in, send, loop, history, shortcuts, troubleshooting):
+
+- Markdown: [docs/USER-MANUAL.md](docs/USER-MANUAL.md)
+- PDF: [docs/Inside-Scores-User-Manual.pdf](docs/Inside-Scores-User-Manual.pdf) (also attached on [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest))
+
 ## More detail
 
 See [INSTALL.md](INSTALL.md) for expanded install notes.

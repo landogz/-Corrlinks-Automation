@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Inside Scores — User Manual v0.1.39</title>
+  <style>
+    :root {
+      --ink: #142033;
+      --muted: #5a6578;
+      --line: #d8dee8;
+      --accent: #1f4e79;
+      --bg: #ffffff;
+      --soft: #f4f7fb;
+    }
+    * { box-sizing: border-box; }
+    html { font-size: 11pt; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font-family: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+      line-height: 1.45;
+    }
+    .page {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 28px 36px 48px;
+    }
+    .cover {
+      border-bottom: 3px solid var(--accent);
+      padding-bottom: 18px;
+      margin-bottom: 22px;
+    }
+    .cover .eyebrow {
+      color: var(--accent);
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin: 0 0 8px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.85rem;
+      line-height: 1.2;
+      color: var(--accent);
+    }
+    .meta {
+      color: var(--muted);
+      margin: 0;
+      font-size: 0.95rem;
+    }
+    h2 {
+      margin: 1.55em 0 0.45em;
+      font-size: 1.2rem;
+      color: var(--accent);
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 0.25em;
+      page-break-after: avoid;
+    }
+    h3 {
+      margin: 1.1em 0 0.35em;
+      font-size: 1.02rem;
+      page-break-after: avoid;
+    }
+    p, li { orphans: 3; widows: 3; }
+    p { margin: 0.45em 0; }
+    ul, ol { margin: 0.35em 0 0.7em; padding-left: 1.3em; }
+    li { margin: 0.2em 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.55em 0 1em;
+      font-size: 0.92rem;
+      page-break-inside: avoid;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 7px 9px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--soft);
+      color: var(--accent);
+      font-weight: 650;
+    }
+    code, kbd {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.88em;
+      background: var(--soft);
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      padding: 0.05em 0.35em;
+    }
+    pre {
+      background: var(--soft);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px 12px;
+      overflow-x: auto;
+      font-size: 0.86rem;
+      page-break-inside: avoid;
+    }
+    pre code {
+      background: none;
+      border: none;
+      padding: 0;
+    }
+    a { color: var(--accent); }
+    .toc {
+      background: var(--soft);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin: 0 0 1.4em;
+    }
+    .toc h2 {
+      margin-top: 0;
+      border: none;
+      font-size: 1rem;
+    }
+    .toc ol { margin-bottom: 0; }
+    .note {
+      background: #fff8e8;
+      border-left: 4px solid #d4a017;
+      padding: 8px 12px;
+      margin: 0.8em 0;
+      page-break-inside: avoid;
+    }
+    .footer {
+      margin-top: 2.2em;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    @media print {
+      body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      .page { max-width: none; padding: 0; }
+      a { text-decoration: none; color: var(--ink); }
+      h2 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="cover">
+      <p class="eyebrow">Operator documentation</p>
+      <h1>Inside Scores — User Manual</h1>
+      <p class="meta">Version 0.1.39 · SportsData operators · Clock &amp; subject always America/New_York</p>
+    </header>
+
+    <nav class="toc" aria-label="Contents">
+      <h2>Contents</h2>
+      <ol>
+        <li>What this app does</li>
+        <li>Requirements</li>
+        <li>Install</li>
+        <li>Sign in (SportsData)</li>
+        <li>Main window overview</li>
+        <li>Preparing your workspace</li>
+        <li>Daily work — single inmate</li>
+        <li>Start loop (many recipients)</li>
+        <li>Daily subject (America/New_York)</li>
+        <li>CorrLinks pane</li>
+        <li>History tab</li>
+        <li>Status log</li>
+        <li>Keyboard shortcuts</li>
+        <li>Updates</li>
+        <li>Optional .env</li>
+        <li>Troubleshooting</li>
+        <li>Privacy &amp; safety</li>
+        <li>Support &amp; links</li>
+      </ol>
+    </nav>
+
+    <h2>1. What this app does</h2>
+    <p>Inside Scores is a desktop app that:</p>
+    <ol>
+      <li>Signs you into <strong>SportsData</strong></li>
+      <li>Loads inmate CorrLinks accounts and exchange files</li>
+      <li>Validates CorrLinks logins (<strong>Preparing your workspace</strong>)</li>
+      <li>Opens CorrLinks, composes messages, and <strong>sends</strong> selected exchange file parts</li>
+      <li>Supports a <strong>Start loop</strong> mode to send to many recipients across CorrLinks accounts</li>
+    </ol>
+    <div class="note">
+      Clock, log stamps, history date, and daily subject always use <strong>America/New_York</strong> — your Mac or Windows display timezone does not matter.
+    </div>
+
+    <h2>2. Requirements</h2>
+    <table>
+      <thead><tr><th>Need</th><th>Detail</th></tr></thead>
+      <tbody>
+        <tr><td>SportsData operator account</td><td>Email + password</td></tr>
+        <tr><td>Network</td><td>Access to sportsdata.com and corrlinks.com</td></tr>
+        <tr><td>macOS</td><td>12+ · Apple Silicon or Intel</td></tr>
+        <tr><td>Windows</td><td>10/11 · Setup installer recommended for updates</td></tr>
+      </tbody>
+    </table>
+    <p>Keep <strong>Set date and time automatically</strong> enabled so the New York wall clock stays correct.</p>
+
+    <h2>3. Install</h2>
+    <h3>3.1 Download</h3>
+    <p>Latest installers: <a href="https://github.com/landogz/-Corrlinks-Automation/releases/latest">GitHub Releases</a></p>
+    <table>
+      <thead><tr><th>Platform</th><th>File</th></tr></thead>
+      <tbody>
+        <tr><td>macOS Apple Silicon</td><td><code>Inside-Scores-x.y.z-arm64.dmg</code></td></tr>
+        <tr><td>macOS Intel</td><td><code>Inside-Scores-x.y.z.dmg</code></td></tr>
+        <tr><td>Windows installer</td><td><code>Inside-Scores-Setup-x.y.z.exe</code></td></tr>
+        <tr><td>Windows portable</td><td><code>Inside-Scores-x.y.z.exe</code></td></tr>
+      </tbody>
+    </table>
+
+    <h3>3.2 macOS</h3>
+    <ol>
+      <li>Open the matching <code>.dmg</code> and drag <strong>Inside Scores</strong> into <strong>Applications</strong>.</li>
+      <li>First open (unsigned): right-click → <strong>Open</strong> → confirm, or run:
+        <pre><code>xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"</code></pre>
+      </li>
+      <li>Launch from Applications / Launchpad.</li>
+    </ol>
+
+    <h3>3.3 Windows</h3>
+    <ol>
+      <li>Run <code>Inside-Scores-Setup-x.y.z.exe</code> (recommended).</li>
+      <li>If SmartScreen appears: <strong>More info</strong> → <strong>Run anyway</strong>.</li>
+      <li>Open <strong>Inside Scores</strong> from the Start menu.</li>
+    </ol>
+    <p>Portable <code>.exe</code> works without install but does <strong>not</strong> auto-update — prefer the Setup installer.</p>
+
+    <h2>4. Sign in (SportsData)</h2>
+    <ol>
+      <li>Enter SportsData email and password.</li>
+      <li>Leave <strong>Remember me</strong> checked to save login on this computer.</li>
+      <li>Click <strong>Sign in</strong>.</li>
+    </ol>
+    <p>Theme (Auto / Light / Dark) can be set on the login screen or from the account menu. Sign out from the account avatar → <strong>Sign out</strong>.</p>
+
+    <h2>5. Main window overview</h2>
+    <table>
+      <thead><tr><th>Area</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Automate</strong> tab</td><td>Inmate, template, files, send / loop, CorrLinks pane</td></tr>
+        <tr><td><strong>History</strong> tab</td><td>Exchange exports by date; preview / copy / download</td></tr>
+        <tr><td><strong>Refresh</strong></td><td>Reload inmates and re-validate CorrLinks</td></tr>
+        <tr><td><strong>Status log</strong></td><td>Detailed activity drawer</td></tr>
+        <tr><td><strong>Account menu</strong></td><td>Theme, shortcuts, updates, about, sign out</td></tr>
+        <tr><td><strong>Status bar</strong></td><td>Connection pills, hint, NY clock, version / updates</td></tr>
+      </tbody>
+    </table>
+    <p>Workflow steps: <strong>1 Inmate</strong> → <strong>2 CorrLinks</strong>.</p>
+
+    <h2>6. Preparing your workspace</h2>
+    <p>On first validation (or when CorrLinks credentials change), the app probes each unique CorrLinks account.</p>
+    <ul>
+      <li>Overlay shows status, percent, and failed accounts.</li>
+      <li>Tags may include <strong>Locked</strong>, <strong>Timeout</strong>, or <strong>Error</strong>.</li>
+      <li>Use per-account <strong>Retry</strong>, or <strong>Continue without retries</strong>.</li>
+      <li><strong>Cancel</strong> aborts the prep run.</li>
+    </ul>
+    <p>Later launches with the same CorrLinks credentials reuse saved validation and skip the full overlay. Click <strong>Refresh</strong> to force a live re-probe.</p>
+
+    <h2>7. Daily work — single inmate</h2>
+    <ol>
+      <li>Open <strong>Automate</strong>.</li>
+      <li>Search and select an inmate (name, ID, or email).</li>
+      <li>Choose <strong>Daily</strong> or <strong>Weekly update</strong> (NFL / CFB).</li>
+      <li>Check the exchange file parts to send.</li>
+      <li>Click <strong>Send all files</strong>.</li>
+    </ol>
+    <p>The app logs into CorrLinks, opens compose, sets <strong>To</strong> and subject, pastes each checked part, and sends. Use <strong>Force stop</strong> / <strong>Stop loop</strong> to halt a running job.</p>
+
+    <h2>8. Start loop (many recipients)</h2>
+    <ol>
+      <li>Complete workspace validation at least once.</li>
+      <li>Choose template and checked file parts.</li>
+      <li>Click <strong>Start loop</strong>.</li>
+      <li>Watch progress, countdown between accounts, and failed recipients.</li>
+      <li>Use <strong>Retry failed</strong> from the panel or completion dialog if needed.</li>
+    </ol>
+    <p>Only checked files are sent. The <strong>To</strong> field is cleared between recipients.</p>
+
+    <h2>9. Daily subject (America/New_York)</h2>
+    <table>
+      <thead><tr><th>Wall time (Eastern)</th><th>Subject example (Tuesday)</th></tr></thead>
+      <tbody>
+        <tr><td><strong>1:30am – 4:59am</strong></td><td><code>mon &amp; tue</code> (yesterday &amp; today)</td></tr>
+        <tr><td>All other times</td><td><code>tue</code> (today only)</td></tr>
+      </tbody>
+    </table>
+    <p>The on-screen hint refreshes about once per minute. Compose/send always computes the subject live. Weekly subjects use <strong>NFL</strong> or <strong>CFB</strong>.</p>
+
+    <h2>10. CorrLinks pane</h2>
+    <table>
+      <thead><tr><th>Control</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td>Reload</td><td>Reload embedded CorrLinks</td></tr>
+        <tr><td>Open in browser</td><td>Open CorrLinks externally</td></tr>
+        <tr><td>− / +</td><td>Zoom out / in</td></tr>
+        <tr><td>Clear session</td><td>Clear CorrLinks session in the app</td></tr>
+      </tbody>
+    </table>
+    <p>If load fails, use <strong>Retry</strong> or <strong>View log</strong>. Complete CAPTCHA or unusual prompts manually in the pane when they appear.</p>
+
+    <h2>11. History tab</h2>
+    <ol>
+      <li>Open <strong>History</strong>.</li>
+      <li>Pick a date (New York calendar) → <strong>Export for date</strong>.</li>
+      <li>Select a row to preview; use <strong>Copy</strong>, <strong>Download</strong>, or <strong>Export CSV</strong>.</li>
+      <li><strong>Refresh</strong> reloads the list; filter by date in the search box.</li>
+    </ol>
+
+    <h2>12. Status log</h2>
+    <p>Open with the log button or <kbd>⌘/Ctrl</kbd> + <kbd>J</kbd>.</p>
+    <ul>
+      <li>Filter by level; search text</li>
+      <li>Auto-scroll; Mask emails</li>
+      <li>Copy or Clear (<kbd>⌘/Ctrl</kbd> + <kbd>K</kbd>)</li>
+    </ul>
+    <p>Toasts show success and error feedback during sends and validation.</p>
+
+    <h2>13. Keyboard shortcuts</h2>
+    <table>
+      <thead><tr><th>Shortcut</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><kbd>⌘/Ctrl</kbd> + <kbd>R</kbd></td><td>Refresh inmates &amp; validate</td></tr>
+        <tr><td><kbd>⌘/Ctrl</kbd> + <kbd>L</kbd></td><td>Send message</td></tr>
+        <tr><td><kbd>⌘/Ctrl</kbd> + <kbd>J</kbd></td><td>Toggle status log</td></tr>
+        <tr><td><kbd>⌘/Ctrl</kbd> + <kbd>K</kbd></td><td>Clear log</td></tr>
+        <tr><td><kbd>?</kbd></td><td>Shortcuts help</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Close drawers / dialogs</td></tr>
+      </tbody>
+    </table>
+
+    <h2>14. Updates</h2>
+    <table>
+      <thead><tr><th>Build</th><th>Behavior</th></tr></thead>
+      <tbody>
+        <tr><td>Windows Setup (NSIS)</td><td>Download and restart to install</td></tr>
+        <tr><td>macOS (unsigned)</td><td>Download zip, replace app, relaunch</td></tr>
+        <tr><td>Windows portable</td><td>Not auto-updated — use Setup</td></tr>
+      </tbody>
+    </table>
+    <p>Check from Account menu → <strong>Check for updates</strong> or the version chip in the status bar.</p>
+
+    <h2>15. Optional .env</h2>
+    <p>Usually not required after in-app sign-in.</p>
+    <pre><code>SPORTSDATA_BASE_URL=https://sportsdata.com
+SPORTSDATA_EMAIL=your-email@example.com
+SPORTSDATA_PASSWORD=your-password
+# Documentation only — app is hard-locked to America/New_York
+APP_TIMEZONE=America/New_York
+CORRLINKS_SIGNIN_DELAY_MS=5000</code></pre>
+    <p>Do not share a filled <code>.env</code> or credentials file.</p>
+
+    <h2>16. Troubleshooting</h2>
+    <table>
+      <thead><tr><th>Symptom</th><th>What to try</th></tr></thead>
+      <tbody>
+        <tr><td>Always Preparing workspace</td><td>Retry failed accounts; Refresh if credentials changed</td></tr>
+        <tr><td>CorrLinks timeout / empty login</td><td>Retry; check network; Reload pane</td></tr>
+        <tr><td>Account locked</td><td>Secondary account if available; unlock in CorrLinks</td></tr>
+        <tr><td>Wrong day on subject / clock</td><td>App uses NY time — confirm OS auto date/time</td></tr>
+        <tr><td>macOS won’t open</td><td>Right-click Open or run xattr command</td></tr>
+        <tr><td>Windows SmartScreen</td><td>More info → Run anyway</td></tr>
+        <tr><td>No sendable files</td><td>Confirm SportsData has files for inmate / template</td></tr>
+        <tr><td>Loop failures</td><td>Retry failed from panel or completion dialog</td></tr>
+      </tbody>
+    </table>
+
+    <h2>17. Privacy &amp; safety</h2>
+    <ul>
+      <li>Password is stored only when Remember me is checked.</li>
+      <li>Enable <strong>Mask emails</strong> before sharing logs.</li>
+      <li>Never commit credentials or paste them into public tickets.</li>
+    </ul>
+
+    <h2>18. Support &amp; links</h2>
+    <table>
+      <thead><tr><th>Resource</th><th>URL</th></tr></thead>
+      <tbody>
+        <tr><td>Releases</td><td>https://github.com/landogz/-Corrlinks-Automation/releases</td></tr>
+        <tr><td>GitHub</td><td>https://github.com/landogz/-Corrlinks-Automation</td></tr>
+        <tr><td>GitLab mirror</td><td>https://gitlab.com/sportsdata1/corrlinks-automation</td></tr>
+      </tbody>
+    </table>
+
+    <p class="footer">Inside Scores · Landogz Web Solutions · User Manual v0.1.39</p>
+  </div>
+</body>
+</html>

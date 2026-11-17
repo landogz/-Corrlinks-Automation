@@ -146,5 +146,5 @@ Outputs land in `release/`.
 ## Notes
 
 - CorrLinks may show CAPTCHA / “already logged in” / account-locked dialogs — the app tries to handle these; complete CAPTCHA manually if needed.
-- Sending messages is not enabled yet (paste only).
+- Full operator steps (send, Start loop, history, shortcuts): see [docs/USER-MANUAL.md](docs/USER-MANUAL.md) or [docs/Inside-Scores-User-Manual.pdf](docs/Inside-Scores-User-Manual.pdf).
 - macOS builds are unsigned; Windows builds are unsigned — expect OS security prompts on first run.
