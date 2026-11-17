@@ -17,9 +17,7 @@ const WEEKDAY_ABBR = {
 
 const WEEK_ORDER = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
-function getAppTimezone() {
-  return process.env.APP_TIMEZONE || 'America/New_York';
-}
+const { getAppTimezone } = require('./appTimezone');
 
 function zonedParts(date, timeZone = getAppTimezone()) {
   const fmt = new Intl.DateTimeFormat('en-US', {
@@ -62,7 +60,7 @@ function previousWeekday(weekday) {
 }
 
 /**
- * CorrLinks subject from APP_TIMEZONE (default America/New_York):
+ * CorrLinks subject in America/New_York (always — ignores OS timezone):
  * - 1:30am up to (but not including) 5:00am: "yesterday & today" e.g. "thu & fri"
  * - Otherwise: today's short weekday only — e.g. "fri"
  */
@@ -99,11 +97,11 @@ function buildWeeklySubject(league) {
  * Resolve compose subject from template mode.
  * Daily → weekday subject; weekly → league name.
  */
-function resolveComposeSubject({ mode, league, now, timeZone } = {}) {
+function resolveComposeSubject({ mode, league, now } = {}) {
   if (String(mode || '').toLowerCase() === 'weekly') {
     return buildWeeklySubject(league);
   }
-  return buildCorrlinksSubject(now, timeZone);
+  return buildCorrlinksSubject(now, getAppTimezone());
 }
 
 module.exports = {

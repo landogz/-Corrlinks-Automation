@@ -20,10 +20,10 @@ Built installers are in the `release/` folder after `npm run dist`.
 
 ### 1) Pick the right DMG
 
-| Mac chip | File (current **v0.1.38**; GitHub assets use hyphens) |
+| Mac chip | File (current **v0.1.39**; GitHub assets use hyphens) |
 |----------|------|
-| Apple Silicon (M1/M2/M3/M4) | `Inside-Scores-0.1.38-arm64.dmg` |
-| Intel | `Inside-Scores-0.1.38.dmg` |
+| Apple Silicon (M1/M2/M3/M4) | `Inside-Scores-0.1.39-arm64.dmg` |
+| Intel | `Inside-Scores-0.1.39.dmg` |
 
 Unsure: Apple menu → **About This Mac** → look for “Chip” (Apple) or “Processor” (Intel).
 
@@ -57,13 +57,13 @@ Optional: a `.env` file still works if you prefer. The in-app login overrides it
 
 ### Option A — Installer (recommended)
 
-1. Run `Inside-Scores-Setup-0.1.38.exe`
+1. Run `Inside-Scores-Setup-0.1.39.exe`
 2. Follow the setup wizard (choose install folder if asked)
 3. Finish — shortcut is created on Desktop / Start Menu
 
 ### Option B — Portable
 
-1. Copy `Inside-Scores-0.1.38.exe` (portable) to a folder, e.g. `C:\Tools\InmateExchangeAuto\`
+1. Copy `Inside-Scores-0.1.39.exe` (portable) to a folder, e.g. `C:\Tools\InmateExchangeAuto\`
 2. Run that `.exe` (no install needed)
 
 ### First open / SmartScreen
@@ -81,7 +81,7 @@ Example for portable:
 
 ```text
 C:\Tools\InmateExchangeAuto\.env
-C:\Tools\InmateExchangeAuto\Inside-Scores-0.1.38.exe
+C:\Tools\InmateExchangeAuto\Inside-Scores-0.1.39.exe
 ```
 
 Example for installed app (typical):
@@ -102,6 +102,7 @@ Contents:
 SPORTSDATA_BASE_URL=https://sportsdata.com
 SPORTSDATA_EMAIL=your-email@example.com
 SPORTSDATA_PASSWORD=your-password
+# Clock + subject always use America/New_York (OS timezone ignored).
 APP_TIMEZONE=America/New_York
 ```
 
@@ -118,7 +119,7 @@ Open the app → **Refresh inmates** → select inmate → **Login to CorrLinks*
 | `SPORTSDATA_BASE_URL` | Usually `https://sportsdata.com` |
 | `SPORTSDATA_EMAIL` | SportsData operator login |
 | `SPORTSDATA_PASSWORD` | SportsData password |
-| `APP_TIMEZONE` | Subject day rules (`America/New_York`) |
+| `APP_TIMEZONE` | Always America/New_York in-app (OS timezone ignored) |
 
 Do **not** commit or share a filled `.env`.
 

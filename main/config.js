@@ -199,12 +199,11 @@ function getSportsDataConfig() {
   };
 }
 
-function getAppTimezone() {
-  return process.env.APP_TIMEZONE || 'America/New_York';
-}
+const { APP_TIMEZONE, getAppTimezone } = require('./appTimezone');
 
 module.exports = {
   CORRLINKS,
+  APP_TIMEZONE,
   getSportsDataConfig,
   getAppTimezone,
   resolveEnvPath,

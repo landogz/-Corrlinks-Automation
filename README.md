@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.38**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.39**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.38-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.38.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.38.exe` or portable `Inside-Scores-0.1.38.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.39-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.39.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.39.exe` or portable `Inside-Scores-0.1.39.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.38.exe`.
+1. Run `Inside-Scores-Setup-0.1.39.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.38.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.39.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 
@@ -51,6 +51,7 @@ Optional `.env` (still supported; in-app login overrides it):
 SPORTSDATA_BASE_URL=https://sportsdata.com
 SPORTSDATA_EMAIL=your-email@example.com
 SPORTSDATA_PASSWORD=your-password
+# Clock + subject always use America/New_York (OS timezone ignored).
 APP_TIMEZONE=America/New_York
 CORRLINKS_SIGNIN_DELAY_MS=5000
 ```
@@ -60,16 +61,16 @@ CORRLINKS_SIGNIN_DELAY_MS=5000
 | `SPORTSDATA_BASE_URL` | Usually `https://sportsdata.com` |
 | `SPORTSDATA_EMAIL` | SportsData operator login |
 | `SPORTSDATA_PASSWORD` | SportsData password |
-| `APP_TIMEZONE` | Subject day rules + status clock (default `America/New_York`) |
+| `APP_TIMEZONE` | Documented as `America/New_York` — app is hard-locked to NY |
 | `CORRLINKS_SIGNIN_DELAY_MS` | Pause after filling login before clicking Login (default `5000`) |
 
 Do not commit a filled `.env` or `sportsdata-credentials.json`.
 
 ### Clock & timezone
 
-- The status clock uses the **Mac/Windows system clock**, displayed in `APP_TIMEZONE`.
-- After changing the OS timezone or date, **quit and reopen** the app.
-- Keep **Set date and time automatically** enabled so subject rules stay correct.
+- The app **always** uses **America/New_York** for the status clock, log stamps, history date, and daily subject.
+- Your Mac/Windows display timezone does **not** matter (Philippines, EST, PST, etc.).
+- The OS must still have the correct **UTC instant** (keep **Set date and time automatically** on).
 
 ## Usage
 
@@ -84,11 +85,11 @@ The app will:
 
 - log in with the primary CorrLinks account (fallback to second if locked / requested)
 - open compose and select the inmate in **To**
-- set subject from `APP_TIMEZONE` (see below)
+- set subject from America/New_York wall time (see below)
 - paste selected Inmate Exchange TXT parts and **Send** each part
 - track failed recipients / probe failures with per-account **Retry**
 
-### Daily subject (`APP_TIMEZONE`, default America/New_York)
+### Daily subject (always America/New_York)
 
 | Wall time (ET) | Subject example (Tuesday) |
 | --- | --- |

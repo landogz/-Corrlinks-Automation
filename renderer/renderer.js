@@ -356,11 +356,12 @@ let logErrorUnread = 0;
 let activeCorrEmail = '';
 let lastLoginAt = null;
 let historyRowsCache = [];
-/** From APP_TIMEZONE in .env (via config summary). */
-let appTimezone = 'America/New_York';
+/** Always America/New_York — OS timezone does not affect the UI clock or subject. */
+const APP_TIMEZONE = 'America/New_York';
+let appTimezone = APP_TIMEZONE;
 
 function getDisplayTimeZone() {
-  return appTimezone || 'America/New_York';
+  return APP_TIMEZONE;
 }
 
 function stamp() {
@@ -370,7 +371,7 @@ function stamp() {
   });
 }
 
-/** Compact wall clock using APP_TIMEZONE from .env — e.g. "Nov 10, 2026 · 12:25 PM EST". */
+/** Compact wall clock in America/New_York — e.g. "Nov 10, 2026 · 12:25 PM EST". */
 function formatDateTime(date = new Date()) {
   const d = date instanceof Date ? date : new Date(date);
   if (Number.isNaN(d.getTime())) return '—';
@@ -409,9 +410,7 @@ async function refreshDailySubjectHint() {
     const result = window.api.getSubjectToday
       ? await window.api.getSubjectToday()
       : await window.api.getConfigSummary();
-    if (result?.timezone) {
-      appTimezone = String(result.timezone).trim() || appTimezone;
-    }
+    appTimezone = APP_TIMEZONE;
     const next = String(result?.subject || result?.subjectToday || '').trim();
     if (!next) return;
     if (next !== dailySubjectHint) {
@@ -850,10 +849,9 @@ function selectedInmate() {
 }
 
 function setConfigSummary(summary = {}) {
-  if (summary?.timezone) {
-    appTimezone = String(summary.timezone).trim() || appTimezone;
-    tickStatusClock();
-  }
+  // Timezone is fixed to America/New_York; still refresh the clock after config load.
+  appTimezone = APP_TIMEZONE;
+  tickStatusClock();
   if (summary?.subjectToday != null) {
     dailySubjectHint = String(summary.subjectToday || '').trim();
     syncTemplateControls();
@@ -5961,11 +5959,15 @@ function applyHistoryFilters() {
 }
 
 function todayIsoDate() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  // Calendar date in America/New_York (not the Mac's local timezone).
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const get = (type) => parts.find((p) => p.type === type)?.value || '00';
+  return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
 function ensureHistoryGenerateDateDefault() {
