@@ -20,10 +20,10 @@ Built installers are in the `release/` folder after `npm run dist`.
 
 ### 1) Pick the right DMG
 
-| Mac chip | File (current **v0.1.43**; GitHub assets use hyphens) |
+| Mac chip | File (current **v0.1.44**; GitHub assets use hyphens) |
 |----------|------|
-| Apple Silicon (M1/M2/M3/M4) | `Inside-Scores-0.1.43-arm64.dmg` |
-| Intel | `Inside-Scores-0.1.43.dmg` |
+| Apple Silicon (M1/M2/M3/M4) | `Inside-Scores-0.1.44-arm64.dmg` |
+| Intel | `Inside-Scores-0.1.44.dmg` |
 
 Unsure: Apple menu → **About This Mac** → look for “Chip” (Apple) or “Processor” (Intel).
 
@@ -57,13 +57,13 @@ Optional: a `.env` file still works if you prefer. The in-app login overrides it
 
 ### Option A — Installer (recommended)
 
-1. Run `Inside-Scores-Setup-0.1.43.exe`
+1. Run `Inside-Scores-Setup-0.1.44.exe`
 2. Follow the setup wizard (choose install folder if asked)
 3. Finish — shortcut is created on Desktop / Start Menu
 
 ### Option B — Portable
 
-1. Copy `Inside-Scores-0.1.43.exe` (portable) to a folder, e.g. `C:\Tools\InmateExchangeAuto\`
+1. Copy `Inside-Scores-0.1.44.exe` (portable) to a folder, e.g. `C:\Tools\InmateExchangeAuto\`
 2. Run that `.exe` (no install needed)
 
 ### First open / SmartScreen
@@ -81,7 +81,7 @@ Example for portable:
 
 ```text
 C:\Tools\InmateExchangeAuto\.env
-C:\Tools\InmateExchangeAuto\Inside-Scores-0.1.43.exe
+C:\Tools\InmateExchangeAuto\Inside-Scores-0.1.44.exe
 ```
 
 Example for installed app (typical):

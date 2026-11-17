@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.43**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.44**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.43-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.43.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.43.exe` or portable `Inside-Scores-0.1.43.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.44-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.44.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.44.exe` or portable `Inside-Scores-0.1.44.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.43.exe`.
+1. Run `Inside-Scores-Setup-0.1.44.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.43.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.44.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 
@@ -113,6 +113,7 @@ The on-screen subject hint refreshes every minute; compose/send always computes 
 - Only **new** emails or **password changes** open Preparing your workspace for those logins.
 - Relaunch with the same unique logins → **Accounts unchanged · using saved validation**.
 - **Accounts** tab: **Validate new** (subset) or **Refresh all** (full re-probe).
+- Accounts list auto-updates when SportsData adds/removes inmates (poll ~60s + window focus).
 - Top-bar **Refresh** also forces a full live re-probe.
 - Failed probes show tags (**Locked**, **Timeout**, **Error**) with per-row **Retry**.
 

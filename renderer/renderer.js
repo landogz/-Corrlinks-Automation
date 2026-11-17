@@ -2466,6 +2466,8 @@ function applyAccountsLive(list) {
   const next = Array.isArray(list) ? list : [];
   const snapshot = accountsContentSnapshot(next);
   if (snapshot === lastAccountsSnapshot && accounts.length === next.length) {
+    // Still refresh Accounts tab inmate labels if the user is viewing that page.
+    if (activeMainTab === 'accounts') renderAccountsValidationPanel();
     return { changed: false, added: 0, removed: 0 };
   }
 
@@ -2592,7 +2594,7 @@ async function syncCorrlinksAccountsQuiet({ reason = 'poll', force = false } = {
       const uniqueAccounts = collectUniqueCorrlinksAccounts();
       const restored = await tryRestoreVerifiedFromDisk(uniqueAccounts);
       if (restored?.ok) {
-        // Existing probes cover every unique login (e.g. roster-only change).
+        // Existing probes cover every unique login (e.g. email removed, or roster-only change).
       } else if (restored?.missing?.length) {
         log(
           `CorrLinks credentials changed — validating ${restored.missing.length} new/changed account(s)`,
@@ -2609,9 +2611,10 @@ async function syncCorrlinksAccountsQuiet({ reason = 'poll', force = false } = {
         log('CorrLinks credentials changed — re-validating all accounts', 'info');
         await verifyCorrlinksAccountsOnBoot({ force: true });
       }
-    } else {
-      renderAccountsValidationPanel();
     }
+
+    // Always refresh Accounts tab from the latest API roster (add/remove inmates/emails).
+    renderAccountsValidationPanel();
 
     return { ok: true, changed: diff.changed, accounts: result.accounts };
   } catch (error) {
