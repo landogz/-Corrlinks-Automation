@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('api', {
   zoomCorrlinksPanel: (payload) => ipcRenderer.invoke('corrlinks:zoom', payload),
   hasCorrlinksSession: () => ipcRenderer.invoke('corrlinks:hasSession'),
   getConfigSummary: () => ipcRenderer.invoke('config:summary'),
+  getSubjectToday: () => ipcRenderer.invoke('subject:today'),
   saveSportsDataLogin: (payload) => ipcRenderer.invoke('config:saveSportsData', payload),
   verifySportsDataLogin: () => ipcRenderer.invoke('config:verifySportsData'),
   logoutSportsData: () => ipcRenderer.invoke('config:logoutSportsData'),

@@ -238,6 +238,13 @@ function registerIpc() {
     };
   });
 
+  // Live daily subject — UI hint must refresh across the 1:30–5:00am ET dual-day window.
+  ipcMain.handle('subject:today', async () => ({
+    ok: true,
+    subject: buildCorrlinksSubject(),
+    timezone: getAppTimezone(),
+  }));
+
   ipcMain.handle('config:saveSportsData', async (_event, payload = {}) => {
     try {
       const saved = saveSportsDataCredentials({

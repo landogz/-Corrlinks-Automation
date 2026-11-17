@@ -390,6 +390,25 @@ function formatDateTime(date = new Date()) {
   return `${day} · ${time}`;
 }
 
+let lastSubjectRefreshMinute = -1;
+
+async function refreshDailySubjectHint() {
+  if (!window.api?.getSubjectToday && !window.api?.getConfigSummary) return;
+  try {
+    const result = window.api.getSubjectToday
+      ? await window.api.getSubjectToday()
+      : await window.api.getConfigSummary();
+    const next = String(result?.subject || result?.subjectToday || '').trim();
+    if (!next) return;
+    if (next !== dailySubjectHint) {
+      dailySubjectHint = next;
+      syncTemplateControls();
+    }
+  } catch (_) {
+    /* ignore */
+  }
+}
+
 function tickStatusClock() {
   const now = new Date();
   const label = formatDateTime(now);
@@ -398,6 +417,12 @@ function tickStatusClock() {
     statusClock.dateTime = now.toISOString();
     statusClock.textContent = label;
     statusClock.title = `${label} (${tz})`;
+  }
+  // Subject flips at 1:30am / 5:00am ET — refresh once per minute so the hint is not stuck.
+  const minuteKey = Math.floor(now.getTime() / 60_000);
+  if (minuteKey !== lastSubjectRefreshMinute) {
+    lastSubjectRefreshMinute = minuteKey;
+    void refreshDailySubjectHint();
   }
 }
 
