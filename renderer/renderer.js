@@ -3709,8 +3709,13 @@ async function startCorrlinksAccountLogin(group, options = {}) {
   setStatusHint(`Logging in ${maskSensitive(group.email)}…`);
   setCorrPanelBusy('Logging in…');
   setCorrlinksConnected(false, true);
-  // Loop path previously only synced bounds — never opened the native pane.
-  await revealCorrlinksEmbed().catch(() => null);
+  // Preparing-workspace / quiet probes: keep CorrLinks off-screen (sized) so the
+  // login page does not paint over the verifying overlay. Loop/manual login still reveals.
+  if (quietToast || bootVerifyRunning || loopInitializingActive) {
+    await parkCorrlinksEmbedForFill().catch(() => null);
+  } else {
+    await revealCorrlinksEmbed().catch(() => null);
+  }
   log(
     `Account login ${maskSensitive(group.email)}` +
       (group.secondEmail ? ` (fallback ${maskSensitive(group.secondEmail)} if locked)` : '') +
@@ -5789,6 +5794,26 @@ function measureCorrPaneBounds() {
     width: Math.round(width),
     height: Math.round(height),
   };
+}
+
+/**
+ * Size the CorrLinks WebContentsView off-screen for probe/fill.
+ * Syncfusion needs real width/height; Preparing overlay must stay unobstructed.
+ */
+async function parkCorrlinksEmbedForFill() {
+  const park = { x: -14000, y: 0, width: 900, height: 700 };
+  setCorrPlaceholderVisible(true);
+  try {
+    if (window.api?.setCorrBounds) {
+      await window.api.setCorrBounds({ ...park, force: true });
+    }
+    if (window.api?.warmCorrlinksPanel) {
+      await window.api.warmCorrlinksPanel({ bounds: park });
+    }
+  } catch (error) {
+    log(error?.message || String(error), 'warn');
+  }
+  return park;
 }
 
 /**
