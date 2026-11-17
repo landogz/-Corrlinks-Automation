@@ -33,13 +33,24 @@ let corrViewSuppressed = false;
  */
 let loginGeometryLock = false;
 
-/** Keep Syncfusion laid out without painting over the app UI. */
-const CORR_PARK_X = -14000;
-
 function setCorrBoundsHold(on) {
   corrBoundsHold = Boolean(on);
 }
 
+function hostContentWidth() {
+  try {
+    const b = hostWindow?.getContentBounds?.() || hostWindow?.getBounds?.();
+    return Math.max(800, Number(b?.width) || 1200);
+  } catch (_) {
+    return 1200;
+  }
+}
+
+/**
+ * Park the CorrLinks view just to the right of the window (positive coords).
+ * Negative x broke Syncfusion layout (email found, password missing). Keeping a
+ * real width/height off the visible window still hides the login under Preparing.
+ */
 function parkCorrBounds(sizeSource = null) {
   const src =
     sizeSource && Number(sizeSource.width) >= 8 && Number(sizeSource.height) >= 8
@@ -48,23 +59,31 @@ function parkCorrBounds(sizeSource = null) {
         ? corrBounds
         : windowFallbackCorrBounds();
   return {
-    x: CORR_PARK_X,
+    x: hostContentWidth() + 120,
     y: 0,
-    width: Math.max(320, Math.round(Number(src.width) || 900)),
-    height: Math.max(240, Math.round(Number(src.height) || 700)),
+    width: Math.max(720, Math.round(Number(src.width) || 960)),
+    height: Math.max(640, Math.round(Number(src.height) || 800)),
   };
 }
 
 function isParkedCorrBounds(b) {
-  return Boolean(b && Number(b.x) <= -1000 && Number(b.width) >= 8 && Number(b.height) >= 8);
+  if (!b || Number(b.width) < 8 || Number(b.height) < 8) return false;
+  const x = Number(b.x) || 0;
+  if (x <= -80) return true;
+  return x >= hostContentWidth() - 4;
 }
 
 function setLoginGeometryLock(on) {
   loginGeometryLock = Boolean(on);
   if (loginGeometryLock) {
     corrViewSuppressed = false;
-    // Probe/fill: keep size off-screen unless the pane is already intentionally on-screen (Send).
-    if (corrBounds.width >= 8 && corrBounds.height >= 8 && corrBounds.x >= 0) {
+    // Keep Send reveals in-window. Everything else (0×0 / parked / unknown) stays parked
+    // so Preparing overlay is not covered and Syncfusion still lays out both fields.
+    if (
+      corrBounds.width >= 8 &&
+      corrBounds.height >= 8 &&
+      !isParkedCorrBounds(corrBounds)
+    ) {
       applyCorrViewBounds(corrBounds);
     } else {
       ensureVisibleCorrBounds(parkCorrBounds(corrBounds));
@@ -609,18 +628,30 @@ async function inspectPage(win) {
         }
         return null;
       }
+      function presentMatch(selectors) {
+        for (const sel of selectors) {
+          try {
+            const el = document.querySelector(sel);
+            if (el && !el.disabled && el.type !== 'hidden') return el;
+          } catch (_) {}
+        }
+        return null;
+      }
       const text = (document.body && document.body.innerText) ? document.body.innerText : '';
       const lower = text.toLowerCase();
-      const emailEl = visibleMatch([
+      const emailSelectors = [
         'input[type="email"]',
         '#textbox_0',
         'input[name="email" i]',
         'input[name="username" i]',
-      ]);
+      ];
+      const passwordSelectors = ['input[type="password"]', '#textbox_1', 'input[name="password" i]'];
+      const emailEl = visibleMatch(emailSelectors) || presentMatch(emailSelectors);
       const passwordEl =
-        visibleMatch(['input[type="password"]', '#textbox_1', 'input[name="password" i]']) ||
+        visibleMatch(passwordSelectors) ||
+        presentMatch(passwordSelectors) ||
         [...document.querySelectorAll('input')].find((el) => {
-          if (!isVisible(el) || el.type === 'hidden' || el.type === 'checkbox') return false;
+          if (!el || el.disabled || el.type === 'hidden' || el.type === 'checkbox') return false;
           const labelish = [
             el.getAttribute('aria-label') || '',
             el.placeholder || '',
@@ -898,6 +929,21 @@ function loginDomHelpersScript() {
       }
       return null;
     }
+    // Off-screen / parked probes: Syncfusion may leave opacity 0 or 0×0 until paint.
+    // Still accept real login inputs so password is not reported missing.
+    function firstPresent(selectors) {
+      for (const sel of selectors) {
+        try {
+          const nodes = document.querySelectorAll(sel);
+          for (const el of nodes) {
+            if (!el || el.disabled) continue;
+            if (el.type === 'hidden' || el.type === 'checkbox' || el.type === 'radio') continue;
+            return el;
+          }
+        } catch (_) {}
+      }
+      return null;
+    }
     function isTextBoxInstance(inst, el) {
       if (!inst) return false;
       let name = '';
@@ -968,31 +1014,64 @@ function loginDomHelpersScript() {
       return v == null ? '' : String(v);
     }
     function findEmailInput() {
-      return firstVisible(${JSON.stringify(CORRLINKS.emailSelectors)});
+      return (
+        firstVisible(${JSON.stringify(CORRLINKS.emailSelectors)}) ||
+        firstPresent(${JSON.stringify(CORRLINKS.emailSelectors)})
+      );
     }
     function findPasswordInput() {
       const emailEl = findEmailInput();
       const rejectEmail = (el) => el && emailEl && el === emailEl;
-      let el = firstVisible(${JSON.stringify(CORRLINKS.passwordSelectors)});
+      let el =
+        firstVisible(${JSON.stringify(CORRLINKS.passwordSelectors)}) ||
+        firstPresent(${JSON.stringify(CORRLINKS.passwordSelectors)});
       if (el && !rejectEmail(el)) return el;
       // Show-password toggle can turn type=password into type=text.
       el =
         firstVisible(['#textbox_1', 'input[name="textbox_1"]']) ||
+        firstPresent(['#textbox_1', 'input[name="textbox_1"]', 'input[type="password"]']) ||
         [...document.querySelectorAll('input')].find((input) => {
-          if (!isVisible(input) || input.type === 'hidden' || input.type === 'checkbox') return false;
+          if (!input || input.disabled || input.type === 'hidden' || input.type === 'checkbox') {
+            return false;
+          }
           if (rejectEmail(input)) return false;
           const labelish = [
             input.getAttribute('aria-label') || '',
             input.placeholder || '',
             input.name || '',
             input.id || '',
+            input.getAttribute('autocomplete') || '',
           ]
             .join(' ')
             .toLowerCase();
-          return /password|passwd|textbox_1/.test(labelish);
+          if (/password|passwd|textbox_1|current-password/.test(labelish)) return true;
+          // Floating label: <label>Password</label> near the input.
+          try {
+            const wrap = input.closest('ejs-textbox, .e-float-input, .e-input-group, .e-control-wrapper');
+            const labelText = String(wrap?.textContent || '').toLowerCase();
+            if (/password/.test(labelText) && !/email/.test(labelText)) return true;
+          } catch (_) {}
+          return false;
         }) ||
         null;
-      return rejectEmail(el) ? null : el;
+      if (el && !rejectEmail(el)) return el;
+      // Last resort: second text-like input on the login form (email is usually first).
+      try {
+        const inputs = [...document.querySelectorAll('input')].filter((input) => {
+          if (!input || input.disabled || input.type === 'hidden' || input.type === 'checkbox') {
+            return false;
+          }
+          if (rejectEmail(input)) return false;
+          return !input.type || /^(text|email|password|tel|search)$/i.test(input.type);
+        });
+        if (emailEl && inputs.length >= 2) {
+          const idx = inputs.indexOf(emailEl);
+          const candidate = idx >= 0 ? inputs[idx + 1] : inputs[1];
+          if (candidate && !rejectEmail(candidate)) return candidate;
+        }
+        if (!emailEl && inputs.length >= 2) return inputs[1];
+      } catch (_) {}
+      return null;
     }
     function activeIs(el) {
       try {

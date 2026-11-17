@@ -5801,7 +5801,14 @@ function measureCorrPaneBounds() {
  * Syncfusion needs real width/height; Preparing overlay must stay unobstructed.
  */
 async function parkCorrlinksEmbedForFill() {
-  const park = { x: -14000, y: 0, width: 900, height: 700 };
+  // Park just past the right edge (positive coords). Negative x made Syncfusion
+  // skip laying out the password field → "Could not find password field".
+  const park = {
+    x: Math.round((window.innerWidth || 1200) + 120),
+    y: 0,
+    width: 960,
+    height: 800,
+  };
   setCorrPlaceholderVisible(true);
   try {
     if (window.api?.setCorrBounds) {

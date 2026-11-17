@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.45**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.46**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.45-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.45.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.45.exe` or portable `Inside-Scores-0.1.45.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.46-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.46.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.46.exe` or portable `Inside-Scores-0.1.46.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.45.exe`.
+1. Run `Inside-Scores-Setup-0.1.46.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.45.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.46.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 
@@ -78,7 +78,7 @@ Inside Scores does **not** use the microphone. Refresh/CorrLinks loads used to t
 
 ### CorrLinks “Syncfusion still empty” on validate
 
-Preparing your workspace used to hide the CorrLinks pane at 0×0 during probes, which made Angular/Syncfusion reject filled email/password. Login/probe fill now keeps a real pane size (parked off-screen under the overlay) and writes email and password into separate fields so Syncfusion can bind both.
+Preparing your workspace used to hide the CorrLinks pane at 0×0 during probes, which made Angular/Syncfusion reject filled email/password. Probes now park a full-size pane just past the window edge (hidden under the overlay, still laid out), find email and password separately (including when Syncfusion has not fully “shown” the password box yet), and bind each field on its own.
 
 ## Usage
 
