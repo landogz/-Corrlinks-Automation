@@ -23,6 +23,7 @@ async function stubApi(page) {
         email: 'operator@example.com',
         password: 'x',
         hasPassword: true,
+        remembered: true,
         timezone: 'America/New_York',
         subjectToday: 'mon',
         credentialsPath: '/tmp/creds.json',
@@ -42,6 +43,7 @@ async function stubApi(page) {
       verifySportsDataLogin: async () => ({ ok: true, email: 'operator@example.com' }),
       getUpdateStatus: async () => ({ state: 'dev', currentVersion: '0.1.4', message: 'dev' }),
       onUpdateStatus: () => () => {},
+      checkForUpdates: async () => ({ ok: false, state: 'dev', currentVersion: '0.1.4' }),
     };
   });
 }
@@ -55,12 +57,16 @@ async function seedLongLogs(page) {
       const line = document.createElement('div');
       line.className = `log-line ${i % 4 === 0 ? 'error' : i % 3 === 0 ? 'warn' : i % 2 === 0 ? 'success' : 'info'}`;
       line.dataset.level = line.className.split(' ')[1];
+      line.dataset.rawMessage = `${i + 1}. ${long}`;
       const time = document.createElement('span');
       time.className = 'log-time';
       time.textContent = '3:59:01 PM';
       const msg = document.createElement('div');
       msg.className = 'log-msg';
-      msg.textContent = `${i + 1}. ${long}`;
+      const text = document.createElement('span');
+      text.className = 'log-msg-text';
+      text.textContent = `${i + 1}. ${long}`;
+      msg.appendChild(text);
       line.append(time, msg);
       logEl.appendChild(line);
     }
@@ -136,6 +142,35 @@ for (const vp of VIEWPORTS) {
         [...document.querySelectorAll('.log-line')].filter((el) => !el.hidden).length
       );
       expect(visibleErrors).toBeGreaterThan(0);
+
+      await page.locator('#logSearch').fill('part 1');
+      const searched = await page.evaluate(() =>
+        [...document.querySelectorAll('.log-line')].filter((el) => !el.hidden).length
+      );
+      expect(searched).toBeGreaterThan(0);
+
+      await page.locator('#logFilter').selectOption('all');
+      await page.locator('#logSearch').fill('');
+
+      // Controls must be hittable (not covered by another layer).
+      for (const sel of [
+        '#logFilter',
+        '#logSearch',
+        '#btnLogAutoScroll',
+        '#btnLogMask',
+        '#btnCopyLog',
+        '#btnClearLog',
+      ]) {
+        await expect(page.locator(sel)).toBeEnabled();
+        const box = await page.locator(sel).boundingBox();
+        expect(box, sel).toBeTruthy();
+        expect(box.height, sel).toBeGreaterThanOrEqual(14);
+      }
+
+      await page.locator('#btnLogMask').click();
+      await expect(page.locator('#btnLogMask')).toHaveAttribute('aria-pressed', 'true');
+      await page.locator('#btnLogAutoScroll').click();
+      await expect(page.locator('#btnLogAutoScroll')).toHaveAttribute('aria-pressed', 'false');
 
       await page.locator('#btnCloseLog').click();
       await expect(page.locator('#logDrawer')).toBeHidden();

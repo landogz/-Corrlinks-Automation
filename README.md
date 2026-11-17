@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.50**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.51**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.50-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.50.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.50.exe` or portable `Inside-Scores-0.1.50.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.51-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.51.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.51.exe` or portable `Inside-Scores-0.1.51.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.50.exe`.
+1. Run `Inside-Scores-Setup-0.1.51.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.50.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.51.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 
@@ -116,6 +116,10 @@ The on-screen subject hint refreshes every minute; compose/send always computes 
 - Accounts list auto-updates when SportsData adds/removes inmates (poll ~60s + window focus).
 - Top-bar **Refresh** also forces a full live re-probe.
 - Failed probes show tags (**Locked**, **Timeout**, **Error**) with per-row **Retry**.
+
+### Status log
+
+Open from the status bar (or ⌘J). Filter by level, search, **Copy**, and **Clear** (⌘K). **Auto-scroll** and **Mask emails** are toggle buttons (highlight when on). Opening the log hides the native CorrLinks pane so those controls stay clickable.
 
 ### Start loop
 

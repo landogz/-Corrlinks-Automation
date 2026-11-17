@@ -180,8 +180,13 @@ const statusHint = document.getElementById('statusHint');
 const statusClock = document.getElementById('statusClock');
 const toastHost = document.getElementById('toastHost');
 const logFilter = document.getElementById('logFilter');
-const logAutoScroll = document.getElementById('logAutoScroll');
-const logMask = document.getElementById('logMask');
+const btnLogAutoScroll = document.getElementById('btnLogAutoScroll');
+const btnLogMask = document.getElementById('btnLogMask');
+/** @deprecated kept as aliases for any leftover refs — prefer logAutoScrollOn / logMaskOn */
+const logAutoScroll = btnLogAutoScroll;
+const logMask = btnLogMask;
+let logAutoScrollOn = true;
+let logMaskOn = false;
 const btnCopyLog = document.getElementById('btnCopyLog');
 const btnClearLog = document.getElementById('btnClearLog');
 const btnOpenLog = document.getElementById('btnOpenLog');
@@ -610,11 +615,36 @@ function truncateMiddle(value, max = 36) {
 }
 
 function maskSensitive(text) {
-  if (!logMask.checked) return String(text || '');
+  if (!logMaskOn) return String(text || '');
   return String(text || '').replace(
     /([a-zA-Z0-9._%+-]{1,3})[a-zA-Z0-9._%+-]*@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g,
     '$1***@$2'
   );
+}
+
+function syncLogToggleButtons() {
+  if (btnLogAutoScroll) {
+    btnLogAutoScroll.classList.toggle('is-on', logAutoScrollOn);
+    btnLogAutoScroll.setAttribute('aria-pressed', logAutoScrollOn ? 'true' : 'false');
+  }
+  if (btnLogMask) {
+    btnLogMask.classList.toggle('is-on', logMaskOn);
+    btnLogMask.setAttribute('aria-pressed', logMaskOn ? 'true' : 'false');
+  }
+}
+
+/** Re-apply Mask emails to every existing log line (toggle used to only affect new lines). */
+function refreshLogMasking() {
+  if (!logEl) return;
+  [...logEl.querySelectorAll('.log-line')].forEach((line) => {
+    const raw = line.dataset.rawMessage;
+    const textEl = line.querySelector('.log-msg-text');
+    if (textEl && raw != null) textEl.textContent = maskSensitive(raw);
+    const pre = line.querySelector('.log-details pre');
+    const rawDetails = line.dataset.rawDetails;
+    if (pre && rawDetails != null) pre.textContent = maskSensitive(rawDetails);
+  });
+  applyLogFilter();
 }
 
 function summarizeDetails(details) {
@@ -653,9 +683,11 @@ function normalizeLogLevel(level) {
 
 function log(message, level = 'info', details = null) {
   const normalized = normalizeLogLevel(level);
+  const rawMessage = String(message ?? '');
   const line = document.createElement('div');
   line.className = `log-line ${normalized}`;
   line.dataset.level = normalized;
+  line.dataset.rawMessage = rawMessage;
 
   const time = document.createElement('span');
   time.className = 'log-time';
@@ -663,17 +695,24 @@ function log(message, level = 'info', details = null) {
 
   const msg = document.createElement('div');
   msg.className = 'log-msg';
-  msg.textContent = maskSensitive(message);
+  const textEl = document.createElement('span');
+  textEl.className = 'log-msg-text';
+  textEl.textContent = maskSensitive(rawMessage);
+  msg.appendChild(textEl);
 
   if (details != null) {
     const summary = summarizeDetails(details);
     const detailsEl = document.createElement('details');
     detailsEl.className = 'log-details';
     const summaryEl = document.createElement('summary');
-    summaryEl.textContent = summary ? `Details · ${truncateMiddle(String(summary), 48)}` : 'Details';
+    summaryEl.textContent = summary
+      ? `Details · ${truncateMiddle(maskSensitive(String(summary)), 48)}`
+      : 'Details';
     const pre = document.createElement('pre');
-    pre.textContent =
+    const rawDetails =
       typeof details === 'string' ? details : JSON.stringify(details, null, 2);
+    line.dataset.rawDetails = rawDetails;
+    pre.textContent = maskSensitive(rawDetails);
     detailsEl.append(summaryEl, pre);
     msg.appendChild(detailsEl);
   }
@@ -685,18 +724,46 @@ function log(message, level = 'info', details = null) {
     refreshLogBadge();
   }
   applyLogFilter();
-  if (logAutoScroll.checked) logEl.scrollTop = logEl.scrollHeight;
+  if (logAutoScrollOn) logEl.scrollTop = logEl.scrollHeight;
 }
 
 function applyLogFilter() {
+  if (!logEl) return;
   const mode = logFilter?.value || 'all';
   const q = String(logSearch?.value || '').trim().toLowerCase();
   [...logEl.children].forEach((line) => {
     const levelOk = mode === 'all' || line.dataset.level === mode;
-    const text = (line.querySelector('.log-msg')?.innerText || '').toLowerCase();
-    const searchOk = !q || text.includes(q);
+    const hay = [
+      line.dataset.rawMessage || '',
+      line.querySelector('.log-time')?.textContent || '',
+      line.querySelector('.log-msg')?.innerText || '',
+    ]
+      .join(' ')
+      .toLowerCase();
+    const searchOk = !q || hay.includes(q);
     line.hidden = !(levelOk && searchOk);
   });
+}
+
+function clearStatusLog() {
+  if (logEl) logEl.innerHTML = '';
+  logErrorUnread = 0;
+  refreshLogBadge();
+  toast('Log cleared', 'info');
+}
+
+function visibleLogText() {
+  return [...(logEl?.querySelectorAll('.log-line') || [])]
+    .filter((line) => !line.hidden)
+    .map((line) => {
+      const time = line.querySelector('.log-time')?.textContent || '';
+      const text =
+        line.querySelector('.log-msg-text')?.textContent ||
+        line.querySelector('.log-msg')?.innerText ||
+        '';
+      return `${time} ${text}`.trim();
+    })
+    .join('\n');
 }
 
 /** Map Electron/infra noise to short operator-facing copy (tech detail stays in log). */
@@ -5655,7 +5722,7 @@ function setLogDrawerOpen(open) {
   if (open) {
     logErrorUnread = 0;
     refreshLogBadge();
-    if (logAutoScroll?.checked) {
+    if (logAutoScrollOn) {
       requestAnimationFrame(() => {
         logEl.scrollTop = logEl.scrollHeight;
       });
@@ -5670,17 +5737,28 @@ function toggleLogDrawer() {
   setLogDrawerOpen(!isLogDrawerOpen());
 }
 
-logFilter.addEventListener('change', applyLogFilter);
-logMask.addEventListener('change', () => toast(logMask.checked ? 'Email masking on' : 'Email masking off', 'info'));
-btnClearLog.addEventListener('click', () => {
-  logEl.innerHTML = '';
-  toast('Log cleared', 'info');
+logFilter?.addEventListener('change', applyLogFilter);
+
+syncLogToggleButtons();
+btnLogAutoScroll?.addEventListener('click', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  logAutoScrollOn = !logAutoScrollOn;
+  syncLogToggleButtons();
+  if (logAutoScrollOn && logEl) logEl.scrollTop = logEl.scrollHeight;
+  toast(logAutoScrollOn ? 'Auto-scroll on' : 'Auto-scroll off', 'info');
 });
-btnCopyLog.addEventListener('click', async () => {
-  const text = [...logEl.querySelectorAll('.log-line')]
-    .filter((line) => !line.hidden)
-    .map((line) => `${line.querySelector('.log-time')?.textContent || ''} ${line.querySelector('.log-msg')?.innerText || ''}`)
-    .join('\n');
+btnLogMask?.addEventListener('click', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  logMaskOn = !logMaskOn;
+  syncLogToggleButtons();
+  refreshLogMasking();
+  toast(logMaskOn ? 'Email masking on' : 'Email masking off', 'info');
+});
+btnClearLog?.addEventListener('click', () => clearStatusLog());
+btnCopyLog?.addEventListener('click', async () => {
+  const text = visibleLogText();
   await copyText(text || '(empty log)');
 });
 
@@ -5727,9 +5805,7 @@ document.addEventListener('keydown', (event) => {
   }
   if (meta && event.key.toLowerCase() === 'k') {
     event.preventDefault();
-    logEl.innerHTML = '';
-    logErrorUnread = 0;
-    refreshLogBadge();
+    clearStatusLog();
     if (!isLogDrawerOpen()) setLogDrawerOpen(true);
   }
 });
@@ -5740,13 +5816,14 @@ function isCorrEmbedBlocked() {
   if (document.body.classList.contains('is-login')) return true;
   if (loginScreen && !loginScreen.hidden) return true;
   if (mainShell?.hidden) return true;
+  // Status log is a right-side HTML drawer — native CorrLinks must hide or every
+  // filter/search/mask/copy/clear click lands on the WebContentsView instead.
+  if (isLogDrawerOpen()) return true;
   // Preparing workspace uses its own right-side CorrLinks slot (not blocked).
   if (loopInitializingActive || bootVerifyRunning) return false;
   // Loop countdown overlay must not blank a live loop session.
   if (loopCountdownActive && !(loopRunning || corrEmbedRevealed || corrlinksLoginBusy)) return true;
   if (activeMainTab !== 'automate') return true;
-  // Do NOT block on log-open — status log was zeroing the CorrLinks pane mid-send.
-  // Drawer overlap is handled by clipping in measureCorrPaneBounds.
   if (document.body.classList.contains('account-menu-open')) return true;
   if (accountDropdown && !accountDropdown.hidden) return true;
   const dialogs = [updatesDialog, aboutDialog, shortcutsDialog, loopDoneDialog];
@@ -5767,16 +5844,25 @@ function prepareCorrFallbackBounds() {
 
 function hideCorrEmbedNow({ force = false } = {}) {
   if (!window.api?.setCorrBounds) return;
+  // Force hide (Status log / modal) must win — otherwise the native view steals clicks.
+  if (force) {
+    window.api.setCorrBounds({ x: 0, y: 0, width: 0, height: 0, force: true });
+    return;
+  }
   // During active send/login/probe fill, never collapse to 0×0 — Syncfusion stays empty.
   if (corrEmbedRevealed || corrlinksLoginBusy) return;
   // Preparing workspace: keep the right-hand slot sized (avoid 0×0 flash between probes).
   // If the verify pane has not laid out yet, use a right-half fallback — never 0×0.
-  if (!force && (loopInitializingActive || bootVerifyRunning || document.body.classList.contains('is-preparing-workspace'))) {
+  if (
+    loopInitializingActive ||
+    bootVerifyRunning ||
+    document.body.classList.contains('is-preparing-workspace')
+  ) {
     const bounds = measureVerifyCorrPaneBounds() || prepareCorrFallbackBounds();
     window.api.setCorrBounds({ ...bounds, force: true });
     return;
   }
-  window.api.setCorrBounds({ x: 0, y: 0, width: 0, height: 0, force: Boolean(force) });
+  window.api.setCorrBounds({ x: 0, y: 0, width: 0, height: 0, force: false });
 }
 
 /** Bounds for the Preparing-workspace right-hand CorrLinks preview slot. */
@@ -5972,6 +6058,12 @@ function resetCorrEmbedReveal() {
 function syncCorrPaneBounds() {
   if (!window.api?.setCorrBounds) return;
 
+  // Status log / dialogs always win — never let prepare bounds cover the drawer.
+  if (isCorrEmbedBlocked()) {
+    hideCorrEmbedNow({ force: true });
+    return;
+  }
+
   if (
     loopInitializingActive ||
     bootVerifyRunning ||
@@ -5979,12 +6071,6 @@ function syncCorrPaneBounds() {
   ) {
     const verifyBounds = measureVerifyCorrPaneBounds() || prepareCorrFallbackBounds();
     window.api.setCorrBounds({ ...verifyBounds, force: true });
-    return;
-  }
-
-  if (isCorrEmbedBlocked()) {
-    // Dialogs/menus must always win over the native view (otherwise OK is unclickable).
-    hideCorrEmbedNow({ force: true });
     return;
   }
 

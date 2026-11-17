@@ -748,16 +748,24 @@
           </select>
         </label>
         <input id="logSearch" type="search" placeholder="Search log…" aria-label="Search log" />
-        <label class="check tight" for="logAutoScroll">
-          <input id="logAutoScroll" type="checkbox" checked />
-          <span class="check-ui" aria-hidden="true"></span>
-          <span class="check-text">Auto-scroll</span>
-        </label>
-        <label class="check tight" for="logMask">
-          <input id="logMask" type="checkbox" />
-          <span class="check-ui" aria-hidden="true"></span>
-          <span class="check-text">Mask emails</span>
-        </label>
+        <button
+          id="btnLogAutoScroll"
+          type="button"
+          class="ghost tiny log-toggle is-on"
+          aria-pressed="true"
+          title="Scroll to newest lines automatically"
+        >
+          Auto-scroll
+        </button>
+        <button
+          id="btnLogMask"
+          type="button"
+          class="ghost tiny log-toggle"
+          aria-pressed="false"
+          title="Hide full email addresses in the log"
+        >
+          Mask emails
+        </button>
         <button id="btnCopyLog" type="button" class="ghost tiny">Copy</button>
         <button id="btnClearLog" type="button" class="ghost tiny" title="Clear log (⌘K)">Clear</button>
       </div>

@@ -1426,16 +1426,19 @@ label:first-of-type {
 
 label.check {
   position: relative;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
   margin: 12px 0 0;
+  padding: 6px 4px;
+  min-height: 32px;
   font-size: 0.88rem;
   color: var(--muted);
   cursor: pointer;
   font-weight: 400;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 label.check.tight {
@@ -1443,19 +1446,19 @@ label.check.tight {
   font-size: 12px;
 }
 
-/* Real input is clickable but visually replaced by .check-ui (Electron
-   often fails to paint ::before/::after on appearance:none checkboxes). */
+/* Stretch the real checkbox over the whole label — a tiny 18×18 hit box
+   made Auto-scroll / Mask emails feel broken (only the icon toggled). */
 label.check input[type='checkbox'] {
   position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 18px;
-  height: 18px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   margin: 0;
-  opacity: 0.001;
+  opacity: 0;
   cursor: pointer;
-  z-index: 1;
+  z-index: 2;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 label.check .check-ui {
@@ -1471,6 +1474,8 @@ label.check .check-ui {
   display: inline-grid;
   place-content: center;
   pointer-events: none;
+  position: relative;
+  z-index: 0;
   transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
 
@@ -1503,6 +1508,34 @@ label.check input[type='checkbox']:focus-visible + .check-ui {
 
 label.check .check-text {
   line-height: 1.35;
+  pointer-events: none;
+  position: relative;
+  z-index: 0;
+}
+
+/* Status log toggles — real buttons (custom checkboxes were unclickable in Electron). */
+.log-drawer-controls {
+  position: relative;
+  z-index: 2;
+}
+.log-drawer-controls .log-toggle {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: var(--radius-control, 8px);
+  background: color-mix(in srgb, var(--bg-surface-2, #1e293b) 88%, transparent);
+  color: var(--text-secondary, var(--muted));
+  cursor: pointer;
+  pointer-events: auto;
+}
+.log-drawer-controls .log-toggle.is-on {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle, transparent));
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-surface-2, #1e293b));
+  color: var(--text-primary, #fff);
+}
+.log-drawer-controls .log-toggle:hover {
+  border-color: var(--accent);
 }
 
 html[data-theme='light'] label.check .check-ui {

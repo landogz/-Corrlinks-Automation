@@ -163,8 +163,9 @@ function setCorrBounds(bounds = {}, { force = false } = {}) {
     height: Math.max(0, Math.round(Number(bounds.height) || 0)),
   };
   // Mid-login/probe fill: refuse collapse — park sized off-screen instead of showing login.
-  // (Renderer hide/overlay sends 0×0; showing windowFallback on top of Preparing was wrong.)
-  if (loginGeometryLock && next.width < 8) {
+  // Exception: force=true means an HTML overlay (Status log / modal) needs real 0×0 so
+  // the native WebContentsView cannot steal clicks from the drawer controls.
+  if (loginGeometryLock && next.width < 8 && !force) {
     const parked = parkCorrBounds(isParkedCorrBounds(corrBounds) ? corrBounds : null);
     corrBounds = parked;
     applyCorrViewBounds(corrBounds);
