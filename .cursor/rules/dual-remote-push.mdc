@@ -1,0 +1,31 @@
+---
+description: Push to both GitHub and GitLab whenever the user asks to push
+alwaysApply: true
+---
+
+# Dual remote push
+
+When the user asks to **push** (including as part of "build and push", "commit and push", or similar):
+
+1. Push `main` (or the current branch) to **GitHub** via `origin`:
+   - `https://github.com/landogz/-Corrlinks-Automation.git`
+2. Push the same branch to **GitLab** via `gitlab`:
+   - `https://gitlab.com/sportsdata1/corrlinks-automation.git`
+
+Do **not** repoint `origin` to GitLab. Keep:
+
+- `origin` → GitHub
+- `gitlab` → GitLab
+
+Keep remotes:
+
+```text
+origin  → GitHub  (landogz/-Corrlinks-Automation)
+gitlab  → GitLab  (sportsdata1/corrlinks-automation)
+```
+
+Never run the GitLab “new repo” snippet that does `git remote add origin …gitlab…` here — that would overwrite the GitHub remote.
+
+If GitLab `main` is protected and rejects `-f`, push to a temp branch and ask the user to unprotect `main` (or allow force push) once, then `git push -uf gitlab refs/heads/main:main`.
+
+Report success/failure for **both** remotes.
