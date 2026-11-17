@@ -373,21 +373,32 @@ function stamp() {
 /** Compact wall clock using APP_TIMEZONE from .env — e.g. "Nov 10, 2026 · 12:25 PM EST". */
 function formatDateTime(date = new Date()) {
   const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return '—';
   const timeZone = getDisplayTimeZone();
-  const day = d.toLocaleDateString('en-US', {
-    timeZone,
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-  const time = d.toLocaleTimeString('en-US', {
-    timeZone,
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-    timeZoneName: 'short',
-  });
-  return `${day} · ${time}`;
+  // Single formatter (not separate date+time calls) — more reliable after macOS TZ changes.
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZoneName: 'short',
+    }).formatToParts(d);
+    const get = (type) => parts.find((p) => p.type === type)?.value || '';
+    const month = get('month');
+    const day = get('day');
+    const year = get('year');
+    const hour = get('hour');
+    const minute = get('minute');
+    const dayPeriod = get('dayPeriod');
+    const tzName = get('timeZoneName') || 'ET';
+    return `${month} ${day}, ${year} · ${hour}:${minute} ${dayPeriod} ${tzName}`;
+  } catch (_) {
+    return d.toLocaleString('en-US', { timeZone, hour12: true });
+  }
 }
 
 let lastSubjectRefreshMinute = -1;
@@ -398,6 +409,9 @@ async function refreshDailySubjectHint() {
     const result = window.api.getSubjectToday
       ? await window.api.getSubjectToday()
       : await window.api.getConfigSummary();
+    if (result?.timezone) {
+      appTimezone = String(result.timezone).trim() || appTimezone;
+    }
     const next = String(result?.subject || result?.subjectToday || '').trim();
     if (!next) return;
     if (next !== dailySubjectHint) {
@@ -430,6 +444,20 @@ function startStatusClock() {
   tickStatusClock();
   if (startStatusClock._timer) clearInterval(startStatusClock._timer);
   startStatusClock._timer = setInterval(tickStatusClock, 1000);
+  // macOS TZ / clock changes while the app is open — force a fresh paint on focus.
+  if (!startStatusClock._focusBound) {
+    startStatusClock._focusBound = true;
+    window.addEventListener('focus', () => {
+      lastSubjectRefreshMinute = -1;
+      tickStatusClock();
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        lastSubjectRefreshMinute = -1;
+        tickStatusClock();
+      }
+    });
+  }
 }
 
 function platformShortcutLabel(key) {
