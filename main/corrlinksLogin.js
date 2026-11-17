@@ -475,6 +475,11 @@ function getOrCreateWindow() {
     },
   });
   try {
+    // Inside Scores never uses mic/camera — harden this session before any CorrLinks load.
+    const { hardenSession } = require('./denyMediaPermissions');
+    hardenSession(corrView.webContents.session);
+  } catch (_) {}
+  try {
     if (typeof corrView.setBackgroundColor === 'function') {
       corrView.setBackgroundColor('#ffffff');
     }

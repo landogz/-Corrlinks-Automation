@@ -43,6 +43,7 @@ const {
 const { applyContinuationPrefix } = require('./exchangeFiles');
 const { setupAutoUpdater, registerUpdateIpc } = require('./updater');
 const { loadUiPreferences, saveUiPreferences, normalizeTheme } = require('./uiPreferences');
+const { installDenyMediaPermissions } = require('./denyMediaPermissions');
 
 let controlWindow = null;
 let uiPreferences = { theme: 'auto' };
@@ -731,6 +732,8 @@ function registerIpc() {
 }
 
 app.whenReady().then(() => {
+  // CorrLinks / Chromium may request mic on refresh — deny so macOS never prompts.
+  installDenyMediaPermissions();
   reloadSavedCredentials();
   uiPreferences = loadUiPreferences();
   applyThemePreference(uiPreferences.theme, { persist: false });
