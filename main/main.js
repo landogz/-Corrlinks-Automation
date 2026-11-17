@@ -46,7 +46,13 @@ const {
 const { applyContinuationPrefix } = require('./exchangeFiles');
 const { setupAutoUpdater, registerUpdateIpc } = require('./updater');
 const { loadUiPreferences, saveUiPreferences, normalizeTheme } = require('./uiPreferences');
-const { installDenyMediaPermissions } = require('./denyMediaPermissions');
+const {
+  installDenyMediaPermissions,
+  applyMediaCommandLineSwitches,
+} = require('./denyMediaPermissions');
+
+// Must run before ready — blocks Chromium from showing the macOS mic TCC dialog.
+applyMediaCommandLineSwitches();
 
 let controlWindow = null;
 let uiPreferences = { theme: 'auto' };

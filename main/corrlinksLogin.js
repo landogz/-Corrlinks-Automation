@@ -548,9 +548,10 @@ function getOrCreateWindow() {
     },
   });
   try {
-    // Inside Scores never uses mic/camera — harden this session before any CorrLinks load.
-    const { hardenSession } = require('./denyMediaPermissions');
+    // Inside Scores never uses mic/camera — harden + stub before any CorrLinks load.
+    const { hardenSession, stubMediaDevices } = require('./denyMediaPermissions');
     hardenSession(corrView.webContents.session);
+    stubMediaDevices(corrView.webContents);
   } catch (_) {}
   try {
     if (typeof corrView.setBackgroundColor === 'function') {
@@ -815,6 +816,71 @@ async function withDebugger(win, fn, { timeoutMs = 6000 } = {}) {
 /** Keep CDP attached across a multi-step fill — attach/detach churn fails often on Intel macOS. */
 async function withDebuggerSession(win, fn) {
   return withDebugger(win, fn, { timeoutMs: 10000 });
+}
+
+/** Intel macOS (x64): CDP Input.insertText often never types into Syncfusion — prefer DOM/EJ2. */
+const IS_INTEL_MAC = process.platform === 'darwin' && process.arch === 'x64';
+
+/** Click/focus email then password so Syncfusion materializes both TextBoxes (Intel needs this). */
+async function awakenLoginFields(win) {
+  const wc = getLiveWebContents(win);
+  if (!wc) return null;
+  return wc
+    .executeJavaScript(
+      `(() => {
+        ${loginDomHelpersScript()}
+        const email = findEmailInput();
+        if (email) {
+          try {
+            const inst = resolveEj2(email);
+            if (inst && typeof inst.focusIn === 'function') inst.focusIn();
+          } catch (_) {}
+          try { email.removeAttribute('readonly'); email.readOnly = false; } catch (_) {}
+          try { email.click(); } catch (_) {}
+          try { email.focus({ preventScroll: true }); } catch (_) { try { email.focus(); } catch (_) {} }
+        }
+        const pass = findPasswordInput();
+        if (pass && pass !== email) {
+          try {
+            const inst = resolveEj2(pass);
+            if (inst && typeof inst.focusIn === 'function') inst.focusIn();
+          } catch (_) {}
+          try { pass.removeAttribute('readonly'); pass.readOnly = false; } catch (_) {}
+          try { pass.click(); } catch (_) {}
+          try { pass.focus({ preventScroll: true }); } catch (_) { try { pass.focus(); } catch (_) {} }
+        }
+        return snapshotFields();
+      })()`,
+      true
+    )
+    .catch(() => null);
+}
+
+/** Native per-field insert without CDP (Intel-safe fallback). */
+async function typeViaNativeOnly(win, which, text) {
+  const focusInfo = await focusLoginField(win, which);
+  if (!focusInfo?.ok) return focusInfo;
+  if (which === 'password' && focusInfo.id && /textbox_0|email|user/i.test(String(focusInfo.id))) {
+    return { ok: false, reason: 'password-focused-email', ...focusInfo };
+  }
+  try {
+    nativeInsertIntoFocused(win, String(text ?? ''));
+  } catch (_) {}
+  await win.webContents
+    .executeJavaScript(
+      `(() => {
+        ${loginDomHelpersScript()}
+        const el = ${which === 'password' ? 'findPasswordInput()' : 'findEmailInput()'};
+        if (!el) return { ok: false };
+        applyValue(el, ${JSON.stringify(String(text ?? ''))}, {
+          commit: ${which === 'email' ? 'true' : 'false'},
+        });
+        return { ok: true, ...snapshotFields() };
+      })()`,
+      true
+    )
+    .catch(() => null);
+  return { ok: true, ...focusInfo, snap: await readLoginCredentials(win) };
 }
 
 function focusCorrPanel(win) {
@@ -1576,17 +1642,34 @@ async function restoreEmailIfClobbered(win, wantEmail, wantPassword) {
 
 async function fillCredentialsOnce(win, wantEmail, wantPassword) {
   focusCorrPanel(win);
+  await awakenLoginFields(win).catch(() => null);
 
-  // Fast path: Syncfusion/Angular model write only (usually enough when EJ2 is ready).
-  let filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => null);
-  filled = await restoreEmailIfClobbered(win, wantEmail, wantPassword);
-  if (credentialsMatch(filled, wantEmail, wantPassword)) {
-    await new Promise((r) => setTimeout(r, 50));
-    filled = await readLoginCredentials(win);
-    if (credentialsMatch(filled, wantEmail, wantPassword)) return filled;
+  // DOM/EJ2 first — on Intel Mac CDP insertText often never types into Syncfusion.
+  const ej2Rounds = IS_INTEL_MAC ? 4 : 2;
+  let filled = null;
+  for (let i = 0; i < ej2Rounds; i += 1) {
+    filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => filled);
+    filled = await restoreEmailIfClobbered(win, wantEmail, wantPassword);
+    if (credentialsMatch(filled, wantEmail, wantPassword)) {
+      await new Promise((r) => setTimeout(r, 40));
+      filled = await readLoginCredentials(win);
+      if (credentialsMatch(filled, wantEmail, wantPassword)) return filled;
+    }
+    await awakenLoginFields(win).catch(() => null);
+    await new Promise((r) => setTimeout(r, 60 + i * 40));
   }
 
-  // Fill email, verify, then password — never type both into one focused field.
+  if (IS_INTEL_MAC) {
+    // Intel: native + EJ2 only (skip CDP — hangs / no-ops on many Intel Macs).
+    await typeViaNativeOnly(win, 'email', wantEmail);
+    await awakenLoginFields(win).catch(() => null);
+    await typeViaNativeOnly(win, 'password', wantPassword);
+    filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => filled);
+    filled = await restoreEmailIfClobbered(win, wantEmail, wantPassword);
+    return { ...(filled || {}), ...(await readLoginCredentials(win) || {}) };
+  }
+
+  // Apple Silicon / others: CDP once for both fields.
   try {
     filled = await withDebuggerSession(win, async (wc) => {
       const emailType = await typeIntoLoginField(win, 'email', wantEmail, { wc });
@@ -1598,7 +1681,6 @@ async function fillCredentialsOnce(win, wantEmail, wantPassword) {
       }
       const passType = await typeIntoLoginField(win, 'password', wantPassword, { wc });
       if (!passType?.ok) return { ...(filled || {}), ok: false, reason: 'missing-password' };
-      // Password step must not leave email polluted.
       let snap = await restoreEmailIfClobbered(win, wantEmail, wantPassword);
       if (!credentialsMatch(snap, wantEmail, wantPassword)) {
         const synced = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => null);
@@ -1609,7 +1691,6 @@ async function fillCredentialsOnce(win, wantEmail, wantPassword) {
       return { ...(snap || {}), ...(await readLoginCredentials(win) || {}) };
     });
   } catch (_) {
-    // Debugger timed out — page-only refill.
     filled = await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => filled);
     filled = await restoreEmailIfClobbered(win, wantEmail, wantPassword);
     await new Promise((r) => setTimeout(r, 40));
@@ -1650,11 +1731,18 @@ async function fillAndSubmit(
   setLoginGeometryLock(true);
   ensureVisibleCorrBounds(corrBounds);
   focusCorrPanel(win);
+  await awakenLoginFields(win).catch(() => null);
 
   // Wait for TextBoxes; prefer EJ2 ready so Angular model writes stick.
-  let controls = await waitForLoginControlsReady(win, 4500);
+  // Intel often needs a longer wait + awaken before password TextBox exists.
+  const readyBudget = IS_INTEL_MAC ? 8000 : 4500;
+  let controls = await waitForLoginControlsReady(win, readyBudget);
   if (controls.ok && !controls.ej2) {
-    controls = await waitForLoginControlsReady(win, 3500);
+    controls = await waitForLoginControlsReady(win, IS_INTEL_MAC ? 4000 : 3500);
+  }
+  if (!controls.ok || !controls.ready?.passwordInput) {
+    await awakenLoginFields(win).catch(() => null);
+    controls = await waitForLoginControlsReady(win, IS_INTEL_MAC ? 5000 : 2500);
   }
   if (!controls.ok) {
     if (!controls.ready?.emailInput) return missingFieldResult('email');
@@ -4186,12 +4274,16 @@ async function attemptLogin(
     }
   }
 
-  // Missing email/password usually means interstitial / stale session — force logout once.
+  // Missing email/password: if still on the login form, reload (Intel logout thrash
+  // often leaves a broken page with no password field). Only force-logout when
+  // we are clearly on an authenticated interstitial.
+  const missingLoginFields =
+    !fillResult.ok &&
+    (fillResult.needsLogout ||
+      /could not find (email|password) field/i.test(String(fillResult.reason || '')));
   const shouldForceLogoutForFill =
     !fillResult.ok &&
-    (fillResult.alreadyLoggedIn ||
-      fillResult.needsLogout ||
-      /could not find (email|password) field/i.test(String(fillResult.reason || '')));
+    (fillResult.alreadyLoggedIn || missingLoginFields);
   if (shouldForceLogoutForFill) {
     const fillEmail = String(fillResult.email || '').toLowerCase();
     const targetEmail = String(email || '').toLowerCase();
@@ -4206,46 +4298,82 @@ async function attemptLogin(
         url: win.webContents.getURL(),
       };
     }
-    setStatus({
-      state: 'logout',
-      message: `Login fields missing — forcing logout${fillResult.email ? ` (${fillResult.email})` : ''}`,
-      email,
-      attempt: label,
-    });
-    await forceLogoutExistingSession(win);
-    const readyAfterLogout = await waitForLoginForm(win, fast ? 6000 : 30000);
-    if (readyAfterLogout.alreadyLoggedIn || readyAfterLogout.reusedSession) {
-      const who = readyAfterLogout.email || fillResult.email || email;
-      const whoKey = String(who || '').toLowerCase();
-      if (!clearSession && (!whoKey || whoKey === targetEmail)) {
-        return {
-          state: 'success',
-          message: `Already logged in as ${who} — reusing session`,
-          email,
-          attempt: label,
-          loggedIn: true,
-          url: win.webContents.getURL(),
-        };
-      }
-    }
-    if (!readyAfterLogout.ok) {
-      return {
-        state: readyAfterLogout.pendingManual ? 'manual' : 'error',
-        message: readyAfterLogout.message || fillResult.reason,
-        url: readyAfterLogout.info?.url || win.webContents.getURL(),
+
+    const pageNow = await inspectPage(win).catch(() => null);
+    const stillOnLoginForm =
+      Boolean(pageNow?.hasLoginForm) ||
+      (/\/login/i.test(String(pageNow?.url || win.webContents.getURL() || '')) &&
+        Boolean(pageNow?.hasEmail || pageNow?.hasPassword));
+
+    if (missingLoginFields && stillOnLoginForm && !fillResult.alreadyLoggedIn) {
+      setStatus({
+        state: 'loading',
+        message: `Login fields missing — reloading CorrLinks form (${label})`,
         email,
         attempt: label,
-        detail: { fillResult, readyAfterLogout },
-      };
+      });
+      try {
+        await win.loadURL(CORRLINKS.loginUrl);
+      } catch (error) {
+        const msg = String(error?.message || error);
+        if (!/ERR_ABORTED|-3/.test(msg)) throw error;
+      }
+      const readyAfterReload = await waitForLoginForm(win, fast ? 8000 : 20000, fast ? { pollMs: 20 } : {});
+      if (readyAfterReload?.ok) {
+        await awakenLoginFields(win).catch(() => null);
+        await waitForLoginControlsReady(win, fast || IS_INTEL_MAC ? 6000 : 9000);
+        setStatus({
+          state: 'filling',
+          message: `Filling credentials after reload (${label})`,
+          url: win.webContents.getURL(),
+          email,
+          attempt: label,
+        });
+        fillResult = await fillAndSubmit(win, email, password, fillOpts);
+      }
+    } else {
+      setStatus({
+        state: 'logout',
+        message: `Login fields missing — forcing logout${fillResult.email ? ` (${fillResult.email})` : ''}`,
+        email,
+        attempt: label,
+      });
+      await forceLogoutExistingSession(win);
+      const readyAfterLogout = await waitForLoginForm(win, fast ? 6000 : 30000);
+      if (readyAfterLogout.alreadyLoggedIn || readyAfterLogout.reusedSession) {
+        const who = readyAfterLogout.email || fillResult.email || email;
+        const whoKey = String(who || '').toLowerCase();
+        if (!clearSession && (!whoKey || whoKey === targetEmail)) {
+          return {
+            state: 'success',
+            message: `Already logged in as ${who} — reusing session`,
+            email,
+            attempt: label,
+            loggedIn: true,
+            url: win.webContents.getURL(),
+          };
+        }
+      }
+      if (!readyAfterLogout.ok) {
+        return {
+          state: readyAfterLogout.pendingManual ? 'manual' : 'error',
+          message: readyAfterLogout.message || fillResult.reason,
+          url: readyAfterLogout.info?.url || win.webContents.getURL(),
+          email,
+          attempt: label,
+          detail: { fillResult, readyAfterLogout },
+        };
+      }
+      setStatus({
+        state: 'filling',
+        message: `Filling credentials after force logout (${label})`,
+        url: win.webContents.getURL(),
+        email,
+        attempt: label,
+      });
+      await awakenLoginFields(win).catch(() => null);
+      fillResult = await fillAndSubmit(win, email, password, fillOpts);
     }
-    setStatus({
-      state: 'filling',
-      message: `Filling credentials after force logout (${label})`,
-      url: win.webContents.getURL(),
-      email,
-      attempt: label,
-    });
-    fillResult = await fillAndSubmit(win, email, password, fillOpts);
   }
   if (!fillResult.ok) {
     // Last chance: interstitial for the target account counts as logged in.
