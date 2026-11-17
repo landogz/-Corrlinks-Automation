@@ -1,12 +1,13 @@
 ---
 name: loop-engineering
 description: >-
-  Use on every coding task in this repo — and whenever the user wants a
-  self-running agent loop until a goal is met. Loop engineering: honesty test,
-  Automatic+Closed architecture, mechanical verification gate (never AI
-  self-verify), turn/budget ceiling. Triggers on loop, loop engineering, auto
-  mode, run until tests pass, self-running / autonomous agent, CreateGoal,
-  stop hook, ralph wiggum, fix until green, keep working until done.
+  ALWAYS apply on every coding task in this repo (enforced by
+  .cursor/rules/loop-engineering.mdc alwaysApply). Also use whenever the user
+  wants a self-running agent loop until a goal is met. Loop engineering:
+  honesty test, Automatic+Closed, mechanical verification gate (never AI
+  self-verify), turn/budget ceiling. Triggers on every coding prompt, loop,
+  loop engineering, auto mode, run until tests pass, CreateGoal, stop hook,
+  fix until green, keep working until done.
 ---
 
 # Loop Engineering (Inside Scores / Cursor)
@@ -108,10 +109,11 @@ Without a maximum, the loop spins forever. This repo's `stop` hook uses `loop_li
 
 ## How to run this skill on every prompt
 
-Already enforced by `.cursor/rules/loop-engineering.mdc` (`alwaysApply: true`):
+**Mandatory.** `.cursor/rules/loop-engineering.mdc` has `alwaysApply: true` — treat this skill as always on:
 
+- Read and follow this skill for coding work in this repo (not optional).
 - Do not claim done without a mechanical check when code changed.
-- Prefer the project gate over self-assessment.
+- Prefer `node .cursor/hooks/loop-gate.js` over self-assessment.
 - For explicit "keep going until…" goals, use CreateGoal only when the user asked, and rely on the stop hook ceiling.
 
 Ask for missing pieces — the goal, which smoke/test, the ceiling — rather than guessing. Never substitute the agent's self-assessment for a real check.

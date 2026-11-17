@@ -5754,17 +5754,27 @@ function isCorrEmbedBlocked() {
   return false;
 }
 
+function prepareCorrFallbackBounds() {
+  const w = Math.max(320, Math.round((window.innerWidth || 1200) * 0.52));
+  const h = Math.max(280, Math.round((window.innerHeight || 800) * 0.72));
+  return {
+    x: Math.max(280, Math.round((window.innerWidth || 1200) - w - 20)),
+    y: Math.max(64, Math.round(((window.innerHeight || 800) - h) / 2)),
+    width: w,
+    height: h,
+  };
+}
+
 function hideCorrEmbedNow({ force = false } = {}) {
   if (!window.api?.setCorrBounds) return;
   // During active send/login/probe fill, never collapse to 0×0 — Syncfusion stays empty.
   if (corrEmbedRevealed || corrlinksLoginBusy) return;
   // Preparing workspace: keep the right-hand slot sized (avoid 0×0 flash between probes).
-  if (!force && (loopInitializingActive || bootVerifyRunning)) {
-    const bounds = measureVerifyCorrPaneBounds();
-    if (bounds) {
-      window.api.setCorrBounds({ ...bounds, force: true });
-      return;
-    }
+  // If the verify pane has not laid out yet, use a right-half fallback — never 0×0.
+  if (!force && (loopInitializingActive || bootVerifyRunning || document.body.classList.contains('is-preparing-workspace'))) {
+    const bounds = measureVerifyCorrPaneBounds() || prepareCorrFallbackBounds();
+    window.api.setCorrBounds({ ...bounds, force: true });
+    return;
   }
   window.api.setCorrBounds({ x: 0, y: 0, width: 0, height: 0, force: Boolean(force) });
 }
@@ -5962,14 +5972,14 @@ function resetCorrEmbedReveal() {
 function syncCorrPaneBounds() {
   if (!window.api?.setCorrBounds) return;
 
-  if (loopInitializingActive || bootVerifyRunning) {
-    const verifyBounds = measureVerifyCorrPaneBounds();
-    if (verifyBounds) {
-      window.api.setCorrBounds({ ...verifyBounds, force: true });
-      return;
-    }
-    // Mid-probe layout thrash — keep the current sized view.
-    if (corrlinksLoginBusy) return;
+  if (
+    loopInitializingActive ||
+    bootVerifyRunning ||
+    document.body.classList.contains('is-preparing-workspace')
+  ) {
+    const verifyBounds = measureVerifyCorrPaneBounds() || prepareCorrFallbackBounds();
+    window.api.setCorrBounds({ ...verifyBounds, force: true });
+    return;
   }
 
   if (isCorrEmbedBlocked()) {

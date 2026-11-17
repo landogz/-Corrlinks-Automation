@@ -1,36 +1,38 @@
 ---
-description: Loop engineering on every prompt — mechanical verification, never AI self-done
+description: ALWAYS use loop engineering — mechanical gate, never AI self-done
 alwaysApply: true
 ---
 
-# Loop engineering (every prompt)
+# Loop engineering (mandatory on every prompt)
 
-This project uses **loop engineering** ([selmakcby/loop-engineering](https://github.com/selmakcby/loop-engineering), Cursor-adapted). Apply on **every** user prompt in this repo.
+This repo **always** uses loop engineering. Follow `.cursor/skills/loop-engineering/SKILL.md` on every coding turn. Do not skip it.
 
-## Core rule
+Source: [selmakcby/loop-engineering](https://github.com/selmakcby/loop-engineering) (Cursor-adapted).
 
-**Never let the AI verify its own "done."** Maker ≠ checker. Prefer a mechanical gate over self-assessment.
+## Non-negotiable
 
-## On every coding turn
+**Never let the AI verify its own "done."** Maker ≠ checker. "Looks fine" / "should work" is not a gate.
 
-1. Prefer **Automatic + Closed** when the user wants "keep going / fix until / run until green."
-2. Before claiming a code change is finished, run (or rely on) the mechanical gate:
+## Required on every coding turn
+
+1. Prefer **Automatic + Closed** when the user says keep going / fix until / run until green.
+2. Before claiming code work is finished, run the mechanical gate:
    - `node .cursor/hooks/loop-gate.js`
-   - or at least the relevant smoke: `npm run smoke:subject`
-3. Do **not** stop with "should be fine" / "looks done" when JS under `main/`, `renderer/`, or `scripts/` changed and the gate was not run.
-4. Respect the `stop` hook follow-ups — if the gate comes back red, keep fixing until green or the loop ceiling is hit.
-5. For one-shot questions / docs-only / no code change: answer normally; still do not invent a false "tests passed."
+   - or at least `npm run smoke:subject` when only subject math changed
+3. If `main/`, `renderer/`, or `scripts/` JS changed and the gate was not run → **not done**. Keep fixing.
+4. Respect the `stop` hook in `.cursor/hooks.json` (`loop_limit: 8`). If the gate is red, continue until green or the ceiling.
+5. Docs-only / one-shot Q&A: answer normally — still never invent "tests passed."
 
-## Honesty test (before starting a long autonomous loop)
+## Honesty test (before a long autonomous loop)
 
-Only build a long loop if the work is repetitive, verification is automatable, budget is OK, and tools can run checks. Otherwise use a plain prompt.
+Only start a long CreateGoal/`/loop` if work is repetitive, verification is automatable, budget is OK, and tools can run checks. Otherwise use a plain prompt.
 
-## Cursor wiring in this repo
+## Wiring (do not remove)
 
 | Piece | Path |
 | --- | --- |
-| Skill | `.cursor/skills/loop-engineering/SKILL.md` |
+| Skill (read/follow) | `.cursor/skills/loop-engineering/SKILL.md` |
 | Stop gate | `.cursor/hooks/loop-gate.js` |
 | Hooks | `.cursor/hooks.json` |
 
-CreateGoal / `/loop` only when the user explicitly asks for a goal or interval loop. The always-on rule + stop gate cover everyday prompts.
+CreateGoal / `/loop` only when the user explicitly asks for a goal or interval loop. This always-on rule + stop gate already cover everyday prompts.
