@@ -442,7 +442,7 @@ const btnStopBootVerify = document.getElementById('btnStopBootVerify');
 const loopInitializing = appVerifying;
 const loopInitializingStatus = appVerifyingStatus;
 const loopInitializingDetail = appVerifyingDetail;
-/** @type {null | ((choice: { action: 'retry'|'manual-fill'|'skip'|'cancel' }) => void)} */
+/** @type {null | ((choice: { action: 'retry'|'manual-login'|'skip'|'cancel' }) => void)} */
 let verifyManualRetryResolver = null;
 /** Live one-line probe progress under the verifying overlay. */
 let verifyProbeLive = null;
@@ -454,7 +454,7 @@ const VERIFY_COPY = {
   status: 'Validating CorrLinks accounts',
   statusNew: 'Validating new CorrLinks account(s)',
   statusRetry: 'Retry failed accounts',
-  statusManualFill: 'Manual fill — click Login',
+  statusManualFill: 'Manual login — you type & click Login',
   statusReview: 'Review failed accounts',
   statusPause: 'Waiting before next login',
   defaultStatus: 'Validating CorrLinks accounts',
@@ -3474,14 +3474,14 @@ function renderVerifyFailedReview({ rows = [] } = {}) {
     const fillBtn = document.createElement('button');
     fillBtn.type = 'button';
     fillBtn.className = 'ghost tiny fail-fill';
-    fillBtn.textContent = 'Fill form';
-    fillBtn.title = `Fill ${row.emailLabel || maskSensitive(row.email)} — you click Login`;
+    fillBtn.textContent = "I'll log in";
+    fillBtn.title = `Open CorrLinks for ${row.emailLabel || maskSensitive(row.email)} — you type & click Login`;
     fillBtn.disabled = Boolean(info.locked);
     fillBtn.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
       resolveVerifyManualRetry({
-        action: 'manual-fill',
+        action: 'manual-login',
         email: row.email,
         emailKey: emailLoopKey(row.email),
       });
@@ -3497,7 +3497,7 @@ function renderVerifyFailedReview({ rows = [] } = {}) {
     appVerifyingFailedHint.textContent = rows.length
       ? `${rows.length} failed` +
         (lockedCount ? ` · ${lockedCount} locked` : '') +
-        ` · Retry (auto) or Fill form (you click Login)`
+        ` · Retry (auto) or I'll log in (you type & click Login)`
       : 'No failed accounts left.';
   }
   if (btnVerifySkipFailed) {
@@ -3673,7 +3673,7 @@ async function verifyAllCorrlinksAccounts({
       current,
       total,
       step: manualFill
-        ? 'Filling credentials — you will click Login…'
+        ? 'Open CorrLinks — type email/password and click Login…'
         : 'Starting CorrLinks login…',
     });
     setLoopInitializingOverlay({
@@ -3683,7 +3683,7 @@ async function verifyAllCorrlinksAccounts({
       current,
       total,
       live: manualFill
-        ? 'Credentials will fill — click Login in CorrLinks on the right'
+        ? `Type credentials for ${accountLabel} and click Login — watching response`
         : undefined,
     });
     setLoopProgress(
@@ -3694,7 +3694,7 @@ async function verifyAllCorrlinksAccounts({
     );
     log(
       `—— ${indexLabel}: ${accountLabel} [${roleTag}]` +
-        (manualFill ? ' · manual fill (you click Login)' : '') +
+        (manualFill ? ' · manual login (you type & click Login)' : '') +
         ' ——',
       'info'
     );
@@ -3705,8 +3705,8 @@ async function verifyAllCorrlinksAccounts({
       log(`  SECONDARY for: ${account.secondFor.join('; ')}`, 'info');
     }
 
-    // Manual fill needs time for the operator to click Login (main waits up to ~120s).
-    const PROBE_DEADLINE_MS = manualFill ? 150_000 : 75_000;
+    // Manual login needs time to type + click Login (main waits up to ~180–240s).
+    const PROBE_DEADLINE_MS = manualFill ? 250_000 : 75_000;
     async function loginWithDeadline() {
       let timedOut = false;
       const timer = setTimeout(() => {
@@ -3729,7 +3729,7 @@ async function verifyAllCorrlinksAccounts({
                 resolve({
                   state: 'timeout',
                   message: manualFill
-                    ? `Timed out waiting for Login click after ${PROBE_DEADLINE_MS / 1000}s`
+                    ? `Timed out waiting for your login after ${PROBE_DEADLINE_MS / 1000}s`
                     : `Probe timed out after ${PROBE_DEADLINE_MS / 1000}s`,
                 }),
               PROBE_DEADLINE_MS
@@ -3739,7 +3739,7 @@ async function verifyAllCorrlinksAccounts({
         if (timedOut || status?.state === 'timeout') {
           pushVerifyProbeStep(
             manualFill
-              ? 'Timed out waiting for Login click — resetting panel…'
+              ? 'Timed out waiting for your login — resetting panel…'
               : 'Timed out — resetting panel…'
           );
           await forceResetCorrlinksPanel();
@@ -3763,7 +3763,7 @@ async function verifyAllCorrlinksAccounts({
 
     let status = await loginWithDeadline();
     // Transient load / CDP / timeout noise — reset panel and retry once (Locked is final).
-    // Manual fill: do not auto-retry (operator controls the Login click).
+    // Manual login: do not auto-retry (operator types & clicks Login).
     if (
       isActive() &&
       status &&
@@ -3914,8 +3914,9 @@ async function verifyAllCorrlinksAccounts({
         );
         break;
       }
-      const isManualFill = choice?.action === 'manual-fill';
-      if (choice?.action !== 'retry' && !isManualFill) continue;
+      const isManualLogin =
+        choice?.action === 'manual-login' || choice?.action === 'manual-fill';
+      if (choice?.action !== 'retry' && !isManualLogin) continue;
 
       const emailKey = choice.emailKey || emailLoopKey(choice.email);
       const next =
@@ -3928,33 +3929,33 @@ async function verifyAllCorrlinksAccounts({
       if (appVerifyingFailed) appVerifyingFailed.hidden = true;
       if (appVerifyingSpinner) appVerifyingSpinner.hidden = false;
       const corrHint = document.querySelector('.app-verifying-corr-hint');
-      if (corrHint && isManualFill) {
-        corrHint.textContent = 'Click Login here after credentials fill';
+      if (corrHint && isManualLogin) {
+        corrHint.textContent = 'Type email/password and click Login here';
       }
       setLoopInitializingOverlay({
         active: true,
-        status: isManualFill ? VERIFY_COPY.statusManualFill : VERIFY_COPY.statusRetry,
-        detail: isManualFill
-          ? `Fill ${retryIndex} · ${next.emailLabel} · was ${next.tag}`
+        status: isManualLogin ? VERIFY_COPY.statusManualFill : VERIFY_COPY.statusRetry,
+        detail: isManualLogin
+          ? `Manual ${retryIndex} · ${next.emailLabel} · was ${next.tag}`
           : `Retry ${retryIndex} · ${next.emailLabel} · was ${next.tag}`,
         current: probeTotal,
         total: probeTotal,
-        live: isManualFill
-          ? `Filling ${next.emailLabel} — click Login in CorrLinks…`
+        live: isManualLogin
+          ? `Type credentials for ${next.emailLabel} and click Login — watching response…`
           : `Retrying ${next.emailLabel}…`,
         logLive: true,
       });
       log(
-        isManualFill
-          ? `Manual fill ${retryIndex}: ${next.emailLabel} (was ${next.tag}: ${next.reason}) — click Login yourself`
+        isManualLogin
+          ? `Manual login ${retryIndex}: ${next.emailLabel} (was ${next.tag}: ${next.reason}) — you type & click Login`
           : `Manual retry ${retryIndex}: ${next.emailLabel} (was ${next.tag}: ${next.reason})`,
         'info'
       );
       await probeAccountLive(next.account, {
-        indexLabel: isManualFill ? `Fill ${retryIndex}` : `Retry ${retryIndex}`,
+        indexLabel: isManualLogin ? `Manual ${retryIndex}` : `Retry ${retryIndex}`,
         current: probeTotal,
         total: probeTotal,
-        awaitUserSubmit: isManualFill,
+        awaitUserSubmit: isManualLogin,
       });
       if (corrHint) {
         corrHint.textContent = 'Login runs here while accounts are validated';
@@ -4176,10 +4177,10 @@ async function startCorrlinksAccountLogin(group, options = {}) {
   updateActionButtons({ canLogin: true });
   setStatusHint(
     awaitUserSubmit
-      ? `Filling ${maskSensitive(group.email)} — click Login…`
+      ? `Manual login ${maskSensitive(group.email)} — type & click Login…`
       : `Logging in ${maskSensitive(group.email)}…`
   );
-  setCorrPanelBusy(awaitUserSubmit ? 'Fill then click Login…' : 'Logging in…');
+  setCorrPanelBusy(awaitUserSubmit ? 'You type & click Login…' : 'Logging in…');
   setCorrlinksConnected(false, true);
   // Overlay probes use the Preparing right slot. Start loop login must fill #corrPane
   // (quietToast used to wrongly reopen the small preview card).
@@ -4191,7 +4192,7 @@ async function startCorrlinksAccountLogin(group, options = {}) {
   log(
     `Account login ${maskSensitive(group.email)}` +
       (group.secondEmail ? ` (fallback ${maskSensitive(group.secondEmail)} if locked)` : '') +
-      (awaitUserSubmit ? ' · fill only (you click Login)' : '') +
+      (awaitUserSubmit ? ' · manual (you type & click Login)' : '') +
       ' · no compose yet',
     'info'
   );
