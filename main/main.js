@@ -349,7 +349,7 @@ function registerIpc() {
         email: payload.email,
         password: payload.password,
         baseUrl: payload.baseUrl,
-        remember: payload.remember !== false,
+        remember: Boolean(payload.remember),
       });
       return {
         ok: true,

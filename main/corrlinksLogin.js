@@ -2013,14 +2013,14 @@ async function clickLoginButton(win) {
 /** Pause after credentials are filled before clicking Login (CorrLinks/Angular settle). */
 const SIGN_IN_DELAY_MS = Math.max(
   0,
-  Number(process.env.CORRLINKS_SIGNIN_DELAY_MS ?? 5_000) || 0
+  Number(process.env.CORRLINKS_SIGNIN_DELAY_MS ?? 2_000) || 0
 );
 
 async function waitBeforeSignInClick(
   win,
   { email = null, attempt = null, password = null, skipDelay = false } = {}
 ) {
-  // Preparing-workspace and send both wait CORRLINKS_SIGNIN_DELAY_MS (default 5s)
+  // Preparing-workspace and send both wait CORRLINKS_SIGNIN_DELAY_MS (default 2s)
   // after credentials stick, so Angular/Syncfusion can settle before Login.
   const totalMs = skipDelay ? 0 : SIGN_IN_DELAY_MS;
   if (totalMs <= 0) return;
@@ -2404,7 +2404,7 @@ async function fillAndSubmit(
     };
   }
 
-  // Pause before Login after fill (default 5s) so CorrLinks can bind the fields.
+  // Pause before Login after fill (default 2s) so CorrLinks can bind the fields.
   await waitBeforeSignInClick(win, {
     email: wantEmail,
     attempt,
@@ -2430,41 +2430,18 @@ async function fillAndSubmit(
   }
 
   // Locate Login AFTER the settle delay — coords from before the delay go stale.
-  let clicked = await clickLoginButton(win);
+  // Click Login once, then wait for CorrLinks response (no re-clicks).
+  const clicked = await clickLoginButton(win);
   if (!clicked.ok) {
     return { ok: false, reason: 'Could not find Login button', filled };
   }
 
-  // Let Angular process the click before deciding to retry.
-  await new Promise((r) => setTimeout(r, 450));
-
-  const stillOnLogin = async () => {
-    const wc = getLiveWebContents(win);
-    if (!wc) return false;
-    return wc
-      .executeJavaScript(` /\\/login/i.test(location.pathname || location.href) `, true)
-      .catch(() => false);
-  };
-
-  if (await stillOnLogin()) {
-    const feedback = await readAuthFeedback(win).catch(() => []);
-    if (
-      feedback?.some((m) =>
-        /password field is required|email address field|not a valid email|required/i.test(m)
-      )
-    ) {
-      await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => null);
-      await new Promise((r) => setTimeout(r, 80));
-    }
-    clicked = await clickLoginButton(win);
-    await new Promise((r) => setTimeout(r, 350));
-  }
-
-  // One more nudge if still stuck on /login with no lock toast yet.
-  if (await stillOnLogin()) {
-    await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => null);
-    clicked = await clickLoginButton(win);
-  }
+  setStatus({
+    state: 'submitting',
+    message: `Waiting for CorrLinks response${attempt ? ` (${attempt})` : ''}…`,
+    email: wantEmail,
+    attempt,
+  });
 
   return {
     ok: true,
@@ -2833,8 +2810,7 @@ async function waitForLoginResult(win, timeoutMs = 45000) {
   return withTimeoutFallback(
     (async () => {
       const started = Date.now();
-      let reloginNudgeAt = started + Math.min(3500, Math.floor(budget * 0.4));
-      let nudged = false;
+      let lastWaitMsgAt = 0;
       while (Date.now() - started < budget) {
         if (!getLiveWebContents(win)) {
           return {
@@ -2844,7 +2820,17 @@ async function waitForLoginResult(win, timeoutMs = 45000) {
           };
         }
         const url = safeUrl();
-        setStatus({ url });
+        const now = Date.now();
+        if (now - lastWaitMsgAt >= 1200) {
+          lastWaitMsgAt = now;
+          setStatus({
+            state: 'submitting',
+            message: 'Waiting for CorrLinks response…',
+            url,
+          });
+        } else {
+          setStatus({ url });
+        }
 
         const leftLogin = url && !CORRLINKS.loginPathPattern.test(url);
         if (leftLogin) {
@@ -2902,17 +2888,7 @@ async function waitForLoginResult(win, timeoutMs = 45000) {
           }
         }
 
-        // Still on /login with no feedback — Login click often missed; nudge once.
-        if (!nudged && Date.now() >= reloginNudgeAt) {
-          nudged = true;
-          setStatus({
-            state: 'submitting',
-            message: 'Still on login — clicking Login again…',
-            url,
-          });
-          await clickLoginButton(win).catch(() => null);
-        }
-
+        // Do not click Login again — wait for navigation / dialog / toast.
         await new Promise((r) => setTimeout(r, 50));
       }
 
@@ -5046,7 +5022,7 @@ async function attemptLogin(
     attempt: label,
   });
 
-  // Probes previously used 8s — too short when Login click needs a nudge / slow SPA nav.
+  // Probes previously used 8s — too short for slow SPA nav after a single Login click.
   const result = await waitForLoginResult(win, fast ? 22000 : 45000);
 
   if (result.ok) {
@@ -5347,7 +5323,7 @@ async function loginToCorrlinks({
   }
 
   const useFast = Boolean(fast) || Boolean(skipCompose);
-  // Always wait after fill before clicking Login (default 5s), including Preparing workspace.
+  // Always wait after fill before clicking Login (default 2s), including Preparing workspace.
   const skipSignInDelay = false;
   const primary = await attemptLogin(win, {
     email,

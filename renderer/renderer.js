@@ -4903,7 +4903,7 @@ async function ensureCredentialsSaved() {
     email,
     password,
     baseUrl,
-    remember: sdRemember.checked,
+    remember: isRememberSportsDataEnabled(),
   });
   if (!result.ok) throw new Error(result.message || 'Failed to save login');
   return result;
@@ -5708,8 +5708,7 @@ async function init() {
       log('Control UI ready', 'info');
       await refreshInmates();
     } else {
-      if (sdRemember) sdRemember.checked = false;
-      syncRememberCheckUi();
+      setRememberSportsDataEnabled(true);
       setStatusHint('Sign in with SportsData');
       log('Sign in with SportsData email and password to continue', 'warn');
       if (summary.email && !sdPassword?.value) sdPassword?.focus();
@@ -5778,29 +5777,25 @@ sdPassword?.addEventListener('input', () => {
   if (loginError && !loginError.hidden) setLoginError('');
 });
 
-function syncRememberCheckUi() {
-  const label = document.querySelector('label.login-remember');
-  if (!label || !sdRemember) return;
-  const on = Boolean(sdRemember.checked);
-  label.classList.toggle('is-checked', on);
-  label.setAttribute('aria-checked', on ? 'true' : 'false');
+function isRememberSportsDataEnabled() {
+  if (!sdRemember) return true;
+  return sdRemember.classList.contains('is-on') || sdRemember.getAttribute('aria-pressed') === 'true';
 }
 
-// Own the toggle in one place — avoids Electron double-toggle with label+input.
-document.querySelector('label.login-remember')?.addEventListener(
-  'click',
-  (event) => {
-    if (!sdRemember || sdRemember.disabled) return;
-    event.preventDefault();
-    event.stopPropagation();
-    sdRemember.checked = !sdRemember.checked;
-    sdRemember.dispatchEvent(new Event('change', { bubbles: true }));
-    syncRememberCheckUi();
-  },
-  true
-);
-sdRemember?.addEventListener('change', syncRememberCheckUi);
-syncRememberCheckUi();
+function setRememberSportsDataEnabled(on) {
+  if (!sdRemember) return;
+  const next = Boolean(on);
+  sdRemember.classList.toggle('is-on', next);
+  sdRemember.setAttribute('aria-pressed', next ? 'true' : 'false');
+}
+
+// Real button toggle — custom checkboxes were unreliable under Electron.
+sdRemember?.addEventListener('click', (event) => {
+  event.preventDefault();
+  if (sdRemember.disabled) return;
+  setRememberSportsDataEnabled(!isRememberSportsDataEnabled());
+});
+setRememberSportsDataEnabled(true);
 
 document.getElementById('btnToggleLoginPassword')?.addEventListener('click', () => {
   if (!sdPassword) return;
@@ -5886,8 +5881,7 @@ btnLogout.addEventListener('click', async () => {
     if (!result?.ok) throw new Error(result?.message || 'Sign out failed');
     sdPassword.value = '';
     sdEmail.value = '';
-    if (sdRemember) sdRemember.checked = false;
-    syncRememberCheckUi();
+    setRememberSportsDataEnabled(true);
     fillLoginForm({
       baseUrl: result.baseUrl || sdBaseUrl.value,
       email: '',

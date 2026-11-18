@@ -244,7 +244,7 @@ SPORTSDATA_EMAIL=your-email@example.com
 SPORTSDATA_PASSWORD=your-password
 # Documentation only — app is hard-locked to America/New_York
 APP_TIMEZONE=America/New_York
-CORRLINKS_SIGNIN_DELAY_MS=5000
+CORRLINKS_SIGNIN_DELAY_MS=2000
 ```
 
 Do not share a filled `.env` or `sportsdata-credentials.json`.

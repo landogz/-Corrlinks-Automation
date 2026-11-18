@@ -987,10 +987,70 @@ button.login-show-pass:focus-visible {
   outline: none;
 }
 
-.login-remember {
-  margin: 2px 0 0;
-  padding: 4px 0;
-  min-height: 28px;
+button.login-remember-toggle,
+button.login-remember-toggle:hover:not(:disabled) {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  margin: 6px 0 0;
+  padding: 10px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface-1);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: none;
+  line-height: 1.35;
+}
+button.login-remember-toggle:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--bg-surface-2);
+}
+button.login-remember-toggle.is-on {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface-1));
+}
+.login-remember-box {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border-radius: 6px;
+  border: 2px solid color-mix(in srgb, var(--text-primary) 45%, transparent);
+  background: #ffffff;
+  box-sizing: border-box;
+  position: relative;
+}
+html[data-scheme='dark'] .login-remember-box {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.55);
+}
+button.login-remember-toggle.is-on .login-remember-box {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+button.login-remember-toggle.is-on .login-remember-box::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 8px;
+  height: 12px;
+  border: solid #ffffff;
+  border-width: 0 3px 3px 0;
+  transform: rotate(45deg);
+}
+.login-remember-text {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .login-actions {
@@ -2026,9 +2086,6 @@ label.check .check-text {
   color: var(--text-primary);
 }
 
-label.check.login-remember .check-text {
-  font-weight: 600;
-}
 
 /* Status log toggles — real buttons (custom checkboxes were unclickable in Electron). */
 .log-drawer-controls {
