@@ -1580,6 +1580,17 @@ body.is-login .toast-host {
   background: color-mix(in srgb, var(--warning) 10%, var(--bg-surface-2));
 }
 
+.app-verifying-failed-list li.is-watching {
+  border-color: color-mix(in srgb, var(--accent, #2563eb) 45%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent, #2563eb) 10%, var(--bg-surface-2));
+}
+
+.app-verifying-failed-list li.is-watching .fail-tag {
+  border-color: color-mix(in srgb, var(--accent, #2563eb) 40%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent, #2563eb) 14%, transparent);
+  color: var(--accent, #2563eb);
+}
+
 .app-verifying-failed-list .fail-main {
   flex: 1 1 auto;
   min-width: 0;

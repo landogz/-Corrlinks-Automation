@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.59**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.60**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.59-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.59.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.59.exe` or portable `Inside-Scores-0.1.59.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.60-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.60.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.60.exe` or portable `Inside-Scores-0.1.60.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.59.exe`.
+1. Run `Inside-Scores-Setup-0.1.60.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.59.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.60.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 
@@ -81,7 +81,7 @@ Inside Scores does **not** use the microphone. Refresh/CorrLinks loads used to t
 
 ### CorrLinks “Syncfusion still empty” on validate
 
-Preparing your workspace used to hide the CorrLinks pane at 0×0 during probes, which made Angular/Syncfusion reject filled email/password. The overlay is now split: progress / failed accounts on the left, live CorrLinks login on the right — and the prepare pane never collapses to 0×0 mid-probe. **Account validation uses its own CorrLinks webview** (refreshed when probes start); **Start loop uses a second webview** sized to the Automate CorrLinks container under the CORRLINKS header. After credentials fill, Preparing your workspace waits **2 seconds** (`CORRLINKS_SIGNIN_DELAY_MS`, default `2000`) before clicking Login so Syncfusion can settle. Login is clicked **once**; the app then waits for CorrLinks’ response (no re-clicks). On failed-account review, the CorrLinks **login page opens automatically** on the right, and each row shows the plain **email** and **password** with **Copy** buttons. Paste into CorrLinks, then **I'll log in** (app watches your Login click) or **Retry** (full auto). Review centers **Continue without retries** (Cancel is hidden on that screen). Email and password are bound per field (trusted Electron `insertText` + Syncfusion `setProperties` / EJ2), never undirected clipboard paste into the wrong box. A helper-script regression that falsely reported “Could not find email field” on a loaded login page is fixed and guarded by `npm run smoke:login-helpers`. Login is never clicked unless the email value actually stuck in the control. The Status log **Auto-scroll** and **Mask emails** controls are toggle buttons so they stay clickable above the native view.
+Preparing your workspace used to hide the CorrLinks pane at 0×0 during probes, which made Angular/Syncfusion reject filled email/password. The overlay is now split: progress / failed accounts on the left, live CorrLinks login on the right — and the prepare pane never collapses to 0×0 mid-probe. **Account validation uses its own CorrLinks webview** (refreshed when probes start); **Start loop uses a second webview** sized to the Automate CorrLinks container under the CORRLINKS header. After credentials fill, Preparing your workspace waits **2 seconds** (`CORRLINKS_SIGNIN_DELAY_MS`, default `2000`) before clicking Login so Syncfusion can settle. Login is clicked **once**; the app then waits for CorrLinks’ response (no re-clicks). On failed-account review, the CorrLinks **login page opens automatically** and the app **starts watching the Login response** right away. Each row shows plain **email** / **password** with **Copy** buttons — paste, click **Login**, and the app classifies the result. **Retry** still runs full auto; **Continue without retries** skips the rest. Review centers **Continue without retries** (Cancel is hidden on that screen). Email and password are bound per field (trusted Electron `insertText` + Syncfusion `setProperties` / EJ2), never undirected clipboard paste into the wrong box. A helper-script regression that falsely reported “Could not find email field” on a loaded login page is fixed and guarded by `npm run smoke:login-helpers`. Login is never clicked unless the email value actually stuck in the control. The Status log **Auto-scroll** and **Mask emails** controls are toggle buttons so they stay clickable above the native view.
 
 ## Usage
 

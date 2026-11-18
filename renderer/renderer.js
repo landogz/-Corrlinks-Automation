@@ -454,7 +454,8 @@ const VERIFY_COPY = {
   status: 'Validating CorrLinks accounts',
   statusNew: 'Validating new CorrLinks account(s)',
   statusRetry: 'Retry failed accounts',
-  statusManualFill: 'Manual login — you type & click Login',
+  statusManualFill: 'Manual login — paste & click Login',
+  statusWatching: 'Watching CorrLinks login response…',
   statusReview: 'Review failed accounts',
   statusPause: 'Waiting before next login',
   defaultStatus: 'Validating CorrLinks accounts',
@@ -3427,18 +3428,22 @@ function formatProbeFailureInfo(status) {
   };
 }
 
-function renderVerifyFailedReview({ rows = [] } = {}) {
+function renderVerifyFailedReview({ rows = [], watchingEmail = null, watching = false } = {}) {
   const card = document.querySelector('.app-verifying-card');
   card?.classList.add('is-review');
   if (appVerifyingSpinner) appVerifyingSpinner.hidden = true;
   if (!appVerifyingFailed || !appVerifyingFailedList) return;
   appVerifyingFailed.hidden = false;
   appVerifyingFailedList.innerHTML = '';
+  const watchingKey = emailLoopKey(watchingEmail);
 
   rows.forEach((row) => {
     const info = formatProbeFailureInfo(row.status);
     const li = document.createElement('li');
     if (info.locked) li.classList.add('is-locked');
+    const rowKey = emailLoopKey(row.email);
+    const isWatchingRow = Boolean(watching && watchingKey && rowKey === watchingKey);
+    if (isWatchingRow) li.classList.add('is-watching');
 
     const rawEmail = String(row.email || row.account?.email || '').trim();
     const rawPassword = String(row.password || row.account?.password || '');
@@ -3447,10 +3452,12 @@ function renderVerifyFailedReview({ rows = [] } = {}) {
     main.className = 'fail-main';
     const tag = document.createElement('div');
     tag.className = 'fail-tag';
-    tag.textContent = info.tag;
+    tag.textContent = isWatchingRow ? 'Watching' : info.tag;
     const reason = document.createElement('div');
     reason.className = 'fail-reason';
-    reason.textContent = row.reason || info.reason;
+    reason.textContent = isWatchingRow
+      ? 'Paste email/password on the right and click Login — response is watched automatically'
+      : row.reason || info.reason;
 
     const creds = document.createElement('div');
     creds.className = 'fail-creds';
@@ -3511,9 +3518,11 @@ function renderVerifyFailedReview({ rows = [] } = {}) {
     const fillBtn = document.createElement('button');
     fillBtn.type = 'button';
     fillBtn.className = 'ghost tiny fail-fill';
-    fillBtn.textContent = "I'll log in";
-    fillBtn.title = `Open CorrLinks for ${rawEmail || row.emailLabel || 'account'} — you type & click Login`;
-    fillBtn.disabled = Boolean(info.locked);
+    fillBtn.textContent = isWatchingRow ? 'Watching…' : 'Watch this';
+    fillBtn.title = isWatchingRow
+      ? 'Already watching Login response for this account'
+      : `Watch Login response for ${rawEmail || row.emailLabel || 'account'}`;
+    fillBtn.disabled = Boolean(info.locked) || isWatchingRow;
     fillBtn.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -3534,7 +3543,9 @@ function renderVerifyFailedReview({ rows = [] } = {}) {
     appVerifyingFailedHint.textContent = rows.length
       ? `${rows.length} failed` +
         (lockedCount ? ` · ${lockedCount} locked` : '') +
-        ` · CorrLinks login is open — copy email/password, paste, then I'll log in (or Retry)`
+        (watching
+          ? ` · paste into CorrLinks and click Login — watching response`
+          : ` · copy email/password, then Retry or Watch this`)
       : 'No failed accounts left.';
   }
   if (btnVerifySkipFailed) {
@@ -3708,41 +3719,51 @@ async function verifyAllCorrlinksAccounts({
     };
   }
 
-  async function probeAccountLive(account, { indexLabel, current, total, awaitUserSubmit = false } = {}) {
+  async function probeAccountLive(
+    account,
+    { indexLabel, current, total, awaitUserSubmit = false, keepReviewVisible = false } = {}
+  ) {
     if (!isActive()) return false;
     const accountLabel = maskSensitive(account.email);
     const roleTag = accountRoleLabel(account);
     const key = emailLoopKey(account.email);
     const manualFill = Boolean(awaitUserSubmit);
+    const keepReview = Boolean(keepReviewVisible) && manualFill;
+    const plainEmail = String(account.email || '').trim();
     setVerifyProbeLive({
       indexLabel,
       accountLabel,
-      statusLabel: manualFill ? VERIFY_COPY.statusManualFill : statusLabel,
+      statusLabel: manualFill ? VERIFY_COPY.statusWatching : statusLabel,
       current,
       total,
       step: manualFill
-        ? 'Open CorrLinks — type email/password and click Login…'
+        ? 'Paste credentials and click Login — watching response…'
         : 'Starting CorrLinks login…',
     });
     setLoopInitializingOverlay({
       active: true,
-      status: manualFill ? VERIFY_COPY.statusManualFill : statusLabel,
-      detail: `${indexLabel} · ${accountLabel}`,
+      status: manualFill ? VERIFY_COPY.statusWatching : statusLabel,
+      detail: `${indexLabel} · ${plainEmail || accountLabel}`,
       current,
       total,
+      reviewFailed: keepReview,
       live: manualFill
-        ? `Type credentials for ${accountLabel} and click Login — watching response`
+        ? `Paste ${plainEmail || accountLabel} and click Login — watching response`
         : undefined,
     });
+    if (keepReview) {
+      if (appVerifyingSpinner) appVerifyingSpinner.hidden = true;
+      if (appVerifyingFailed) appVerifyingFailed.hidden = false;
+    }
     setLoopProgress(
-      `${manualFill ? VERIFY_COPY.statusManualFill : statusLabel} · ${indexLabel}`
+      `${manualFill ? VERIFY_COPY.statusWatching : statusLabel} · ${indexLabel}`
     );
     setStatusHint(
-      `${manualFill ? VERIFY_COPY.statusManualFill : statusLabel} · ${indexLabel}`
+      `${manualFill ? VERIFY_COPY.statusWatching : statusLabel} · ${indexLabel}`
     );
     log(
       `—— ${indexLabel}: ${accountLabel} [${roleTag}]` +
-        (manualFill ? ' · manual login (you type & click Login)' : '') +
+        (manualFill ? ' · manual login (watching your Login click)' : '') +
         ' ——',
       'info'
     );
@@ -3857,17 +3878,21 @@ async function verifyAllCorrlinksAccounts({
       usable ? (status.state === 'locked' ? 'warn' : 'success') : 'error'
     );
 
-    await forceResetCorrlinksPanel();
+    if (!keepReview) {
+      await forceResetCorrlinksPanel();
+    }
     clearVerifyProbeLive();
     if (!isActive()) return usable;
-    setLoopInitializingOverlay({
-      active: true,
-      status: statusLabel,
-      detail: indexLabel,
-      current,
-      total,
-    });
-    hideCorrEmbedNow();
+    if (!keepReview) {
+      setLoopInitializingOverlay({
+        active: true,
+        status: statusLabel,
+        detail: indexLabel,
+        current,
+        total,
+      });
+      hideCorrEmbedNow();
+    }
     return usable;
   }
 
@@ -3939,34 +3964,170 @@ async function verifyAllCorrlinksAccounts({
     );
   }
 
-  // Show every failed login with its error; user retries one account via its Retry button.
+  // Failed review: auto-open login + auto-watch response while showing copyable credentials.
   if (failedRows.length && isActive()) {
     let retryIndex = 0;
     while (isActive() && failedRows.length) {
       const focusRow =
-        failedRows.find((row) => !formatProbeFailureInfo(row.status).locked) || failedRows[0];
+        failedRows.find((row) => !formatProbeFailureInfo(row.status).locked) || null;
       const focusEmail = String(focusRow?.email || focusRow?.account?.email || '').trim();
+
+      async function runAutoRetry(next, { manual = false } = {}) {
+        if (!next?.account) return;
+        retryIndex += 1;
+        const corrHint = document.querySelector('.app-verifying-corr-hint');
+        if (corrHint) {
+          corrHint.textContent = manual
+            ? 'Paste email/password and click Login — watching response'
+            : 'Login runs here while accounts are validated';
+        }
+        if (!manual) {
+          document.querySelector('.app-verifying-card')?.classList.remove('is-review');
+          if (appVerifyingFailed) appVerifyingFailed.hidden = true;
+          if (appVerifyingSpinner) appVerifyingSpinner.hidden = false;
+        }
+        setLoopInitializingOverlay({
+          active: true,
+          status: manual ? VERIFY_COPY.statusWatching : VERIFY_COPY.statusRetry,
+          detail: manual
+            ? `Watching ${retryIndex} · ${focusEmail || next.emailLabel} · was ${next.tag}`
+            : `Retry ${retryIndex} · ${next.emailLabel} · was ${next.tag}`,
+          current: probeTotal,
+          total: probeTotal,
+          reviewFailed: Boolean(manual),
+          live: manual
+            ? `Paste ${focusEmail || next.emailLabel} and click Login — watching response…`
+            : `Retrying ${next.emailLabel}…`,
+          logLive: true,
+        });
+        if (manual) {
+          renderVerifyFailedReview({
+            rows: failedRows,
+            watchingEmail: next.email,
+            watching: true,
+          });
+        }
+        log(
+          manual
+            ? `Auto-watch login ${retryIndex}: ${next.emailLabel} (was ${next.tag}: ${next.reason})`
+            : `Manual retry ${retryIndex}: ${next.emailLabel} (was ${next.tag}: ${next.reason})`,
+          'info'
+        );
+        await probeAccountLive(next.account, {
+          indexLabel: manual ? `Watch ${retryIndex}` : `Retry ${retryIndex}`,
+          current: probeTotal,
+          total: probeTotal,
+          awaitUserSubmit: Boolean(manual),
+          keepReviewVisible: Boolean(manual),
+        });
+        if (corrHint) {
+          corrHint.textContent = 'Login runs here while accounts are validated';
+        }
+      }
+
+      // All remaining are locked — wait for skip / retry only (no auto-watch).
+      if (!focusRow?.account) {
+        setLoopInitializingOverlay({
+          active: true,
+          status: VERIFY_COPY.statusReview,
+          detail: `${failedRows.length} failed · locked accounts need Continue or Retry`,
+          current: probeTotal,
+          total: probeTotal,
+          reviewFailed: true,
+          live: '',
+        });
+        renderVerifyFailedReview({ rows: failedRows });
+        const choice = await waitForVerifyManualRetry();
+        if (!isActive() || choice?.action === 'cancel') break;
+        if (choice?.action === 'skip') {
+          log(
+            `Continued without retrying ${failedRows.length} failed account(s): ` +
+              failedRows.map((row) => `${row.emailLabel} (${row.tag})`).join(', '),
+            'warn'
+          );
+          break;
+        }
+        if (choice?.action === 'retry') {
+          const emailKey = choice.emailKey || emailLoopKey(choice.email);
+          const next =
+            failedRows.find((row) => emailLoopKey(row.email) === emailKey) ||
+            failedRows.find(
+              (row) =>
+                String(row.email).toLowerCase() === String(choice.email || '').toLowerCase()
+            );
+          await runAutoRetry(next, { manual: false });
+          if (!isActive()) break;
+          failedRows = buildFailedLoginRows();
+          continue;
+        }
+        continue;
+      }
+
       setLoopInitializingOverlay({
         active: true,
-        status: VERIFY_COPY.statusReview,
-        detail: `${failedRows.length} failed · copy credentials, paste into CorrLinks`,
+        status: VERIFY_COPY.statusWatching,
+        detail: `${failedRows.length} failed · copy ${focusEmail}, paste, click Login`,
         current: probeTotal,
         total: probeTotal,
         reviewFailed: true,
-        live: focusEmail
-          ? `Login page opening · copy credentials for ${focusEmail}`
-          : 'Login page opening…',
+        live: `Watching response for ${focusEmail}…`,
       });
-      renderVerifyFailedReview({ rows: failedRows });
-      // Auto-open CorrLinks login so operators can paste without an extra click.
-      await openPrepareLoginPage({
-        hint: focusEmail
-          ? `Paste ${focusEmail} here, then click Login (or tap I'll log in to watch)`
-          : 'Login page ready — copy email/password from the left and paste here',
+      renderVerifyFailedReview({
+        rows: failedRows,
+        watchingEmail: focusRow.email,
+        watching: true,
       });
-      if (!isActive()) break;
-      const choice = await waitForVerifyManualRetry();
-      if (!isActive() || choice?.action === 'cancel') break;
+
+      // Race: auto-watch Login response vs operator Skip / Retry / Watch another.
+      retryIndex += 1;
+      const watchIndex = retryIndex;
+      log(
+        `Auto-watch login ${watchIndex}: ${focusRow.emailLabel} (was ${focusRow.tag}: ${focusRow.reason})`,
+        'info'
+      );
+      const corrHint = document.querySelector('.app-verifying-corr-hint');
+      if (corrHint) {
+        corrHint.textContent = `Paste ${focusEmail} and click Login — watching response`;
+      }
+
+      const watchPromise = probeAccountLive(focusRow.account, {
+        indexLabel: `Watch ${watchIndex}`,
+        current: probeTotal,
+        total: probeTotal,
+        awaitUserSubmit: true,
+        keepReviewVisible: true,
+      }).then((usable) => ({ type: 'watch', usable }));
+
+      const choicePromise = waitForVerifyManualRetry().then((choice) => ({
+        type: 'choice',
+        choice,
+      }));
+
+      const winner = await Promise.race([watchPromise, choicePromise]);
+      if (!isActive()) {
+        await forceResetCorrlinksPanel().catch(() => null);
+        break;
+      }
+
+      if (winner.type === 'watch') {
+        // Finish waiting for choice resolver so the next loop can wait again.
+        resolveVerifyManualRetry({ action: 'watched' });
+        void choicePromise;
+        if (corrHint) {
+          corrHint.textContent = 'Login runs here while accounts are validated';
+        }
+        failedRows = buildFailedLoginRows();
+        if (winner.usable) {
+          log(`Manual login OK · ${focusRow.emailLabel}`, 'success');
+        }
+        continue;
+      }
+
+      // Operator clicked Skip / Retry / Watch another — stop the in-flight watcher.
+      await forceResetCorrlinksPanel().catch(() => null);
+      void watchPromise;
+      const choice = winner.choice;
+      if (!isActive() || choice?.action === 'cancel' || choice?.action === 'watched') break;
       if (choice?.action === 'skip') {
         log(
           `Continued without retrying ${failedRows.length} failed account(s): ` +
@@ -3982,45 +4143,17 @@ async function verifyAllCorrlinksAccounts({
       const emailKey = choice.emailKey || emailLoopKey(choice.email);
       const next =
         failedRows.find((row) => emailLoopKey(row.email) === emailKey) ||
-        failedRows.find((row) => String(row.email).toLowerCase() === String(choice.email || '').toLowerCase());
+        failedRows.find(
+          (row) => String(row.email).toLowerCase() === String(choice.email || '').toLowerCase()
+        );
       if (!next?.account) continue;
 
-      retryIndex += 1;
-      document.querySelector('.app-verifying-card')?.classList.remove('is-review');
-      if (appVerifyingFailed) appVerifyingFailed.hidden = true;
-      if (appVerifyingSpinner) appVerifyingSpinner.hidden = false;
-      const corrHint = document.querySelector('.app-verifying-corr-hint');
-      if (corrHint && isManualLogin) {
-        corrHint.textContent = 'Type email/password and click Login here';
+      // Same account already being watched — ignore.
+      if (isManualLogin && emailLoopKey(next.email) === emailLoopKey(focusRow.email)) {
+        continue;
       }
-      setLoopInitializingOverlay({
-        active: true,
-        status: isManualLogin ? VERIFY_COPY.statusManualFill : VERIFY_COPY.statusRetry,
-        detail: isManualLogin
-          ? `Manual ${retryIndex} · ${next.emailLabel} · was ${next.tag}`
-          : `Retry ${retryIndex} · ${next.emailLabel} · was ${next.tag}`,
-        current: probeTotal,
-        total: probeTotal,
-        live: isManualLogin
-          ? `Type credentials for ${next.emailLabel} and click Login — watching response…`
-          : `Retrying ${next.emailLabel}…`,
-        logLive: true,
-      });
-      log(
-        isManualLogin
-          ? `Manual login ${retryIndex}: ${next.emailLabel} (was ${next.tag}: ${next.reason}) — you type & click Login`
-          : `Manual retry ${retryIndex}: ${next.emailLabel} (was ${next.tag}: ${next.reason})`,
-        'info'
-      );
-      await probeAccountLive(next.account, {
-        indexLabel: isManualLogin ? `Manual ${retryIndex}` : `Retry ${retryIndex}`,
-        current: probeTotal,
-        total: probeTotal,
-        awaitUserSubmit: isManualLogin,
-      });
-      if (corrHint) {
-        corrHint.textContent = 'Login runs here while accounts are validated';
-      }
+
+      await runAutoRetry(next, { manual: isManualLogin });
       if (!isActive()) break;
       failedRows = buildFailedLoginRows();
     }

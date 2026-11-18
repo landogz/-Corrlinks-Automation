@@ -104,9 +104,9 @@ On first validation, the app probes each unique CorrLinks account. Later, when a
 
 - Progress overlay shows status, percent, and failed accounts.
 - Tags may include **Locked**, **Timeout**, or **Error**.
-- After failures, CorrLinks **login opens automatically** on the right.
+- After failures, CorrLinks **login opens automatically** and the app **watches the Login response** without an extra click.
 - Failed rows show the **email** and **password** with **Copy** buttons for paste into CorrLinks.
-- Use per-account **Retry** (fully automatic), **I'll log in** (you paste credentials and click Login; app only watches the result), or **Continue without retries**.
+- Paste credentials, click **Login**, and the app classifies success/locked/invalid. Use **Retry** (full auto), **Watch this** (switch account), or **Continue without retries**.
 - **Cancel** aborts the prep run.
 
 Later launches with the **same unique logins** reuse **saved validation** and skip the overlay (`Accounts unchanged · using saved validation`).
