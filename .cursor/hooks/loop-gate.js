@@ -27,6 +27,9 @@ const CHECK_FILES = [
   'scripts/smoke-subject.js',
   'scripts/smoke-login-helpers.js',
   'scripts/smoke-corr-bounds.js',
+  'scripts/smoke-appearance.js',
+  'shared/appearance.js',
+  'main/uiPreferences.js',
 ];
 
 function readStdin() {
@@ -92,6 +95,15 @@ function smokeCorrBounds() {
   return [`smoke:corr-bounds failed: ${err || `exit ${r.status}`}`];
 }
 
+function smokeAppearance() {
+  const r = run('npm', ['run', 'smoke:appearance', '--silent'], {
+    timeout: 15_000,
+  });
+  if (r.status === 0) return [];
+  const err = String(r.stderr || r.stdout || '').trim().slice(0, 1200);
+  return [`smoke:appearance failed: ${err || `exit ${r.status}`}`];
+}
+
 function emit(followupMessage) {
   const out = followupMessage ? { followup_message: followupMessage } : {};
   process.stdout.write(`${JSON.stringify(out)}\n`);
@@ -108,13 +120,16 @@ function main() {
       ...smokeSubject(),
       ...smokeLoginHelpers(),
       ...smokeCorrBounds(),
+      ...smokeAppearance(),
     ];
     if (failures.length) {
       console.error('LOOP GATE RED');
       for (const f of failures) console.error(`- ${f}`);
       process.exit(1);
     }
-    console.log('LOOP GATE GREEN (syntax + smoke:subject + smoke:login-helpers + smoke:corr-bounds)');
+    console.log(
+      'LOOP GATE GREEN (syntax + smoke:subject + smoke:login-helpers + smoke:corr-bounds + smoke:appearance)'
+    );
     process.exit(0);
   }
 
@@ -129,6 +144,7 @@ function main() {
     ...smokeSubject(),
     ...smokeLoginHelpers(),
     ...smokeCorrBounds(),
+    ...smokeAppearance(),
   ];
   if (!failures.length) {
     emit();

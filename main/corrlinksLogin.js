@@ -2020,7 +2020,8 @@ async function waitBeforeSignInClick(
   win,
   { email = null, attempt = null, password = null, skipDelay = false } = {}
 ) {
-  // Account validation / fast probes click Login immediately — no 5s settle countdown.
+  // Preparing-workspace and send both wait CORRLINKS_SIGNIN_DELAY_MS (default 5s)
+  // after credentials stick, so Angular/Syncfusion can settle before Login.
   const totalMs = skipDelay ? 0 : SIGN_IN_DELAY_MS;
   if (totalMs <= 0) return;
   const wantEmail = String(email || '');
@@ -2403,7 +2404,7 @@ async function fillAndSubmit(
     };
   }
 
-  // Send/login can pause before Login; Preparing-workspace checks skip the countdown.
+  // Pause before Login after fill (default 5s) so CorrLinks can bind the fields.
   await waitBeforeSignInClick(win, {
     email: wantEmail,
     attempt,
@@ -5346,7 +5347,8 @@ async function loginToCorrlinks({
   }
 
   const useFast = Boolean(fast) || Boolean(skipCompose);
-  const skipSignInDelay = Boolean(skipCompose);
+  // Always wait after fill before clicking Login (default 5s), including Preparing workspace.
+  const skipSignInDelay = false;
   const primary = await attemptLogin(win, {
     email,
     password,
@@ -5355,7 +5357,6 @@ async function loginToCorrlinks({
     pageAlreadyLoaded: Boolean(pageAlreadyLoaded),
     // Account probes + single-inmate send use shorter nav/form/result waits.
     fast: useFast,
-    // Preparing-workspace / account checks: click Login immediately (no 5s countdown).
     skipSignInDelay,
   });
   setStatus(primary);

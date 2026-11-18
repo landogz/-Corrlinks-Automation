@@ -1,8 +1,15 @@
 const fs = require('fs');
 const path = require('path');
+const {
+  normalizeTheme,
+  normalizeDensity,
+  normalizeTypeScale,
+} = require('../shared/appearance');
 
 const DEFAULTS = {
-  theme: 'auto', // auto | light | dark
+  theme: 'auto',
+  density: 'comfortable',
+  typeScale: 'default',
 };
 
 function getPrefsPath() {
@@ -15,11 +22,6 @@ function getPrefsPath() {
   return path.join(__dirname, '..', 'ui-preferences.json');
 }
 
-function normalizeTheme(value) {
-  const theme = String(value || '').toLowerCase();
-  return theme === 'light' || theme === 'dark' || theme === 'auto' ? theme : 'auto';
-}
-
 function loadUiPreferences() {
   try {
     const filePath = getPrefsPath();
@@ -28,18 +30,22 @@ function loadUiPreferences() {
     if (!raw || typeof raw !== 'object') return { ...DEFAULTS };
     return {
       theme: normalizeTheme(raw.theme),
+      density: normalizeDensity(raw.density),
+      typeScale: normalizeTypeScale(raw.typeScale),
     };
   } catch (_) {
     return { ...DEFAULTS };
   }
 }
 
-function saveUiPreferences( partial = {}) {
+function saveUiPreferences(partial = {}) {
   const current = loadUiPreferences();
   const next = {
-    ...current,
-    ...partial,
     theme: normalizeTheme(partial.theme != null ? partial.theme : current.theme),
+    density: normalizeDensity(partial.density != null ? partial.density : current.density),
+    typeScale: normalizeTypeScale(
+      partial.typeScale != null ? partial.typeScale : current.typeScale
+    ),
   };
   const filePath = getPrefsPath();
   try {
@@ -54,4 +60,7 @@ module.exports = {
   loadUiPreferences,
   saveUiPreferences,
   normalizeTheme,
+  normalizeDensity,
+  normalizeTypeScale,
+  DEFAULTS,
 };

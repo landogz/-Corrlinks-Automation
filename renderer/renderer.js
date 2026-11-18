@@ -1,4 +1,72 @@
 const THEME_STORAGE_KEY = 'iea.theme';
+const DENSITY_STORAGE_KEY = 'iea.density';
+const TYPE_STORAGE_KEY = 'iea.typeScale';
+
+const APPEARANCE_FALLBACK = {
+  themes: [
+    { id: 'auto', label: 'Auto', group: 'system', scheme: null, backgroundColor: null, accentColor: null },
+    { id: 'dark', label: 'Dark', group: 'dark', scheme: 'dark', backgroundColor: '#0a0f16', accentColor: '#2dd4bf' },
+    { id: 'light', label: 'Light', group: 'light', scheme: 'light', backgroundColor: '#f3f6fa', accentColor: '#0f766e' },
+    { id: 'midnight', label: 'Midnight', group: 'dark', scheme: 'dark', backgroundColor: '#06080f', accentColor: '#818cf8' },
+    { id: 'slate', label: 'Slate', group: 'dark', scheme: 'dark', backgroundColor: '#0f1419', accentColor: '#38bdf8' },
+    { id: 'graphite', label: 'Graphite', group: 'dark', scheme: 'dark', backgroundColor: '#121212', accentColor: '#d4d4d4' },
+    { id: 'ocean', label: 'Ocean', group: 'dark', scheme: 'dark', backgroundColor: '#07131c', accentColor: '#22d3ee' },
+    { id: 'forest', label: 'Forest', group: 'dark', scheme: 'dark', backgroundColor: '#0a120e', accentColor: '#4ade80' },
+    { id: 'amber-night', label: 'Amber Night', group: 'dark', scheme: 'dark', backgroundColor: '#140e08', accentColor: '#fbbf24' },
+    { id: 'plum', label: 'Plum', group: 'dark', scheme: 'dark', backgroundColor: '#120a16', accentColor: '#c084fc' },
+    { id: 'high-contrast', label: 'High Contrast', group: 'dark', scheme: 'dark', backgroundColor: '#000000', accentColor: '#ffff00' },
+    { id: 'warm-paper', label: 'Warm Paper', group: 'light', scheme: 'light', backgroundColor: '#f7f3eb', accentColor: '#b45309' },
+    { id: 'soft-gray', label: 'Soft Gray', group: 'light', scheme: 'light', backgroundColor: '#eceff3', accentColor: '#475569' },
+    {
+      id: 'high-contrast-light',
+      label: 'High Contrast Light',
+      group: 'light',
+      scheme: 'light',
+      backgroundColor: '#ffffff',
+      accentColor: '#0000ee',
+    },
+  ],
+  densities: [
+    { id: 'comfortable', label: 'Comfortable' },
+    { id: 'compact', label: 'Compact' },
+  ],
+  typeScales: [
+    { id: 'default', label: 'Default' },
+    { id: 'large', label: 'Large' },
+  ],
+};
+
+function getAppearanceCatalog() {
+  const boot = window.__IEA_APPEARANCE__;
+  if (boot?.themes?.length) {
+    return {
+      themes: boot.themes,
+      densities: boot.densities?.length ? boot.densities : APPEARANCE_FALLBACK.densities,
+      typeScales: boot.typeScales?.length ? boot.typeScales : APPEARANCE_FALLBACK.typeScales,
+    };
+  }
+  return APPEARANCE_FALLBACK;
+}
+
+function themeMeta(id) {
+  const catalog = getAppearanceCatalog();
+  return catalog.themes.find((t) => t.id === id) || catalog.themes.find((t) => t.id === 'auto');
+}
+
+function normalizeThemePref(value) {
+  const id = String(value || '').toLowerCase();
+  return themeMeta(id)?.id || 'auto';
+}
+
+function normalizeDensityPref(value) {
+  const id = String(value || '').toLowerCase();
+  return id === 'compact' ? 'compact' : 'comfortable';
+}
+
+function normalizeTypePref(value) {
+  const id = String(value || '').toLowerCase();
+  return id === 'large' ? 'large' : 'default';
+}
 
 function getThemePreference() {
   const boot = window.__IEA_THEME_BOOT__?.preference;
@@ -7,66 +75,300 @@ function getThemePreference() {
     boot ||
     localStorage.getItem(THEME_STORAGE_KEY) ||
     'auto';
-  return pref === 'light' || pref === 'dark' || pref === 'auto' ? pref : 'auto';
+  return normalizeThemePref(pref);
+}
+
+function getDensityPreference() {
+  const boot = window.__IEA_THEME_BOOT__?.density;
+  const pref =
+    document.documentElement.dataset.density ||
+    boot ||
+    localStorage.getItem(DENSITY_STORAGE_KEY) ||
+    'comfortable';
+  return normalizeDensityPref(pref);
+}
+
+function getTypeScalePreference() {
+  const boot = window.__IEA_THEME_BOOT__?.typeScale;
+  const pref =
+    document.documentElement.dataset.type ||
+    boot ||
+    localStorage.getItem(TYPE_STORAGE_KEY) ||
+    'default';
+  return normalizeTypePref(pref);
 }
 
 function resolveThemePreference(pref = getThemePreference()) {
-  if (pref === 'light' || pref === 'dark') return pref;
+  const id = normalizeThemePref(pref);
+  if (id !== 'auto') return id;
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
-function syncThemeSwitchUi(pref = getThemePreference()) {
-  document.querySelectorAll('[data-theme-pref]').forEach((btn) => {
-    btn.classList.toggle('is-active', btn.getAttribute('data-theme-pref') === pref);
-    btn.setAttribute('aria-pressed', btn.getAttribute('data-theme-pref') === pref ? 'true' : 'false');
-  });
-  const aboutTheme = document.getElementById('aboutTheme');
-  if (aboutTheme) {
-    const resolved = resolveThemePreference(pref);
-    aboutTheme.textContent =
-      pref === 'auto' ? `Auto (${resolved})` : pref === 'light' ? 'Light' : 'Dark';
+function resolveSchemePreference(pref = getThemePreference()) {
+  const id = normalizeThemePref(pref);
+  if (id === 'auto') {
+    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   }
+  return themeMeta(id)?.scheme || 'dark';
+}
+
+function syncThemeSwitchUi(
+  pref = getThemePreference(),
+  density = getDensityPreference(),
+  typeScale = getTypeScalePreference()
+) {
+  document.querySelectorAll('[data-theme-pref]').forEach((btn) => {
+    const active = btn.getAttribute('data-theme-pref') === pref;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  document.querySelectorAll('[data-density-pref]').forEach((btn) => {
+    const active = btn.getAttribute('data-density-pref') === density;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  document.querySelectorAll('[data-type-pref]').forEach((btn) => {
+    const active = btn.getAttribute('data-type-pref') === typeScale;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  const resolved = resolveThemePreference(pref);
+  const themeLabel =
+    pref === 'auto'
+      ? `Auto (${themeMeta(resolved)?.label || resolved})`
+      : themeMeta(pref)?.label || pref;
+  const densLabel = density === 'compact' ? 'Compact' : 'Comfortable';
+  const typeLabel = typeScale === 'large' ? 'Large' : 'Default';
+  const summary = `${themeLabel} · ${densLabel} · ${typeLabel}`;
+  const aboutTheme = document.getElementById('aboutTheme');
+  if (aboutTheme) aboutTheme.textContent = summary;
+  document.querySelectorAll('[data-appearance-summary]').forEach((el) => {
+    el.textContent = summary;
+  });
+  const namedActive = pref !== 'auto' && pref !== 'dark' && pref !== 'light';
+  document.querySelectorAll('[data-appearance-open-about]').forEach((btn) => {
+    btn.classList.toggle('is-active', namedActive);
+    btn.setAttribute('aria-pressed', namedActive ? 'true' : 'false');
+  });
+}
+
+function applyAppearance(
+  {
+    theme = getThemePreference(),
+    density = getDensityPreference(),
+    typeScale = getTypeScalePreference(),
+  } = {},
+  { persist = true } = {}
+) {
+  const nextTheme = normalizeThemePref(theme);
+  const nextDensity = normalizeDensityPref(density);
+  const nextType = normalizeTypePref(typeScale);
+  const resolved = resolveThemePreference(nextTheme);
+  const scheme = resolveSchemePreference(nextTheme);
+  const root = document.documentElement;
+  root.dataset.themePref = nextTheme;
+  root.dataset.theme = resolved;
+  root.dataset.scheme = scheme;
+  root.dataset.density = nextDensity;
+  root.dataset.type = nextType;
+  root.style.colorScheme = scheme;
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+      localStorage.setItem(DENSITY_STORAGE_KEY, nextDensity);
+      localStorage.setItem(TYPE_STORAGE_KEY, nextType);
+    } catch (_) {}
+  }
+  syncThemeSwitchUi(nextTheme, nextDensity, nextType);
+  if (persist && window.api?.setAppearance) {
+    window.api.setAppearance({ theme: nextTheme, density: nextDensity, typeScale: nextType }).catch(() => {});
+  } else if (persist && window.api?.setThemePreference) {
+    window.api.setThemePreference(nextTheme).catch(() => {});
+  }
+  return { preference: nextTheme, resolved, scheme, density: nextDensity, typeScale: nextType };
 }
 
 function applyThemePreference(pref = 'auto', { persist = true } = {}) {
-  const next = pref === 'light' || pref === 'dark' || pref === 'auto' ? pref : 'auto';
-  const resolved = resolveThemePreference(next);
-  document.documentElement.dataset.themePref = next;
-  document.documentElement.dataset.theme = resolved;
-  document.documentElement.style.colorScheme = resolved;
-  if (persist) {
-    try {
-      localStorage.setItem(THEME_STORAGE_KEY, next);
-    } catch (_) {}
-  }
-  syncThemeSwitchUi(next);
-  if (persist && window.api?.setThemePreference) {
-    window.api.setThemePreference(next).catch(() => {});
-  }
-  return { preference: next, resolved };
+  return applyAppearance(
+    { theme: pref, density: getDensityPreference(), typeScale: getTypeScalePreference() },
+    { persist }
+  );
 }
 
 async function restoreThemePreference() {
-  let pref = getThemePreference();
+  let theme = getThemePreference();
+  let density = getDensityPreference();
+  let typeScale = getTypeScalePreference();
   try {
     const saved = await window.api?.getThemePreference?.();
-    if (saved?.preference === 'light' || saved?.preference === 'dark' || saved?.preference === 'auto') {
-      pref = saved.preference;
-    }
+    if (saved?.preference) theme = normalizeThemePref(saved.preference);
+    if (saved?.density) density = normalizeDensityPref(saved.density);
+    if (saved?.typeScale) typeScale = normalizeTypePref(saved.typeScale);
   } catch (_) {}
-  applyThemePreference(pref, { persist: true });
+  applyAppearance({ theme, density, typeScale }, { persist: true });
+}
+
+function buildAppearancePanelHtml(mode = 'full') {
+  const catalog = getAppearanceCatalog();
+  const dark = catalog.themes.filter((t) => t.group === 'dark');
+  const light = catalog.themes.filter((t) => t.group === 'light');
+  const dens = catalog.densities;
+  const types = catalog.typeScales;
+
+  if (mode === 'compact') {
+    return `
+      <p class="appearance-label">Appearance</p>
+      <div class="appearance-seg appearance-seg--3" role="group" aria-label="Theme">
+        <button type="button" class="appearance-btn" data-theme-pref="auto" aria-pressed="false">Auto</button>
+        <button type="button" class="appearance-btn" data-theme-pref="dark" aria-pressed="false">Dark</button>
+        <button type="button" class="appearance-btn" data-theme-pref="light" aria-pressed="false">Light</button>
+      </div>
+      <p class="appearance-summary" data-appearance-summary></p>
+      <button type="button" class="appearance-more" data-appearance-open-about aria-pressed="false">
+        More appearance…
+      </button>
+    `;
+  }
+
+  const chip = (t) => {
+    const bg = t.backgroundColor || (t.scheme === 'light' ? '#f3f6fa' : '#0a0f16');
+    const accent =
+      t.accentColor || (t.scheme === 'light' ? '#0f766e' : '#2dd4bf');
+    return `<button type="button" class="appearance-swatch appearance-swatch--card" data-theme-pref="${t.id}" aria-pressed="false" title="${t.label}" aria-label="${t.label}">
+      <span class="appearance-swatch-preview" aria-hidden="true" style="--swatch-bg:${bg};--swatch-accent:${accent}">
+        <span class="appearance-swatch-bg"></span>
+        <span class="appearance-swatch-accent"></span>
+      </span>
+      <span class="appearance-swatch-name">${t.label}</span>
+    </button>`;
+  };
+
+  return `
+    <p class="appearance-label">Appearance</p>
+    <div class="appearance-auto-row" role="group" aria-label="System theme">
+      <button type="button" class="appearance-btn" data-theme-pref="auto" aria-pressed="false">Auto (system)</button>
+    </div>
+    <p class="appearance-group-label">Dark</p>
+    <div class="appearance-chip-grid" role="group" aria-label="Dark themes">
+      ${dark.map(chip).join('')}
+    </div>
+    <p class="appearance-group-label">Light</p>
+    <div class="appearance-chip-grid" role="group" aria-label="Light themes">
+      ${light.map(chip).join('')}
+    </div>
+    <div class="appearance-layout-block">
+      <p class="appearance-group-label">Density</p>
+      <div class="appearance-seg appearance-seg--layout" role="group" aria-label="Density">
+        ${dens
+          .map(
+            (d) =>
+              `<button type="button" class="appearance-btn appearance-btn--seg" data-density-pref="${d.id}" aria-pressed="false">${d.label}</button>`
+          )
+          .join('')}
+      </div>
+      <p class="appearance-group-label">Text size</p>
+      <div class="appearance-seg appearance-seg--layout" role="group" aria-label="Text size">
+        ${types
+          .map(
+            (t) =>
+              `<button type="button" class="appearance-btn appearance-btn--seg" data-type-pref="${t.id}" aria-pressed="false">${t.label}</button>`
+          )
+          .join('')}
+      </div>
+    </div>
+    <p class="appearance-summary" data-appearance-summary></p>
+  `;
+}
+
+function mountAppearancePanels() {
+  document.querySelectorAll('[data-appearance-mount]').forEach((el) => {
+    const mount = el.getAttribute('data-appearance-mount') || 'full';
+    const mode = mount === 'account' ? 'compact' : 'full';
+    el.dataset.appearanceMode = mode;
+    el.innerHTML = buildAppearancePanelHtml(mode);
+  });
+  syncThemeSwitchUi();
+}
+
+function openAboutAppearance() {
+  try {
+    setAccountMenuOpen(false);
+  } catch (_) {}
+  if (typeof renderUpdateUi === 'function') {
+    try {
+      renderUpdateUi(updateStatus);
+    } catch (_) {}
+  }
+  if (aboutDialog && typeof openModalDialog === 'function') {
+    openModalDialog(aboutDialog);
+    aboutDialog.querySelector?.('.about-theme')?.scrollIntoView?.({ block: 'nearest' });
+  }
 }
 
 function wireThemeControls() {
+  mountAppearancePanels();
   document.addEventListener('click', (event) => {
-    const btn = event.target.closest?.('[data-theme-pref]');
-    if (!btn) return;
-    event.preventDefault();
-    applyThemePreference(btn.getAttribute('data-theme-pref') || 'auto');
+    const moreBtn = event.target.closest?.('[data-appearance-open-about]');
+    if (moreBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      openAboutAppearance();
+      return;
+    }
+    const densBtn = event.target.closest?.('[data-density-pref]');
+    if (densBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      applyAppearance(
+        {
+          theme: getThemePreference(),
+          density: densBtn.getAttribute('data-density-pref') || 'comfortable',
+          typeScale: getTypeScalePreference(),
+        },
+        { persist: true }
+      );
+      return;
+    }
+    const typeBtn = event.target.closest?.('[data-type-pref]');
+    if (typeBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      applyAppearance(
+        {
+          theme: getThemePreference(),
+          density: getDensityPreference(),
+          typeScale: typeBtn.getAttribute('data-type-pref') || 'default',
+        },
+        { persist: true }
+      );
+      return;
+    }
+    const themeBtn = event.target.closest?.('[data-theme-pref]');
+    if (themeBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      applyAppearance(
+        {
+          theme: themeBtn.getAttribute('data-theme-pref') || 'auto',
+          density: getDensityPreference(),
+          typeScale: getTypeScalePreference(),
+        },
+        { persist: true }
+      );
+    }
   });
   const mq = window.matchMedia('(prefers-color-scheme: light)');
   const onSystemTheme = () => {
-    if (getThemePreference() === 'auto') applyThemePreference('auto', { persist: false });
+    if (getThemePreference() === 'auto') {
+      applyAppearance(
+        {
+          theme: 'auto',
+          density: getDensityPreference(),
+          typeScale: getTypeScalePreference(),
+        },
+        { persist: false }
+      );
+    }
   };
   if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onSystemTheme);
   else if (typeof mq.addListener === 'function') mq.addListener(onSystemTheme);
@@ -5407,6 +5709,7 @@ async function init() {
       await refreshInmates();
     } else {
       if (sdRemember) sdRemember.checked = false;
+      syncRememberCheckUi();
       setStatusHint('Sign in with SportsData');
       log('Sign in with SportsData email and password to continue', 'warn');
       if (summary.email && !sdPassword?.value) sdPassword?.focus();
@@ -5475,15 +5778,29 @@ sdPassword?.addEventListener('input', () => {
   if (loginError && !loginError.hidden) setLoginError('');
 });
 
-// Explicit toggle — native checkbox hit-testing is unreliable under Electron overlays.
-document.querySelector('label.login-remember')?.addEventListener('click', (event) => {
-  if (!sdRemember || sdRemember.disabled) return;
-  // Let the real input handle its own click; otherwise toggle from label/ui click.
-  if (event.target === sdRemember) return;
-  event.preventDefault();
-  sdRemember.checked = !sdRemember.checked;
-  sdRemember.dispatchEvent(new Event('change', { bubbles: true }));
-});
+function syncRememberCheckUi() {
+  const label = document.querySelector('label.login-remember');
+  if (!label || !sdRemember) return;
+  const on = Boolean(sdRemember.checked);
+  label.classList.toggle('is-checked', on);
+  label.setAttribute('aria-checked', on ? 'true' : 'false');
+}
+
+// Own the toggle in one place — avoids Electron double-toggle with label+input.
+document.querySelector('label.login-remember')?.addEventListener(
+  'click',
+  (event) => {
+    if (!sdRemember || sdRemember.disabled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    sdRemember.checked = !sdRemember.checked;
+    sdRemember.dispatchEvent(new Event('change', { bubbles: true }));
+    syncRememberCheckUi();
+  },
+  true
+);
+sdRemember?.addEventListener('change', syncRememberCheckUi);
+syncRememberCheckUi();
 
 document.getElementById('btnToggleLoginPassword')?.addEventListener('click', () => {
   if (!sdPassword) return;
@@ -5570,6 +5887,7 @@ btnLogout.addEventListener('click', async () => {
     sdPassword.value = '';
     sdEmail.value = '';
     if (sdRemember) sdRemember.checked = false;
+    syncRememberCheckUi();
     fillLoginForm({
       baseUrl: result.baseUrl || sdBaseUrl.value,
       email: '',

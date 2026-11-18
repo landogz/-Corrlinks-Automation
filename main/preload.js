@@ -1,29 +1,60 @@
 const { contextBridge, ipcRenderer } = require('electron');
+const {
+  THEMES,
+  DENSITIES,
+  TYPE_SCALES,
+  listThemesByGroup,
+} = require('../shared/appearance');
 
-function readSavedTheme() {
+function readSavedAppearance() {
   try {
     const result = ipcRenderer.sendSync('ui:getThemePreferenceSync');
-    if (result && (result.preference === 'light' || result.preference === 'dark' || result.preference === 'auto')) {
-      return result;
+    if (result && result.preference) {
+      return {
+        preference: result.preference,
+        resolved: result.resolved || result.preference,
+        scheme: result.scheme || 'dark',
+        density: result.density || 'comfortable',
+        typeScale: result.typeScale || 'default',
+        backgroundColor: result.backgroundColor || null,
+        label: result.label || null,
+      };
     }
   } catch (_) {}
-  return { preference: 'auto', resolved: 'dark' };
+  return {
+    preference: 'auto',
+    resolved: 'dark',
+    scheme: 'dark',
+    density: 'comfortable',
+    typeScale: 'default',
+    backgroundColor: '#0a0f16',
+    label: 'Dark',
+  };
 }
 
-function applyThemeToDocument(preference, resolved) {
+function applyAppearanceToDocument(snap) {
   try {
     const root = document.documentElement;
-    if (!root) return;
-    root.dataset.themePref = preference;
-    root.dataset.theme = resolved;
-    root.style.colorScheme = resolved;
+    if (!root || !snap) return;
+    root.dataset.themePref = snap.preference;
+    root.dataset.theme = snap.resolved;
+    root.dataset.scheme = snap.scheme;
+    root.dataset.density = snap.density || 'comfortable';
+    root.dataset.type = snap.typeScale || 'default';
+    root.style.colorScheme = snap.scheme || 'dark';
   } catch (_) {}
 }
 
-const bootTheme = readSavedTheme();
-applyThemeToDocument(bootTheme.preference, bootTheme.resolved);
+const bootAppearance = readSavedAppearance();
+applyAppearanceToDocument(bootAppearance);
 // Keep a sync snapshot for theme-boot.js / early renderer code.
-contextBridge.exposeInMainWorld('__IEA_THEME_BOOT__', bootTheme);
+contextBridge.exposeInMainWorld('__IEA_THEME_BOOT__', bootAppearance);
+contextBridge.exposeInMainWorld('__IEA_APPEARANCE__', {
+  themes: THEMES,
+  densities: DENSITIES,
+  typeScales: TYPE_SCALES,
+  groups: listThemesByGroup(),
+});
 
 contextBridge.exposeInMainWorld('api', {
   refreshAccounts: () => ipcRenderer.invoke('accounts:refresh'),
@@ -76,4 +107,5 @@ contextBridge.exposeInMainWorld('api', {
   },
   getThemePreference: () => ipcRenderer.invoke('ui:getThemePreference'),
   setThemePreference: (pref) => ipcRenderer.invoke('ui:setThemePreference', pref),
+  setAppearance: (partial) => ipcRenderer.invoke('ui:setAppearance', partial || {}),
 });

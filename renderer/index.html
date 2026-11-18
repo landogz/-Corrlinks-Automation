@@ -87,7 +87,7 @@
             />
           </div>
 
-          <label class="check login-remember" for="sdRemember">
+          <label class="check login-remember">
             <input id="sdRemember" type="checkbox" />
             <span class="check-ui" aria-hidden="true"></span>
             <span class="check-text">Remember email and password on this computer</span>
@@ -104,15 +104,6 @@
         </form>
 
         <p id="configSummary" class="muted meta-line login-meta" hidden></p>
-
-        <div class="theme-switch-wrap login-theme">
-          <p class="theme-switch-label">Appearance</p>
-          <div class="theme-switch" role="group" aria-label="Theme">
-            <button type="button" class="theme-switch-btn" data-theme-pref="auto">Auto</button>
-            <button type="button" class="theme-switch-btn" data-theme-pref="light">Light</button>
-            <button type="button" class="theme-switch-btn" data-theme-pref="dark">Dark</button>
-          </div>
-        </div>
 
         <div class="login-footer">
           <span class="login-footer-label">Designed by</span>
@@ -203,14 +194,11 @@
                 <span class="account-dropdown-label">Signed in</span>
                 <span id="accountMenuEmail" class="account-dropdown-email truncate" title=""></span>
               </div>
-              <div class="theme-switch-wrap account-theme">
-                <p class="theme-switch-label">Appearance</p>
-                <div class="theme-switch" role="group" aria-label="Theme">
-                  <button type="button" class="theme-switch-btn" data-theme-pref="auto">Auto</button>
-                  <button type="button" class="theme-switch-btn" data-theme-pref="light">Light</button>
-                  <button type="button" class="theme-switch-btn" data-theme-pref="dark">Dark</button>
-                </div>
-              </div>
+              <div
+                class="appearance-panel account-theme"
+                data-appearance-mount="account"
+                aria-label="Appearance"
+              ></div>
               <button type="button" class="account-menu-item" role="menuitem" id="btnCopyEmail">
                 Copy email
               </button>
@@ -809,7 +797,7 @@
     </dialog>
 
     <dialog id="aboutDialog" class="modal about-modal">
-      <form method="dialog" class="about-form">
+      <div class="about-form">
         <div class="about-hero">
           <img
             class="about-mark"
@@ -854,14 +842,11 @@
           </div>
         </dl>
 
-        <div class="theme-switch-wrap about-theme">
-          <p class="theme-switch-label">Appearance</p>
-          <div class="theme-switch" role="group" aria-label="Theme">
-            <button type="button" class="theme-switch-btn" data-theme-pref="auto">Auto</button>
-            <button type="button" class="theme-switch-btn" data-theme-pref="light">Light</button>
-            <button type="button" class="theme-switch-btn" data-theme-pref="dark">Dark</button>
-          </div>
-        </div>
+        <div
+          class="appearance-panel about-theme"
+          data-appearance-mount="about"
+          aria-label="Appearance"
+        ></div>
 
         <div class="about-credit">
           <span class="about-credit-label">Designed by</span>
@@ -874,13 +859,13 @@
           >
         </div>
 
-        <div class="row about-actions">
-          <button type="button" class="ghost" id="btnAboutClose" value="cancel">Close</button>
+        <form method="dialog" class="row about-actions">
+          <button type="submit" class="ghost" id="btnAboutClose" value="cancel">Close</button>
           <button type="button" id="btnAboutUpdates" data-update-action="check">
             Check for updates
           </button>
-        </div>
-      </form>
+        </form>
+      </div>
     </dialog>
 
     <dialog id="updatesDialog" class="modal updates-modal">

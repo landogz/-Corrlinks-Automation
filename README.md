@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.52**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.53**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.52-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.52.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.52.exe` or portable `Inside-Scores-0.1.52.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.53-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.53.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.53.exe` or portable `Inside-Scores-0.1.53.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.52.exe`.
+1. Run `Inside-Scores-Setup-0.1.53.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.52.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.53.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 
@@ -81,7 +81,7 @@ Inside Scores does **not** use the microphone. Refresh/CorrLinks loads used to t
 
 ### CorrLinks “Syncfusion still empty” on validate
 
-Preparing your workspace used to hide the CorrLinks pane at 0×0 during probes, which made Angular/Syncfusion reject filled email/password. The overlay is now split: progress / failed accounts on the left, live CorrLinks login on the right — and the prepare pane never collapses to 0×0 mid-probe. **Account validation uses its own CorrLinks webview** (refreshed when probes start); **Start loop uses a second webview** sized to the Automate CorrLinks container under the CORRLINKS header. Account checks click Login immediately (no 5s countdown). Failed-account review centers **Continue without retries** (Cancel is hidden on that screen). Email and password are bound per field (trusted Electron `insertText` + Syncfusion `setProperties` / EJ2), never undirected clipboard paste into the wrong box. A helper-script regression that falsely reported “Could not find email field” on a loaded login page is fixed and guarded by `npm run smoke:login-helpers`. Login is never clicked unless the email value actually stuck in the control. The Status log **Auto-scroll** and **Mask emails** controls are toggle buttons so they stay clickable above the native view.
+Preparing your workspace used to hide the CorrLinks pane at 0×0 during probes, which made Angular/Syncfusion reject filled email/password. The overlay is now split: progress / failed accounts on the left, live CorrLinks login on the right — and the prepare pane never collapses to 0×0 mid-probe. **Account validation uses its own CorrLinks webview** (refreshed when probes start); **Start loop uses a second webview** sized to the Automate CorrLinks container under the CORRLINKS header. After credentials fill, Preparing your workspace waits **5 seconds** (`CORRLINKS_SIGNIN_DELAY_MS`, default `5000`) before clicking Login so Syncfusion can settle. Failed-account review centers **Continue without retries** (Cancel is hidden on that screen). Email and password are bound per field (trusted Electron `insertText` + Syncfusion `setProperties` / EJ2), never undirected clipboard paste into the wrong box. A helper-script regression that falsely reported “Could not find email field” on a loaded login page is fixed and guarded by `npm run smoke:login-helpers`. Login is never clicked unless the email value actually stuck in the control. The Status log **Auto-scroll** and **Mask emails** controls are toggle buttons so they stay clickable above the native view.
 
 ## Usage
 
@@ -99,6 +99,13 @@ The app will:
 - set subject from America/New_York wall time (see below)
 - paste selected Inmate Exchange TXT parts and **Send** each part (packaged builds only)
 - track failed recipients / probe failures with per-account **Retry**
+
+### Appearance
+
+- **Account menu:** quick **Auto / Dark / Light**, plus **More appearance…** (opens About).
+- **About:** full theme chips (Midnight, Slate, Graphite, Ocean, Forest, Amber Night, Plum, High Contrast, Warm Paper, Soft Gray, High Contrast Light), plus **Density** (Comfortable / Compact) and **Text size** (Default / Large).
+
+Choices persist in `ui-preferences.json` (theme, density, typeScale).
 
 ### Dev / test (`npm start`)
 
@@ -192,8 +199,9 @@ Packaged builds check GitHub Releases on startup and via **Updates**.
 npm run smoke:sportsdata
 npm run smoke:exchange
 npm run smoke:subject
+npm run smoke:appearance
 npm run smoke:corrlinks
-npm run gate              # loop-engineering mechanical check (syntax + subject)
+npm run gate              # loop-engineering mechanical check (syntax + smokes)
 ```
 
 ### Loop engineering (Cursor agents)

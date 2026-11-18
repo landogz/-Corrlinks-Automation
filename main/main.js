@@ -45,7 +45,19 @@ const {
 } = require('./subject');
 const { applyContinuationPrefix } = require('./exchangeFiles');
 const { setupAutoUpdater, registerUpdateIpc } = require('./updater');
-const { loadUiPreferences, saveUiPreferences, normalizeTheme } = require('./uiPreferences');
+const {
+  loadUiPreferences,
+  saveUiPreferences,
+  normalizeTheme,
+  normalizeDensity,
+  normalizeTypeScale,
+} = require('./uiPreferences');
+const {
+  resolveScheme,
+  resolveThemeId,
+  getWindowBackground,
+  getThemeMeta,
+} = require('../shared/appearance');
 const {
   installDenyMediaPermissions,
   applyMediaCommandLineSwitches,
@@ -55,7 +67,7 @@ const {
 applyMediaCommandLineSwitches();
 
 let controlWindow = null;
-let uiPreferences = { theme: 'auto' };
+let uiPreferences = { theme: 'auto', density: 'comfortable', typeScale: 'default' };
 let cachedAccounts = [];
 const sportsData = new SportsDataClient();
 // Force-stop can leave a timer/listener touching a destroyed WebContents. Swallow
@@ -120,7 +132,9 @@ function createControlWindow() {
     minWidth: 960,
     minHeight: 640,
     title: 'Inside Scores',
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0a0f16' : '#f3f6fa',
+    backgroundColor: getWindowBackground(uiPreferences.theme, {
+      systemLight: !nativeTheme.shouldUseDarkColors,
+    }),
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     ...(process.platform === 'darwin'
       ? {
@@ -181,53 +195,120 @@ function createControlWindow() {
   });
 }
 
+function appearanceSnapshot(prefs = uiPreferences) {
+  const preference = normalizeTheme(prefs.theme);
+  const density = normalizeDensity(prefs.density);
+  const typeScale = normalizeTypeScale(prefs.typeScale);
+  const systemDark = nativeTheme.shouldUseDarkColors;
+  const systemLight = !systemDark;
+  const scheme =
+    preference === 'auto'
+      ? systemDark
+        ? 'dark'
+        : 'light'
+      : resolveScheme(preference, { systemDark });
+  const resolvedTheme = resolveThemeId(preference, { systemLight });
+  const backgroundColor = getWindowBackground(preference, { systemLight });
+  return {
+    preference,
+    resolved: resolvedTheme,
+    scheme,
+    density,
+    typeScale,
+    backgroundColor,
+    label: getThemeMeta(resolvedTheme).label,
+  };
+}
+
 function applyWindowChromeTheme() {
-  const dark = nativeTheme.shouldUseDarkColors;
-  const bg = dark ? '#0a0f16' : '#f3f6fa';
+  const snap = appearanceSnapshot();
   if (controlWindow && !controlWindow.isDestroyed()) {
-    controlWindow.setBackgroundColor(bg);
+    controlWindow.setBackgroundColor(snap.backgroundColor);
   }
-  return { resolved: dark ? 'dark' : 'light', backgroundColor: bg };
+  return snap;
 }
 
 function applyThemePreference(pref = 'auto', { persist = true } = {}) {
   const preference = normalizeTheme(pref);
+  const meta = getThemeMeta(preference);
   nativeTheme.themeSource =
-    preference === 'light' || preference === 'dark' ? preference : 'system';
+    preference === 'auto' ? 'system' : meta.scheme === 'light' ? 'light' : 'dark';
   if (persist) {
-    uiPreferences = saveUiPreferences({ theme: preference });
+    uiPreferences = saveUiPreferences({
+      theme: preference,
+      density: uiPreferences.density,
+      typeScale: uiPreferences.typeScale,
+    });
   } else {
     uiPreferences = { ...uiPreferences, theme: preference };
   }
   return {
     ok: true,
-    preference,
+    ...applyWindowChromeTheme(),
+  };
+}
+
+function applyAppearancePreferences(partial = {}, { persist = true } = {}) {
+  const next = {
+    theme: normalizeTheme(partial.theme != null ? partial.theme : uiPreferences.theme),
+    density: normalizeDensity(
+      partial.density != null ? partial.density : uiPreferences.density
+    ),
+    typeScale: normalizeTypeScale(
+      partial.typeScale != null ? partial.typeScale : uiPreferences.typeScale
+    ),
+  };
+  const meta = getThemeMeta(next.theme);
+  nativeTheme.themeSource =
+    next.theme === 'auto' ? 'system' : meta.scheme === 'light' ? 'light' : 'dark';
+  if (persist) {
+    uiPreferences = saveUiPreferences(next);
+  } else {
+    uiPreferences = { ...uiPreferences, ...next };
+  }
+  return {
+    ok: true,
     ...applyWindowChromeTheme(),
   };
 }
 
 function registerIpc() {
   ipcMain.on('ui:getThemePreferenceSync', (event) => {
-    const preference = normalizeTheme(uiPreferences?.theme || loadUiPreferences().theme);
-    nativeTheme.themeSource =
-      preference === 'light' || preference === 'dark' ? preference : 'system';
-    event.returnValue = {
-      preference,
-      resolved: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+    const loaded = uiPreferences?.theme ? uiPreferences : loadUiPreferences();
+    uiPreferences = {
+      theme: normalizeTheme(loaded.theme),
+      density: normalizeDensity(loaded.density),
+      typeScale: normalizeTypeScale(loaded.typeScale),
     };
+    const meta = getThemeMeta(uiPreferences.theme);
+    nativeTheme.themeSource =
+      uiPreferences.theme === 'auto'
+        ? 'system'
+        : meta.scheme === 'light'
+          ? 'light'
+          : 'dark';
+    event.returnValue = appearanceSnapshot(uiPreferences);
   });
 
   ipcMain.handle('ui:getThemePreference', async () => {
-    const preference = normalizeTheme(uiPreferences?.theme || loadUiPreferences().theme);
+    const loaded = uiPreferences?.theme ? uiPreferences : loadUiPreferences();
+    uiPreferences = {
+      theme: normalizeTheme(loaded.theme),
+      density: normalizeDensity(loaded.density),
+      typeScale: normalizeTypeScale(loaded.typeScale),
+    };
     return {
       ok: true,
-      preference,
-      resolved: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+      ...appearanceSnapshot(uiPreferences),
     };
   });
 
   ipcMain.handle('ui:setThemePreference', async (_event, pref = 'auto') => {
     return applyThemePreference(pref, { persist: true });
+  });
+
+  ipcMain.handle('ui:setAppearance', async (_event, partial = {}) => {
+    return applyAppearancePreferences(partial || {}, { persist: true });
   });
 
   ipcMain.handle('config:summary', async () => {
@@ -763,7 +844,7 @@ app.whenReady().then(() => {
   installDenyMediaPermissions();
   reloadSavedCredentials();
   uiPreferences = loadUiPreferences();
-  applyThemePreference(uiPreferences.theme, { persist: false });
+  applyAppearancePreferences(uiPreferences, { persist: false });
   registerIpc();
   registerUpdateIpc({
     allowQuitForUpdate: () => {
