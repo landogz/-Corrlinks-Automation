@@ -3440,18 +3440,55 @@ function renderVerifyFailedReview({ rows = [] } = {}) {
     const li = document.createElement('li');
     if (info.locked) li.classList.add('is-locked');
 
+    const rawEmail = String(row.email || row.account?.email || '').trim();
+    const rawPassword = String(row.password || row.account?.password || '');
+
     const main = document.createElement('div');
     main.className = 'fail-main';
     const tag = document.createElement('div');
     tag.className = 'fail-tag';
     tag.textContent = info.tag;
-    const email = document.createElement('div');
-    email.className = 'fail-email';
-    email.textContent = row.emailLabel || maskSensitive(row.email);
     const reason = document.createElement('div');
     reason.className = 'fail-reason';
     reason.textContent = row.reason || info.reason;
-    main.append(tag, email, reason);
+
+    const creds = document.createElement('div');
+    creds.className = 'fail-creds';
+
+    function makeCredRow(label, value, copyLabel) {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'fail-cred-row';
+      const lab = document.createElement('span');
+      lab.className = 'fail-cred-label';
+      lab.textContent = label;
+      const val = document.createElement('code');
+      val.className = 'fail-cred-value';
+      val.textContent = value || '—';
+      val.title = value || '';
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'ghost tiny fail-cred-copy';
+      copyBtn.textContent = 'Copy';
+      copyBtn.disabled = !value;
+      copyBtn.title = value ? `Copy ${copyLabel}` : `No ${copyLabel}`;
+      copyBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!value) return;
+        navigator.clipboard.writeText(String(value)).then(
+          () => toast(`Copied ${copyLabel}`, 'success'),
+          () => toast('Copy failed', 'error')
+        );
+      });
+      rowEl.append(lab, val, copyBtn);
+      return rowEl;
+    }
+
+    creds.append(
+      makeCredRow('Email', rawEmail, 'email'),
+      makeCredRow('Password', rawPassword, 'password')
+    );
+    main.append(tag, reason, creds);
 
     const actions = document.createElement('div');
     actions.className = 'fail-actions';
@@ -3460,7 +3497,7 @@ function renderVerifyFailedReview({ rows = [] } = {}) {
     retryBtn.type = 'button';
     retryBtn.className = 'action-secondary tiny fail-retry';
     retryBtn.textContent = 'Retry';
-    retryBtn.title = `Auto-retry ${row.emailLabel || maskSensitive(row.email)}`;
+    retryBtn.title = `Auto-retry ${rawEmail || row.emailLabel || 'account'}`;
     retryBtn.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -3475,7 +3512,7 @@ function renderVerifyFailedReview({ rows = [] } = {}) {
     fillBtn.type = 'button';
     fillBtn.className = 'ghost tiny fail-fill';
     fillBtn.textContent = "I'll log in";
-    fillBtn.title = `Open CorrLinks for ${row.emailLabel || maskSensitive(row.email)} — you type & click Login`;
+    fillBtn.title = `Open CorrLinks for ${rawEmail || row.emailLabel || 'account'} — you type & click Login`;
     fillBtn.disabled = Boolean(info.locked);
     fillBtn.addEventListener('click', (event) => {
       event.preventDefault();
@@ -3497,7 +3534,7 @@ function renderVerifyFailedReview({ rows = [] } = {}) {
     appVerifyingFailedHint.textContent = rows.length
       ? `${rows.length} failed` +
         (lockedCount ? ` · ${lockedCount} locked` : '') +
-        ` · Retry (auto) or I'll log in (you type & click Login)`
+        ` · copy email/password, then Retry or I'll log in`
       : 'No failed accounts left.';
   }
   if (btnVerifySkipFailed) {
@@ -3872,6 +3909,7 @@ async function verifyAllCorrlinksAccounts({
         return {
           account,
           email: account.email,
+          password: account.password || '',
           emailLabel: maskSensitive(account.email),
           reason: info.reason,
           tag: info.tag,

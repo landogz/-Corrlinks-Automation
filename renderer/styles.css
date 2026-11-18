@@ -1600,6 +1600,49 @@ body.is-login .toast-host {
   word-break: break-word;
 }
 
+.app-verifying-failed-list .fail-creds {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.app-verifying-failed-list .fail-cred-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.app-verifying-failed-list .fail-cred-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.app-verifying-failed-list .fail-cred-value {
+  min-width: 0;
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 80%, transparent);
+  background: color-mix(in srgb, var(--bg-surface-2) 85%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-primary);
+  word-break: break-all;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.app-verifying-failed-list .fail-cred-copy {
+  min-height: 26px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
 .app-verifying-failed-list .fail-tag {
   display: inline-flex;
   align-items: center;
