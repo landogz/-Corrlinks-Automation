@@ -245,6 +245,13 @@ function registerIpc() {
       subjectToday: buildCorrlinksSubject(),
       envPath,
       credentialsPath: cfg.credentialsPath,
+      packaged: Boolean(app.isPackaged),
+      allowCorrlinksSend: (() => {
+        const env = String(process.env.CORRLINKS_ALLOW_SEND || '').trim().toLowerCase();
+        if (env === '1' || env === 'true' || env === 'yes') return true;
+        if (env === '0' || env === 'false' || env === 'no') return false;
+        return Boolean(app.isPackaged);
+      })(),
     };
   });
 
@@ -479,12 +486,15 @@ function registerIpc() {
   /** Login only (no compose) — used by grouped Start loop. */
   ipcMain.handle('corrlinks:loginAccount', async (_event, payload = {}) => {
     try {
-      const status = await loginAccount({
-        email: payload.email,
-        password: payload.password,
-        secondEmail: payload.secondEmail,
-        secondPassword: payload.secondPassword,
-      });
+      const status = await loginAccount(
+        {
+          email: payload.email,
+          password: payload.password,
+          secondEmail: payload.secondEmail,
+          secondPassword: payload.secondPassword,
+        },
+        { fillPane: Boolean(payload.fillPane) }
+      );
       const ok =
         status.state === 'success' ||
         status.state === 'manual' ||

@@ -749,7 +749,9 @@ body.is-login .toast-host {
 
 .col-corrlinks {
   overflow: hidden;
-  min-height: min(48vh, 420px);
+  min-height: 0;
+  flex: 1 1 auto;
+  height: 100%;
 }
 
 .compose-card {
@@ -4428,6 +4430,17 @@ button.template-chip.is-active:hover:not(:disabled) {
 .action-send:disabled { opacity: 0.7; }
 
 .corr-card { display: flex; flex-direction: column; min-height: 0; flex: 1; padding: 0; overflow: hidden; }
+.col-corrlinks {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.col-corrlinks .corr-card {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
 .corr-head {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 12px 14px; border-bottom: 1px solid var(--border-subtle); flex: 0 0 auto;
@@ -4464,8 +4477,15 @@ button.template-chip.is-active:hover:not(:disabled) {
 .corr-toolbar { display: inline-flex; gap: 4px; flex: 0 0 auto; }
 .tiny-icon { width: 28px; height: 28px; font-size: 14px; font-weight: 600; }
 .corr-pane {
-  position: relative; flex: 1; min-height: 220px; background: var(--panel-deeper);
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 220px;
+  height: 100%;
+  background: var(--panel-deeper);
   border-radius: 0 0 var(--radius-card) var(--radius-card);
+  overflow: hidden;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
 }
 @media (max-height: 420px) {
   .corr-pane { min-height: 120px; }
@@ -4475,6 +4495,41 @@ button.template-chip.is-active:hover:not(:disabled) {
 }
 @media (max-height: 420px) {
   .col-corrlinks .corr-card { min-height: 160px; }
+}
+
+/* Live embed: flush full-bleed well so the native view has no floating gutters. */
+body.corr-embed-live .col-corrlinks {
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+}
+body.corr-embed-live .col-corrlinks .corr-card {
+  background: var(--bg-surface-1);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+}
+body.corr-embed-live .col-corrlinks .corr-head {
+  flex: 0 0 auto;
+}
+body.corr-embed-live .corr-pane,
+#corrPane.is-live {
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  height: auto;
+  border-radius: 0;
+  background: #0b1220;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+body.corr-embed-live .corr-placeholder {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 .corr-placeholder {
   position: absolute; inset: 0; display: grid; place-content: center; justify-items: center;

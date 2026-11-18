@@ -22,8 +22,11 @@ const CHECK_FILES = [
   'main/subject.js',
   'main/appTimezone.js',
   'renderer/renderer.js',
+  'main/corrBounds/paneBounds.js',
+  'main/corrViews/createCorrWebContentsView.js',
   'scripts/smoke-subject.js',
   'scripts/smoke-login-helpers.js',
+  'scripts/smoke-corr-bounds.js',
 ];
 
 function readStdin() {
@@ -80,6 +83,15 @@ function smokeLoginHelpers() {
   return [`smoke:login-helpers failed: ${err || `exit ${r.status}`}`];
 }
 
+function smokeCorrBounds() {
+  const r = run('npm', ['run', 'smoke:corr-bounds', '--silent'], {
+    timeout: 15_000,
+  });
+  if (r.status === 0) return [];
+  const err = String(r.stderr || r.stdout || '').trim().slice(0, 1200);
+  return [`smoke:corr-bounds failed: ${err || `exit ${r.status}`}`];
+}
+
 function emit(followupMessage) {
   const out = followupMessage ? { followup_message: followupMessage } : {};
   process.stdout.write(`${JSON.stringify(out)}\n`);
@@ -91,13 +103,18 @@ function main() {
 
   // Manual CLI run: print human summary + exit code.
   if (!isHook) {
-    const failures = [...syntaxCheck(), ...smokeSubject(), ...smokeLoginHelpers()];
+    const failures = [
+      ...syntaxCheck(),
+      ...smokeSubject(),
+      ...smokeLoginHelpers(),
+      ...smokeCorrBounds(),
+    ];
     if (failures.length) {
       console.error('LOOP GATE RED');
       for (const f of failures) console.error(`- ${f}`);
       process.exit(1);
     }
-    console.log('LOOP GATE GREEN (syntax + smoke:subject + smoke:login-helpers)');
+    console.log('LOOP GATE GREEN (syntax + smoke:subject + smoke:login-helpers + smoke:corr-bounds)');
     process.exit(0);
   }
 
@@ -107,7 +124,12 @@ function main() {
     process.exit(0);
   }
 
-  const failures = [...syntaxCheck(), ...smokeSubject(), ...smokeLoginHelpers()];
+  const failures = [
+    ...syntaxCheck(),
+    ...smokeSubject(),
+    ...smokeLoginHelpers(),
+    ...smokeCorrBounds(),
+  ];
   if (!failures.length) {
     emit();
     process.exit(0);

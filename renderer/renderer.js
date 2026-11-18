@@ -500,6 +500,26 @@ function setAccountMenuOpen(open) {
 
 /** True once we intentionally opened the native CorrLinks embed for this session. */
 let corrEmbedRevealed = false;
+let corrEmbedLiveSyncTimer = null;
+
+function setCorrEmbedLive(on) {
+  corrEmbedRevealed = Boolean(on);
+  document.body.classList.toggle('corr-embed-live', corrEmbedRevealed);
+  document.getElementById('corrPane')?.classList.toggle('is-live', corrEmbedRevealed);
+  if (corrEmbedLiveSyncTimer) {
+    clearInterval(corrEmbedLiveSyncTimer);
+    corrEmbedLiveSyncTimer = null;
+  }
+  // While the native view is showing, keep bounds locked to #corrPane (loop/layout thrash
+  // previously left a floating white rectangle with empty dark space under it).
+  if (corrEmbedRevealed) {
+    syncCorrPaneBounds();
+    corrEmbedLiveSyncTimer = setInterval(() => {
+      if (!corrEmbedRevealed || isCorrEmbedBlocked()) return;
+      syncCorrPaneBounds();
+    }, 250);
+  }
+}
 
 function setCorrPlaceholderVisible(visible) {
   if (!corrPlaceholder) return;
@@ -931,6 +951,12 @@ function setConfigSummary(summary = {}) {
   if (configSummary) {
     configSummary.hidden = true;
     configSummary.textContent = '';
+  }
+  if (summary && summary.allowCorrlinksSend === false) {
+    document.body.classList.add('is-dev-no-send');
+    log('Dev test — CorrLinks Send is disabled (compose only)', 'warn');
+  } else {
+    document.body.classList.remove('is-dev-no-send');
   }
 }
 
@@ -2749,7 +2775,7 @@ async function startCorrlinksLogin(options = {}) {
       : `CorrLinks ${assignment.viaLabel}: ${inmate.name || inmate.inmate_id || inmate.id}…`
   );
   // Mark embed live first — otherwise setCorrlinksConnected(false) flashes the empty placeholder.
-  corrEmbedRevealed = true;
+  setCorrEmbedLive(true);
   setCorrPlaceholderVisible(false);
   setCorrPanelBusy(send ? 'Sending…' : 'Logging in…');
   setCorrlinksConnected(false, true);
@@ -3781,8 +3807,9 @@ async function startCorrlinksAccountLogin(group, options = {}) {
   setStatusHint(`Logging in ${maskSensitive(group.email)}…`);
   setCorrPanelBusy('Logging in…');
   setCorrlinksConnected(false, true);
-  // Preparing-workspace: show CorrLinks in the overlay's right pane. Otherwise open the main pane.
-  if (quietToast || bootVerifyRunning || loopInitializingActive) {
+  // Overlay probes use the Preparing right slot. Start loop login must fill #corrPane
+  // (quietToast used to wrongly reopen the small preview card).
+  if (bootVerifyRunning || loopInitializingActive) {
     await revealCorrlinksForPrepare().catch(() => null);
   } else {
     await revealCorrlinksEmbed().catch(() => null);
@@ -3799,6 +3826,7 @@ async function startCorrlinksAccountLogin(group, options = {}) {
       password: group.password,
       secondEmail: group.secondEmail,
       secondPassword: group.secondPassword,
+      fillPane: !(loopInitializingActive || bootVerifyRunning),
     });
     const status = result.status || {};
     const viaSecond = Boolean(status.usedSecondAccount);
@@ -4845,7 +4873,9 @@ function renderUpdateUi(status = updateStatus) {
     chipText = `v${version} · ${macDmg ? 'Open installer' : 'Restart to update'}`;
   } else if (state === 'checking') chipText = `v${version} · Checking…`;
   else if (state === 'error') chipText = `v${version} · Update failed`;
-  else if (state === 'dev') chipText = version ? `v${version}` : 'v…';
+  else if (state === 'dev') {
+    chipText = version ? `v${version} · Dev (no Send)` : 'v… · Dev';
+  }
 
   if (updateChipLabel) updateChipLabel.textContent = chipText;
   if (updateChip) {
@@ -5062,7 +5092,7 @@ function openModalDialog(dialog) {
   if (!dialog || typeof dialog.showModal !== 'function') return false;
   // Native WebContentsView paints above HTML and steals clicks — collapse + detach it.
   if (corrEmbedRevealed) modalPausedCorrReveal = true;
-  corrEmbedRevealed = false;
+  setCorrEmbedLive(false);
   forceHideCorrForModal();
   if (!dialog.open) dialog.showModal();
   // Keep re-asserting hide while open (status sync / ensureVisible can revive the view).
@@ -5084,7 +5114,7 @@ function openModalDialog(dialog) {
     dialog.addEventListener('close', () => {
       if (!anyModalDialogOpen()) stopModalCorrHideWatch();
       if (modalPausedCorrReveal || corrlinksLoginBusy || loopRunning) {
-        corrEmbedRevealed = true;
+        setCorrEmbedLive(true);
         setCorrPlaceholderVisible(false);
       }
       modalPausedCorrReveal = false;
@@ -5831,6 +5861,14 @@ function isCorrEmbedBlocked() {
   return false;
 }
 
+function overlayCorrSlotActive() {
+  return Boolean(
+    (loopInitializingActive || bootVerifyRunning) &&
+      loopInitializing &&
+      !loopInitializing.hidden
+  );
+}
+
 function prepareCorrFallbackBounds() {
   const w = Math.max(320, Math.round((window.innerWidth || 1200) * 0.52));
   const h = Math.max(280, Math.round((window.innerHeight || 800) * 0.72));
@@ -5853,14 +5891,14 @@ function hideCorrEmbedNow({ force = false } = {}) {
   if (corrEmbedRevealed || corrlinksLoginBusy) return;
   // Preparing workspace: keep the right-hand slot sized (avoid 0×0 flash between probes).
   // If the verify pane has not laid out yet, use a right-half fallback — never 0×0.
-  if (
-    loopInitializingActive ||
-    bootVerifyRunning ||
-    document.body.classList.contains('is-preparing-workspace')
-  ) {
-    const bounds = measureVerifyCorrPaneBounds() || prepareCorrFallbackBounds();
-    window.api.setCorrBounds({ ...bounds, force: true });
-    return;
+  if (overlayCorrSlotActive() || document.body.classList.contains('is-preparing-workspace')) {
+    if (!overlayCorrSlotActive()) {
+      document.body.classList.remove('is-preparing-workspace');
+    } else {
+      const bounds = measureVerifyCorrPaneBounds() || prepareCorrFallbackBounds();
+      window.api.setCorrBounds({ ...bounds, slot: 'accounts', force: true });
+      return;
+    }
   }
   window.api.setCorrBounds({ x: 0, y: 0, width: 0, height: 0, force: false });
 }
@@ -5885,7 +5923,7 @@ function measureVerifyCorrPaneBounds() {
  * Compute #corrPane bounds for the native WebContentsView (null when blocked/too small).
  */
 function measureCorrPaneBounds() {
-  if (loopInitializingActive || bootVerifyRunning) {
+  if (overlayCorrSlotActive()) {
     return measureVerifyCorrPaneBounds();
   }
   const pane = document.getElementById('corrPane');
@@ -5909,19 +5947,15 @@ function measureCorrPaneBounds() {
     footer?.top ?? app?.bottom ?? window.innerHeight
   );
 
-  const left = Math.min(Math.max(rect.left, clipLeft), clipRight);
-  const top = Math.min(Math.max(rect.top, clipTop), clipBottom);
-  const right = Math.max(left, Math.min(rect.right, clipRight));
-  const bottom = Math.max(top, Math.min(rect.bottom, clipBottom));
+  // Floor/ceil so the native view covers the full CSS box (no 1px dark gutters).
+  const left = Math.min(Math.max(Math.floor(rect.left), Math.floor(clipLeft)), Math.floor(clipRight));
+  const top = Math.min(Math.max(Math.floor(rect.top), Math.floor(clipTop)), Math.floor(clipBottom));
+  const right = Math.max(left, Math.min(Math.ceil(rect.right), Math.ceil(clipRight)));
+  const bottom = Math.max(top, Math.min(Math.ceil(rect.bottom), Math.ceil(clipBottom)));
   const width = Math.max(0, right - left);
   const height = Math.max(0, bottom - top);
   if (width < 8 || height < 8) return null;
-  return {
-    x: Math.round(left),
-    y: Math.round(top),
-    width: Math.round(width),
-    height: Math.round(height),
-  };
+  return { x: left, y: top, width, height };
 }
 
 /**
@@ -5948,14 +5982,14 @@ async function revealCorrlinksForPrepare() {
   }
   try {
     if (window.api?.setCorrBounds) {
-      await window.api.setCorrBounds({ ...bounds, force: true });
+      await window.api.setCorrBounds({ ...bounds, slot: 'accounts', force: true });
     }
     if (window.api?.warmCorrlinksPanel) {
-      await window.api.warmCorrlinksPanel({ bounds });
+      await window.api.warmCorrlinksPanel({ bounds, slot: 'accounts', refresh: true });
     }
     const again = measureVerifyCorrPaneBounds() || bounds;
     if (again && window.api?.setCorrBounds) {
-      await window.api.setCorrBounds({ ...again, force: true });
+      await window.api.setCorrBounds({ ...again, slot: 'accounts', force: true });
       bounds = again;
     }
   } catch (error) {
@@ -5965,63 +5999,102 @@ async function revealCorrlinksForPrepare() {
   return bounds;
 }
 
+function applyCorrBounds(bounds, { fill = false, fitContainer = false, slot = 'loop' } = {}) {
+  if (!window.api?.setCorrBounds || !bounds) return null;
+  return window.api.setCorrBounds({
+    ...bounds,
+    slot,
+    fill: Boolean(fill),
+    fitContainer: Boolean(fitContainer || fill),
+    force: true,
+  });
+}
+
 /**
- * Hide the empty-state HTML and open the native CorrLinks view at real pane bounds.
- * Await this before login/send so the site is visible immediately.
+ * Fill the Automate CorrLinks column (never the leftover Preparing preview island).
  */
+function measureLoopFillCorrBounds() {
+  const col = document.querySelector('.col-corrlinks');
+  const pane = document.getElementById('corrPane');
+  const head = document.querySelector('.col-corrlinks .corr-head');
+  const footer = document.querySelector('.statusbar');
+  if (!col && !pane) return null;
+  const colR = (col || pane).getBoundingClientRect();
+  const paneR = pane?.getBoundingClientRect();
+  const headBottom = head ? Math.ceil(head.getBoundingClientRect().bottom) : Math.floor(colR.top);
+  const footerTop = Math.floor(footer?.getBoundingClientRect().top ?? colR.bottom);
+  const left = Math.floor(paneR?.left ?? colR.left);
+  const right = Math.ceil(paneR?.right ?? colR.right);
+  // Always sit under the CORRLINKS header — never cover it.
+  const top = Math.max(headBottom, Math.floor(paneR?.top ?? headBottom));
+  const bottom = Math.min(Math.ceil(paneR?.bottom ?? colR.bottom), footerTop);
+  const width = Math.max(0, right - left);
+  const height = Math.max(0, bottom - top);
+  if (width < 80 || height < 80) return null;
+  return { x: left, y: top, width, height };
+}
+
 /** Fallback when #corrPane reports a tiny rect (flex not settled yet). */
 function measureCorrColumnFallbackBounds() {
+  // Prefer the pane under the CorrLinks header — never cover the toolbar with the native view.
+  const pane = document.getElementById('corrPane');
   const card =
+    pane ||
     document.querySelector('.col-corrlinks .corr-card') ||
-    document.querySelector('.col-corrlinks') ||
-    document.getElementById('corrPane');
+    document.querySelector('.col-corrlinks');
   if (!card) return null;
+  const head = document.querySelector('.col-corrlinks .corr-head');
   const rect = card.getBoundingClientRect();
+  const headBottom = head ? Math.ceil(head.getBoundingClientRect().bottom) : Math.floor(rect.top);
   const footer = document.querySelector('.statusbar')?.getBoundingClientRect();
-  const bottom = Math.min(rect.bottom, footer?.top ?? rect.bottom);
-  const width = Math.max(0, rect.width);
-  const height = Math.max(0, bottom - rect.top);
+  const top = pane ? Math.floor(rect.top) : headBottom;
+  const bottom = Math.min(Math.ceil(rect.bottom), Math.floor(footer?.top ?? rect.bottom));
+  const left = Math.floor(rect.left);
+  const right = Math.ceil(rect.right);
+  const width = Math.max(0, right - left);
+  const height = Math.max(0, bottom - top);
   if (width < 80 || height < 80) return null;
-  return {
-    x: Math.round(rect.left),
-    y: Math.round(rect.top),
-    width: Math.round(width),
-    height: Math.round(height),
-  };
+  return { x: left, y: top, width, height };
 }
 
 async function revealCorrlinksEmbed() {
   closeInmateOptions();
   setAccountMenuOpen(false);
-  corrEmbedRevealed = true;
+  document.body.classList.remove('is-preparing-workspace');
+  setCorrEmbedLive(true);
   setCorrPlaceholderVisible(false);
   setCorrPanelBusy('Opening CorrLinks…');
-  // Force layout so getBoundingClientRect is accurate after combobox close.
+  // Force layout so getBoundingClientRect is accurate after combobox close / loop start.
   void document.getElementById('corrPane')?.offsetWidth;
-  let bounds = measureCorrPaneBounds();
+  void document.querySelector('.col-corrlinks')?.offsetWidth;
+  let bounds =
+    measureLoopFillCorrBounds() || measureCorrPaneBounds() || measureCorrColumnFallbackBounds();
   if (!bounds) {
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    bounds = measureCorrPaneBounds() || measureCorrColumnFallbackBounds();
-  }
-  if (!bounds) {
-    bounds = measureCorrColumnFallbackBounds();
+    bounds =
+      measureLoopFillCorrBounds() || measureCorrPaneBounds() || measureCorrColumnFallbackBounds();
   }
   try {
-    // Always warm — main falls back to window geometry if bounds are missing.
-    if (window.api?.setCorrBounds && bounds) {
-      await window.api.setCorrBounds({ ...bounds, force: true });
-    }
+    if (bounds) await applyCorrBounds(bounds, { fill: true });
     if (window.api?.warmCorrlinksPanel) {
-      const warm = await window.api.warmCorrlinksPanel({ bounds: bounds || undefined });
+      const warm = await window.api.warmCorrlinksPanel({
+        bounds: bounds || undefined,
+        fill: true,
+        slot: 'loop',
+        refresh: true,
+      });
       if (warm?.ok) {
         setCorrPanelBusy('CorrLinks loading…');
         if (warm.visible === false) {
           log('CorrLinks warm used window fallback bounds', 'warn');
         }
-        // Prefer measured bounds after warm; main already applied a fallback if needed.
-        const again = measureCorrPaneBounds() || measureCorrColumnFallbackBounds() || warm.bounds;
-        if (again && window.api?.setCorrBounds) {
-          await window.api.setCorrBounds({ ...again, force: true });
+        const again =
+          measureLoopFillCorrBounds() ||
+          measureCorrPaneBounds() ||
+          measureCorrColumnFallbackBounds() ||
+          warm.bounds;
+        if (again) {
+          await applyCorrBounds(again, { fill: true });
           bounds = again;
         }
       } else {
@@ -6031,21 +6104,23 @@ async function revealCorrlinksEmbed() {
   } catch (error) {
     log(error?.message || String(error), 'warn');
   }
-  const live = measureCorrPaneBounds() || bounds;
-  if (live && window.api?.setCorrBounds) {
-    void window.api.setCorrBounds({ ...live, force: true });
-  }
+  const live = measureLoopFillCorrBounds() || measureCorrPaneBounds() || bounds;
+  if (live) void applyCorrBounds(live, { fill: true });
   requestAnimationFrame(() => {
-    const again = measureCorrPaneBounds() || bounds;
-    if (again && window.api?.setCorrBounds) {
-      void window.api.setCorrBounds({ ...again, force: true });
-    }
+    requestAnimationFrame(() => {
+      const again = measureLoopFillCorrBounds() || measureCorrPaneBounds() || bounds;
+      if (again) void applyCorrBounds(again, { fill: true });
+    });
   });
+  setTimeout(() => {
+    const again = measureLoopFillCorrBounds() || measureCorrPaneBounds();
+    if (again) void applyCorrBounds(again, { fill: true });
+  }, 120);
   return bounds || live || null;
 }
 
 function resetCorrEmbedReveal() {
-  corrEmbedRevealed = false;
+  setCorrEmbedLive(false);
   setCorrPanelBusy(null);
   setCorrPlaceholderVisible(true);
 }
@@ -6064,22 +6139,22 @@ function syncCorrPaneBounds() {
     return;
   }
 
-  if (
-    loopInitializingActive ||
-    bootVerifyRunning ||
-    document.body.classList.contains('is-preparing-workspace')
-  ) {
+  if (overlayCorrSlotActive()) {
     const verifyBounds = measureVerifyCorrPaneBounds() || prepareCorrFallbackBounds();
-    window.api.setCorrBounds({ ...verifyBounds, force: true });
+    window.api.setCorrBounds({ ...verifyBounds, slot: 'accounts', force: true });
     return;
   }
+  document.body.classList.remove('is-preparing-workspace');
 
-  const bounds = measureCorrPaneBounds() || (corrEmbedRevealed ? measureCorrColumnFallbackBounds() : null);
+  const bounds =
+    (corrEmbedRevealed ? measureLoopFillCorrBounds() : null) ||
+    measureCorrPaneBounds() ||
+    (corrEmbedRevealed ? measureCorrColumnFallbackBounds() : null);
   if (!bounds) {
     if (!(corrEmbedRevealed || corrlinksLoginBusy)) hideCorrEmbedNow();
     return;
   }
-  window.api.setCorrBounds(bounds);
+  void applyCorrBounds(bounds, { fill: Boolean(corrEmbedRevealed) });
 }
 
 function escapeHtml(value) {
@@ -6695,8 +6770,13 @@ window.visualViewport?.addEventListener('resize', scheduleCorrPaneBounds);
 window.visualViewport?.addEventListener('scroll', scheduleCorrPaneBounds);
 
 const corrPaneEl = document.getElementById('corrPane');
-if (corrPaneEl && typeof ResizeObserver !== 'undefined') {
-  new ResizeObserver(scheduleCorrPaneBounds).observe(corrPaneEl);
+const corrColumnEl = document.querySelector('.col-corrlinks');
+if (typeof ResizeObserver !== 'undefined') {
+  const ro = new ResizeObserver(scheduleCorrPaneBounds);
+  if (corrPaneEl) ro.observe(corrPaneEl);
+  if (corrColumnEl) ro.observe(corrColumnEl);
+  const corrCardEl = document.querySelector('.col-corrlinks .corr-card');
+  if (corrCardEl) ro.observe(corrCardEl);
 }
 
 ['.workspace', '.col-controls', '.col-corrlinks', '.app'].forEach((sel) => {

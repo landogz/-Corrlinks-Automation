@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.51**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.52**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.51-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.51.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.51.exe` or portable `Inside-Scores-0.1.51.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.52-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.52.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.52.exe` or portable `Inside-Scores-0.1.52.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.51.exe`.
+1. Run `Inside-Scores-Setup-0.1.52.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.51.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.52.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 
@@ -54,6 +54,8 @@ SPORTSDATA_PASSWORD=your-password
 # Clock + subject always use America/New_York (OS timezone ignored).
 APP_TIMEZONE=America/New_York
 CORRLINKS_SIGNIN_DELAY_MS=5000
+# Unpackaged `npm start` never clicks Send. Set 1 to force-send in dev.
+# CORRLINKS_ALLOW_SEND=1
 ```
 
 | Key | Purpose |
@@ -63,6 +65,7 @@ CORRLINKS_SIGNIN_DELAY_MS=5000
 | `SPORTSDATA_PASSWORD` | SportsData password |
 | `APP_TIMEZONE` | Documented as `America/New_York` — app is hard-locked to NY |
 | `CORRLINKS_SIGNIN_DELAY_MS` | Pause after filling login before clicking Login on send/login (default `5000`). Account validation / Preparing workspace skips this delay. |
+| `CORRLINKS_ALLOW_SEND` | `1` force Send even from `npm start`; `0` skip Send even in packaged builds. Default: skip Send unless packaged. |
 
 Do not commit a filled `.env` or `sportsdata-credentials.json`.
 
@@ -78,7 +81,7 @@ Inside Scores does **not** use the microphone. Refresh/CorrLinks loads used to t
 
 ### CorrLinks “Syncfusion still empty” on validate
 
-Preparing your workspace used to hide the CorrLinks pane at 0×0 during probes, which made Angular/Syncfusion reject filled email/password. The overlay is now split: progress / failed accounts on the left, live CorrLinks login on the right — and the prepare pane never collapses to 0×0 mid-probe. Account checks click Login immediately (no 5s countdown). Failed-account review centers **Continue without retries** (Cancel is hidden on that screen). Email and password are bound per field (trusted Electron `insertText` + Syncfusion `setProperties` / EJ2), never undirected clipboard paste into the wrong box. A helper-script regression that falsely reported “Could not find email field” on a loaded login page is fixed and guarded by `npm run smoke:login-helpers`. Login is never clicked unless the email value actually stuck in the control.
+Preparing your workspace used to hide the CorrLinks pane at 0×0 during probes, which made Angular/Syncfusion reject filled email/password. The overlay is now split: progress / failed accounts on the left, live CorrLinks login on the right — and the prepare pane never collapses to 0×0 mid-probe. **Account validation uses its own CorrLinks webview** (refreshed when probes start); **Start loop uses a second webview** sized to the Automate CorrLinks container under the CORRLINKS header. Account checks click Login immediately (no 5s countdown). Failed-account review centers **Continue without retries** (Cancel is hidden on that screen). Email and password are bound per field (trusted Electron `insertText` + Syncfusion `setProperties` / EJ2), never undirected clipboard paste into the wrong box. A helper-script regression that falsely reported “Could not find email field” on a loaded login page is fixed and guarded by `npm run smoke:login-helpers`. Login is never clicked unless the email value actually stuck in the control. The Status log **Auto-scroll** and **Mask emails** controls are toggle buttons so they stay clickable above the native view.
 
 ## Usage
 
@@ -94,8 +97,21 @@ The app will:
 - log in with the primary CorrLinks account (fallback to second if locked / requested)
 - open compose and select the inmate in **To**
 - set subject from America/New_York wall time (see below)
-- paste selected Inmate Exchange TXT parts and **Send** each part
+- paste selected Inmate Exchange TXT parts and **Send** each part (packaged builds only)
 - track failed recipients / probe failures with per-account **Retry**
+
+### Dev / test (`npm start`)
+
+Unpackaged runs **do not click CorrLinks Send**. Login, To, subject, and body still fill so you can verify the webview. Packaged installers send as usual.
+
+Override with env:
+
+```env
+# Force-send from `npm start` (dangerous — posts real inmate mail)
+CORRLINKS_ALLOW_SEND=1
+# Force dry-run even in a packaged build
+CORRLINKS_ALLOW_SEND=0
+```
 
 ### Daily subject (always America/New_York)
 
