@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.53**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.54**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.53-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.53.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.53.exe` or portable `Inside-Scores-0.1.53.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.54-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.54.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.54.exe` or portable `Inside-Scores-0.1.54.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.53.exe`.
+1. Run `Inside-Scores-Setup-0.1.54.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.53.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.54.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 

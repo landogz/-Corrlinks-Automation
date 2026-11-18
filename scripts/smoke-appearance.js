@@ -107,6 +107,17 @@ assert(css.includes('.appearance-chip-grid'), 'theme chip grid CSS missing');
 assert(renderer.includes('data-density-pref'), 'density controls missing');
 assert(renderer.includes('data-type-pref'), 'type scale controls missing');
 
+const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+const packFiles = pkg?.build?.files || [];
+assert(
+  packFiles.some((f) => String(f).includes('shared')),
+  'package.json build.files must include shared/** so packaged app can require appearance'
+);
+assert(
+  fs.existsSync(path.join(ROOT, 'shared', 'appearance.js')),
+  'shared/appearance.js must exist on disk'
+);
+
 if (failed) {
   console.error(`smoke-appearance: ${failed} failure(s)`);
   process.exit(1);
