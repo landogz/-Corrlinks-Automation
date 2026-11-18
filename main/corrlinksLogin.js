@@ -2261,7 +2261,7 @@ async function fillAndSubmit(
   win,
   email,
   password,
-  { attempt = null, skipSignInDelay = false } = {}
+  { attempt = null, skipSignInDelay = false, awaitUserSubmit = false } = {}
 ) {
   const wantEmail = String(email || '').trim();
   const wantPassword = String(password || '');
@@ -2405,11 +2405,12 @@ async function fillAndSubmit(
   }
 
   // Pause before Login after fill (default 2s) so CorrLinks can bind the fields.
+  // Manual fill skips the auto-click countdown — still sync once so Syncfusion sticks.
   await waitBeforeSignInClick(win, {
     email: wantEmail,
     attempt,
     password: wantPassword,
-    skipDelay: Boolean(skipSignInDelay),
+    skipDelay: Boolean(skipSignInDelay) || Boolean(awaitUserSubmit),
   });
   if (!getLiveWebContents(win)) {
     return { ok: false, reason: 'CorrLinks panel was closed during sign-in delay' };
@@ -2426,6 +2427,23 @@ async function fillAndSubmit(
       reason: 'Fields did not accept values (Angular/Syncfusion still empty)',
       needsReload: true,
       filled,
+    };
+  }
+
+  // Preparing-workspace recovery: fill only — operator clicks Login; we watch the response.
+  if (awaitUserSubmit) {
+    setStatus({
+      state: 'manual',
+      message: `Credentials filled — click Login in CorrLinks${attempt ? ` (${attempt})` : ''}`,
+      email: wantEmail,
+      attempt,
+    });
+    return {
+      ok: true,
+      awaitUserSubmit: true,
+      filled,
+      submitText: null,
+      clickedAt: null,
     };
   }
 
@@ -2798,7 +2816,62 @@ async function waitForComposeBodyReady(win, expectedText, timeoutMs = 6000) {
   };
 }
 
-async function waitForLoginResult(win, timeoutMs = 45000) {
+/**
+ * After a manual fill: keep emptied fields alive and wait for the operator's Login click.
+ * Does not click Login — classify success / lock / reject via waitForLoginResult.
+ */
+async function waitForManualLoginSubmit(
+  win,
+  { email = null, password = null, timeoutMs = 120000, attempt = null } = {}
+) {
+  const wantEmail = String(email || '').trim();
+  const wantPassword = String(password || '');
+  const budget = Math.max(15000, Number(timeoutMs) || 120000);
+  setStatus({
+    state: 'manual',
+    message: `Click Login in CorrLinks${attempt ? ` (${attempt})` : ''} — watching for response…`,
+    email: wantEmail || email,
+    attempt,
+  });
+
+  const keepAlive = (async () => {
+    const endsAt = Date.now() + budget;
+    while (Date.now() < endsAt) {
+      if (!getLiveWebContents(win)) return;
+      let url = null;
+      try {
+        url = win.webContents.getURL();
+      } catch (_) {
+        return;
+      }
+      if (url && !CORRLINKS.loginPathPattern.test(url)) return;
+      if (wantEmail && wantPassword) {
+        const snap = await readLoginCredentials(win).catch(() => null);
+        const emailEmpty = !String(snap?.emailEj || snap?.email || '').trim();
+        const passEmpty = !String(snap?.passwordEj || snap?.password || '').length;
+        if (emailEmpty || passEmpty) {
+          await syncEj2LoginFields(win, wantEmail, wantPassword).catch(() => null);
+        }
+      }
+      await new Promise((r) => setTimeout(r, 900));
+    }
+  })();
+
+  try {
+    return await waitForLoginResult(win, budget, {
+      waitingMessage: `Click Login in CorrLinks${attempt ? ` (${attempt})` : ''} — watching for response…`,
+      waitingState: 'manual',
+    });
+  } finally {
+    void keepAlive;
+  }
+}
+
+async function waitForLoginResult(
+  win,
+  timeoutMs = 45000,
+  { waitingMessage = 'Waiting for CorrLinks response…', waitingState = 'submitting' } = {}
+) {
   const budget = Math.max(5000, Number(timeoutMs) || 45000);
   const safeUrl = () => {
     try {
@@ -2824,8 +2897,8 @@ async function waitForLoginResult(win, timeoutMs = 45000) {
         if (now - lastWaitMsgAt >= 1200) {
           lastWaitMsgAt = now;
           setStatus({
-            state: 'submitting',
-            message: 'Waiting for CorrLinks response…',
+            state: waitingState,
+            message: waitingMessage,
             url,
           });
         } else {
@@ -4683,9 +4756,15 @@ async function attemptLogin(
     fast = false,
     /** Skip CORRLINKS_SIGNIN_DELAY_MS (account validation / Preparing workspace). */
     skipSignInDelay = false,
+    /** Fill credentials only; operator clicks Login; we classify the response. */
+    awaitUserSubmit = false,
   } = {}
 ) {
-  const fillOpts = { attempt: label, skipSignInDelay: Boolean(skipSignInDelay) };
+  const fillOpts = {
+    attempt: label,
+    skipSignInDelay: Boolean(skipSignInDelay),
+    awaitUserSubmit: Boolean(awaitUserSubmit),
+  };
   setStatus({
     state: 'loading',
     message: `Loading CorrLinks login (${label}: ${email})`,
@@ -5015,15 +5094,26 @@ async function attemptLogin(
     };
   }
 
+  const manualSubmit = Boolean(awaitUserSubmit) || Boolean(fillResult.awaitUserSubmit);
   setStatus({
-    state: 'submitting',
-    message: `Submitted login (${label}) — waiting for result`,
+    state: manualSubmit ? 'manual' : 'submitting',
+    message: manualSubmit
+      ? `Click Login in CorrLinks (${label}) — watching for response…`
+      : `Submitted login (${label}) — waiting for result`,
     email,
     attempt: label,
   });
 
+  // Manual fill: longer budget so the operator can click Login; auto probes stay shorter.
   // Probes previously used 8s — too short for slow SPA nav after a single Login click.
-  const result = await waitForLoginResult(win, fast ? 22000 : 45000);
+  const result = manualSubmit
+    ? await waitForManualLoginSubmit(win, {
+        email,
+        password,
+        attempt: label,
+        timeoutMs: fast ? 120000 : 180000,
+      })
+    : await waitForLoginResult(win, fast ? 22000 : 45000);
 
   if (result.ok) {
     return {
@@ -5033,6 +5123,7 @@ async function attemptLogin(
       email,
       attempt: label,
       loggedIn: true,
+      manualSubmit: manualSubmit || undefined,
     };
   }
 
@@ -5043,6 +5134,7 @@ async function attemptLogin(
       url: result.url,
       email,
       attempt: label,
+      manualSubmit: manualSubmit || undefined,
     };
   }
 
@@ -5056,6 +5148,7 @@ async function attemptLogin(
       locked: true,
       loggedIn: result.loggedIn === true,
       dialogDismissed: result.dialogDismissed === true,
+      manualSubmit: manualSubmit || undefined,
     };
   }
 
@@ -5066,6 +5159,7 @@ async function attemptLogin(
     email,
     attempt: label,
     locked: false,
+    manualSubmit: manualSubmit || undefined,
   };
   } finally {
     setLoginGeometryLock(false);
@@ -5238,6 +5332,8 @@ async function loginToCorrlinks({
   attemptLabel = 'primary',
   /** Shorter nav/form/result waits (probes + single-inmate send). */
   fast = false,
+  /** Fill only; operator clicks Login; automation classifies the response. */
+  awaitUserSubmit = false,
 } = {}) {
   if (!email || !password) {
     throw new Error('Primary corrlinks email and password are required');
@@ -5324,7 +5420,9 @@ async function loginToCorrlinks({
 
   const useFast = Boolean(fast) || Boolean(skipCompose);
   // Always wait after fill before clicking Login (default 2s), including Preparing workspace.
+  // Manual fill skips the auto-click (operator clicks Login).
   const skipSignInDelay = false;
+  const wantManualSubmit = Boolean(awaitUserSubmit);
   const primary = await attemptLogin(win, {
     email,
     password,
@@ -5334,6 +5432,7 @@ async function loginToCorrlinks({
     // Account probes + single-inmate send use shorter nav/form/result waits.
     fast: useFast,
     skipSignInDelay,
+    awaitUserSubmit: wantManualSubmit,
   });
   setStatus(primary);
 
@@ -5343,8 +5442,9 @@ async function loginToCorrlinks({
   }
 
   if (primary.state === 'locked') {
-    if (!secondEmail || !secondPassword) {
+    if (!secondEmail || !secondPassword || wantManualSubmit) {
       // Single-account probe (no fallback requested) — don't imply "missing second".
+      // Manual fill also stops here so the operator can retry that account themselves.
       return finishWithCompose({
         ...primary,
         message: primary.loggedIn
@@ -5625,6 +5725,7 @@ async function loginAccount(
       skipCompose: true,
       clearSession: true,
       attemptLabel: 'primary',
+      awaitUserSubmit: Boolean(_options.awaitUserSubmit),
     });
   };
 

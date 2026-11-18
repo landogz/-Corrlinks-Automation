@@ -574,7 +574,10 @@ function registerIpc() {
           secondEmail: payload.secondEmail,
           secondPassword: payload.secondPassword,
         },
-        { fillPane: Boolean(payload.fillPane) }
+        {
+          fillPane: Boolean(payload.fillPane),
+          awaitUserSubmit: Boolean(payload.awaitUserSubmit),
+        }
       );
       const ok =
         status.state === 'success' ||
