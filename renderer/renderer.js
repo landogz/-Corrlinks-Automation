@@ -3534,13 +3534,24 @@ function renderVerifyFailedReview({ rows = [] } = {}) {
     appVerifyingFailedHint.textContent = rows.length
       ? `${rows.length} failed` +
         (lockedCount ? ` · ${lockedCount} locked` : '') +
-        ` · copy email/password, then Retry or I'll log in`
+        ` · CorrLinks login is open — copy email/password, paste, then I'll log in (or Retry)`
       : 'No failed accounts left.';
   }
   if (btnVerifySkipFailed) {
     btnVerifySkipFailed.disabled = false;
     btnVerifySkipFailed.textContent = rows.length ? 'Continue without retries' : 'Continue';
   }
+}
+
+/** Open a clean CorrLinks login page in the Preparing right pane for copy/paste recovery. */
+async function openPrepareLoginPage({
+  hint = 'Login page ready — copy email/password from the left and paste here',
+} = {}) {
+  const corrHint = document.querySelector('.app-verifying-corr-hint');
+  if (corrHint) corrHint.textContent = hint;
+  document.body.classList.add('is-preparing-workspace');
+  await revealCorrlinksForPrepare().catch(() => null);
+  requestAnimationFrame(() => syncCorrPaneBounds());
 }
 
 function setLoopInitializingOverlay(opts = null) {
@@ -3932,16 +3943,28 @@ async function verifyAllCorrlinksAccounts({
   if (failedRows.length && isActive()) {
     let retryIndex = 0;
     while (isActive() && failedRows.length) {
+      const focusRow =
+        failedRows.find((row) => !formatProbeFailureInfo(row.status).locked) || failedRows[0];
+      const focusEmail = String(focusRow?.email || focusRow?.account?.email || '').trim();
       setLoopInitializingOverlay({
         active: true,
         status: VERIFY_COPY.statusReview,
-        detail: `${failedRows.length} failed · pick an account to retry`,
+        detail: `${failedRows.length} failed · copy credentials, paste into CorrLinks`,
         current: probeTotal,
         total: probeTotal,
         reviewFailed: true,
-        live: '',
+        live: focusEmail
+          ? `Login page opening · copy credentials for ${focusEmail}`
+          : 'Login page opening…',
       });
       renderVerifyFailedReview({ rows: failedRows });
+      // Auto-open CorrLinks login so operators can paste without an extra click.
+      await openPrepareLoginPage({
+        hint: focusEmail
+          ? `Paste ${focusEmail} here, then click Login (or tap I'll log in to watch)`
+          : 'Login page ready — copy email/password from the left and paste here',
+      });
+      if (!isActive()) break;
       const choice = await waitForVerifyManualRetry();
       if (!isActive() || choice?.action === 'cancel') break;
       if (choice?.action === 'skip') {
