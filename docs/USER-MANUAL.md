@@ -1,6 +1,6 @@
 # Inside Scores — User Manual
 
-**Version:** 0.1.44  
+**Version:** 0.1.61  
 **Product:** Inside Scores  
 **Audience:** SportsData operators who send Inmate Exchange reports through CorrLinks
 
@@ -88,7 +88,8 @@ Theme (Auto / Light / Dark) can be set on the login screen or later from the acc
 | --- | --- |
 | **Automate** tab | Select inmate, template, files; send or start loop; CorrLinks pane |
 | **Accounts** tab | Unique CorrLinks logins, status, Validate new / Refresh all / Retry |
-| **History** tab | SportsData exchange exports by date; preview / copy / download |
+| **History** tab | **Exchange files** exports, or **Send runs** (success/fail + resend) |
+| **Settings** tab | Auto-send times (America/New_York), each with its own send kind (Daily / Weekly NFL / CFB) |
 | **Refresh** | Reload inmates and fully re-validate CorrLinks accounts |
 | **Status log** | Detailed activity log (drawer) |
 | **Account menu** | Theme, shortcuts, updates, about, sign out |
@@ -186,12 +187,32 @@ If CorrLinks fails to load, use **Retry** or **View log**. Complete CAPTCHA or u
 
 ## 11. History tab
 
-1. Open **History**.
+### Exchange files
+
+1. Open **History** → **Exchange files**.
 2. Pick a date (New York calendar date) and click **Export for date**.
 3. Browse the table (Date, File, Characters).
 4. Select a row to **Preview**.
 5. **Copy**, **Download**, or **Export CSV** for filtered rows.
 6. Use **Refresh** to reload the list; filter by date in the search box.
+
+### Send runs
+
+1. Open **History** → **Send runs**.
+2. Review each Start loop / auto-send / retry outcome (ok counts, failures, stopped).
+3. Select a run to see failed recipients and reasons.
+4. **Resend recipient** retries that inmate; **Resend file** retries a specific failed part when listed.
+
+---
+
+## 11b. Settings — loop schedule
+
+1. Open **Settings**.
+2. Turn **Auto-send** On (button toggle).
+3. Add a **Send time (NY)** and choose its **Send kind** (Daily / Weekly NFL / Weekly CFB).
+4. Each saved row can change kind later from the table; Delete removes a time (keep at least one).
+5. Keep the app open — at each due America/New_York time, Start loop runs once for that slot using that row’s kind.
+6. Status shows next run, last fired slots, and current NY clock.
 
 ---
 

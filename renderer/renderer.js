@@ -581,11 +581,44 @@ const ACCOUNTS_AUTO_REFRESH_MS = 60_000;
 /** Ignore rapid window-focus refreshes (visibility + focus can double-fire). */
 const ACCOUNTS_FOCUS_MIN_GAP_MS = 15_000;
 let lastAccountsQuietSyncAt = 0;
-/** Active top-level tab: automate | history */
+/** Active top-level tab: automate | accounts | history | settings */
 let activeMainTab = 'automate';
+/** History sub-mode: exchange | sends */
+let historyMode = 'exchange';
 /** @type {any} */
 let historyDataTable = null;
 let historyLoaded = false;
+/** @type {any[]} */
+let sendHistoryRuns = [];
+/** @type {string|null} */
+let sendHistorySelectedId = null;
+/** @type {{ enabled: boolean, sendTime: string, sendTimes: string[], sendKind: string, sendKindByTime: Record<string, string>, lastFiredNyDate: string|null, lastFiredByTime: Record<string, string> }} */
+let loopScheduleState = {
+  enabled: false,
+  sendTime: '08:05',
+  sendTimes: ['08:05', '09:30', '10:05', '11:30', '12:05'],
+  sendKind: 'daily',
+  sendKindByTime: {
+    '08:05': 'daily',
+    '09:30': 'weekly_cfb',
+    '10:05': 'daily',
+    '11:30': 'weekly_cfb',
+    '12:05': 'daily',
+  },
+  lastFiredNyDate: null,
+  lastFiredByTime: {},
+};
+/** @type {{ date: string, timeLabel: string, minutes: number }|null} */
+let loopScheduleClock = null;
+/** Latest next-due label from main (optional). */
+let loopScheduleNextDue = '—';
+let loopScheduleTimer = null;
+let loopScheduleFiring = false;
+/** When editing a saved slot, holds the stored HH:mm key. */
+let settingsEditingTime = null;
+/** Source tag for the in-flight / next loop history row. */
+let pendingLoopHistorySource = 'loop';
+let loopRunStartedAt = null;
 /** @type {{ url: string|null, text: string, date: string|null, filename: string|null }} */
 let historyPreviewState = { url: null, text: '', date: null, filename: null };
 /** @type {{ to: string, subject: string, body: string, chars: number }} */
@@ -1881,6 +1914,7 @@ async function setTemplateMode(mode) {
     if (inmate) renderAccountMeta(inmate);
     else syncTemplateControls();
   }
+  void saveLoopSchedulePartial({ sendKind: currentSendKindFromTemplate() }, { toastOnSave: false });
 }
 
 async function setWeeklyLeague(league) {
@@ -1890,6 +1924,7 @@ async function setWeeklyLeague(league) {
     // Re-fetch even when the same league pill is clicked again.
     await loadWeeklyTemplate({ force: true });
   }
+  void saveLoopSchedulePartial({ sendKind: currentSendKindFromTemplate() }, { toastOnSave: false });
 }
 
 function inmateHasCorrlinksLogin(inmate) {
@@ -4560,6 +4595,8 @@ async function startInmateLoop(options = {}) {
   const retryIds = Array.isArray(options.inmateIds)
     ? options.inmateIds.map(String).filter(Boolean)
     : null;
+  const historySource = String(options.source || pendingLoopHistorySource || 'loop');
+  pendingLoopHistorySource = 'loop';
   if (loopRunning || corrlinksLoginBusy || bootVerifyRunning) return;
   // Pull latest inmate roster from SportsData before grouping the loop.
   await syncCorrlinksAccountsQuiet({ reason: 'preflight', force: true });
@@ -4572,6 +4609,7 @@ async function startInmateLoop(options = {}) {
 
   // Capture checked files before the loop switches inmates (which re-renders the list).
   loopFileSnapshot = snapshotFileSelection();
+  loopRunStartedAt = new Date().toISOString();
   const previewInmate = selectedInmate() || accounts[0] || null;
   const selectedForLoop = previewInmate
     ? filesFromSnapshot(previewInmate, loopFileSnapshot)
@@ -4688,15 +4726,26 @@ async function startInmateLoop(options = {}) {
         retryIds.includes(String(row.inmate?.id || row.id || row.key))
       )
     : rawSkipped;
-  /** @type {Array<{ id: string|number, name: string, inmate_id?: string|number, reason: string }>} */
+  /** @type {Array<{ id: string|number, name: string, inmate_id?: string|number, reason: string, failedFiles?: any[] }>} */
   const failedRecipients = [];
-  const pushFailed = (inmate, reason) => {
+  const pushFailed = (inmate, reason, failedParts = null) => {
     if (!inmate) return;
+    const failedFiles = Array.isArray(failedParts)
+      ? failedParts.map((part) => ({
+          inmateId: String(inmate.id),
+          part: part?.part ?? null,
+          filename: part?.filename || part?.name || null,
+          key: part?.key || part?.url || null,
+          url: part?.url || null,
+          reason: part?.reason || reason || 'Send failed',
+        }))
+      : [];
     failedRecipients.push({
       id: inmate.id,
       name: inmate.name || 'Inmate',
       inmate_id: inmate.inmate_id ?? inmate.id,
       reason: reason || 'Send failed',
+      failedFiles,
     });
   };
   log(
@@ -4927,7 +4976,11 @@ async function startInmateLoop(options = {}) {
         if (statusLooksGood(status, { requireSend: true })) okCount += 1;
         else {
           failCount += 1;
-          pushFailed(inmate, status?.message || 'Send did not complete');
+          pushFailed(
+            inmate,
+            status?.message || 'Send did not complete',
+            status?.failedParts || null
+          );
         }
       }
     }
@@ -4996,6 +5049,86 @@ async function startInmateLoop(options = {}) {
     summary,
     failed: lastLoopFailed,
   });
+  void persistLoopSendHistory({
+    source: historySource,
+    okCount,
+    failCount,
+    recipientTotal,
+    aborted: wasAborted,
+    summary,
+    failedRecipients: lastLoopFailed,
+    startedAt: loopRunStartedAt,
+  });
+  loopRunStartedAt = null;
+}
+
+function currentSendKindFromTemplate() {
+  if (templateMode === 'weekly') {
+    return String(weeklyLeague || '').toUpperCase() === 'CFB' ? 'weekly_cfb' : 'weekly_nfl';
+  }
+  return 'daily';
+}
+
+function applySendKindToTemplate(sendKind, { loadWeekly = true } = {}) {
+  const kind = String(sendKind || 'daily').toLowerCase();
+  if (kind === 'weekly_nfl') {
+    templateMode = 'weekly';
+    weeklyLeague = 'NFL';
+  } else if (kind === 'weekly_cfb') {
+    templateMode = 'weekly';
+    weeklyLeague = 'CFB';
+  } else {
+    templateMode = 'daily';
+  }
+  syncTemplateControls();
+  if (loadWeekly && templateMode === 'weekly') void loadWeeklyTemplate({ force: false });
+  else if (templateMode === 'daily') void refreshDailySubjectHint();
+  updateActionButtons();
+}
+
+async function persistLoopSendHistory({
+  source = 'loop',
+  okCount = 0,
+  failCount = 0,
+  recipientTotal = 0,
+  aborted = false,
+  summary = '',
+  failedRecipients = [],
+  startedAt = null,
+} = {}) {
+  if (!window.api?.appendSendHistory) return;
+  const failed = Array.isArray(failedRecipients) ? failedRecipients : [];
+  const recipients = failed.map((row) => ({
+    inmateId: row.id,
+    name: row.name,
+    inmate_id: row.inmate_id,
+    status: 'failed',
+    reason: row.reason,
+    failedFiles: row.failedFiles || [],
+  }));
+  const failedFiles = recipients.flatMap((row) => row.failedFiles || []);
+  try {
+    const clock = loopScheduleClock || (await window.api.getLoopSchedule?.())?.clock || null;
+    await window.api.appendSendHistory({
+      startedAt: startedAt || new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      nyDate: clock?.date || null,
+      source,
+      sendKind: currentSendKindFromTemplate(),
+      okCount,
+      failCount,
+      recipientTotal,
+      aborted,
+      summary,
+      recipients,
+      failedFiles,
+    });
+    if (historyMode === 'sends' && activeMainTab === 'history') {
+      await loadSendHistoryRuns();
+    }
+  } catch (error) {
+    log(error?.message || String(error), 'warn');
+  }
 }
 
 function retryFailedLoopRecipients() {
@@ -5010,7 +5143,8 @@ function retryFailedLoopRecipients() {
   }
   log(`Retrying ${ids.length} failed recipient(s)…`, 'info');
   toast(`Retrying ${ids.length} failed recipient(s)…`, 'info');
-  void startInmateLoop({ inmateIds: ids });
+  pendingLoopHistorySource = 'retry';
+  void startInmateLoop({ inmateIds: ids, source: 'retry' });
 }
 
 function forceStopSingleCorrlinks() {
@@ -6078,8 +6212,10 @@ document.getElementById('btnToggleLoginPassword')?.addEventListener('click', () 
 });
 
 btnRefresh.addEventListener('click', () => {
-  if (activeMainTab === 'history') loadExchangeHistory();
-  else if (activeMainTab === 'accounts') void refreshAllCorrlinksAccountsValidation();
+  if (activeMainTab === 'history') {
+    if (historyMode === 'sends') void loadSendHistoryRuns();
+    else loadExchangeHistory();
+  } else if (activeMainTab === 'accounts') void refreshAllCorrlinksAccountsValidation();
   else refreshInmates({ forceValidation: true });
 });
 
@@ -6087,6 +6223,192 @@ mainTabs?.addEventListener('click', (event) => {
   const btn = event.target.closest('.main-tab');
   if (!btn?.dataset?.tab) return;
   setMainTab(btn.dataset.tab);
+});
+
+document.getElementById('btnHistoryModeExchange')?.addEventListener('click', () => {
+  setHistoryMode('exchange');
+});
+document.getElementById('btnHistoryModeSends')?.addEventListener('click', () => {
+  setHistoryMode('sends');
+});
+document.getElementById('btnSendHistoryRefresh')?.addEventListener('click', () => {
+  void loadSendHistoryRuns();
+});
+document.getElementById('btnSendHistoryClear')?.addEventListener('click', async () => {
+  if (!window.api?.clearSendHistory) return;
+  await window.api.clearSendHistory();
+  sendHistorySelectedId = null;
+  toast('Send history cleared', 'info');
+  await loadSendHistoryRuns();
+  renderSendHistoryDetail(null);
+});
+
+document.getElementById('settingsAutoSendEnabled')?.addEventListener('click', () => {
+  const next = !Boolean(loopScheduleState.enabled);
+  void saveLoopSchedulePartial({ enabled: next });
+});
+
+function formatScheduleTime12h(hhmm) {
+  const raw = String(hhmm || '').trim();
+  const m = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return raw || '—';
+  let hour = Number(m[1]);
+  const minute = Number(m[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return raw;
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+  hour = hour % 12 || 12;
+  return `${hour}:${String(minute).padStart(2, '0')} ${ampm}`;
+}
+
+function readSettingsTimeEditor24h() {
+  const hourEl = document.getElementById('settingsSendHourInput');
+  const minuteEl = document.getElementById('settingsSendMinuteInput');
+  const ampmEl = document.getElementById('settingsSendAmPmInput');
+  let hour = Number(hourEl?.value || 5);
+  const minute = String(minuteEl?.value || '00').padStart(2, '0');
+  const ampm = String(ampmEl?.value || 'AM').toUpperCase();
+  if (!Number.isFinite(hour) || hour < 1 || hour > 12) hour = 5;
+  if (ampm === 'AM') hour = hour === 12 ? 0 : hour;
+  else hour = hour === 12 ? 12 : hour + 12;
+  return `${String(hour).padStart(2, '0')}:${minute}`;
+}
+
+function paintSettingsTimePreview() {
+  const preview = document.getElementById('settingsTimePreview');
+  if (!preview) return;
+  preview.textContent = formatScheduleTime12h(readSettingsTimeEditor24h());
+}
+
+function paintSettingsKindSegments(selected) {
+  const kind = String(selected || 'daily');
+  const kindEl = document.getElementById('settingsSendKindInput');
+  if (kindEl) kindEl.value = kind;
+  document.querySelectorAll('[data-kind-seg]').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.getAttribute('data-kind-seg') === kind);
+  });
+}
+
+function fillSettingsTimeEditor(hhmm, sendKind = 'daily') {
+  const raw = String(hhmm || '08:05');
+  const m = raw.match(/^(\d{1,2}):(\d{2})$/);
+  let hour24 = 8;
+  let minute = '05';
+  if (m) {
+    hour24 = Number(m[1]);
+    minute = String(m[2]).padStart(2, '0');
+  }
+  const ampm = hour24 >= 12 ? 'PM' : 'AM';
+  const hour12 = hour24 % 12 || 12;
+  const hourEl = document.getElementById('settingsSendHourInput');
+  const minuteEl = document.getElementById('settingsSendMinuteInput');
+  const ampmEl = document.getElementById('settingsSendAmPmInput');
+  if (hourEl) hourEl.value = String(hour12);
+  if (minuteEl) {
+    if (![...minuteEl.options].some((opt) => opt.value === minute)) {
+      const opt = document.createElement('option');
+      opt.value = minute;
+      opt.textContent = minute;
+      minuteEl.appendChild(opt);
+    }
+    minuteEl.value = minute;
+  }
+  if (ampmEl) ampmEl.value = ampm;
+  paintSettingsKindSegments(sendKind || 'daily');
+  paintSettingsTimePreview();
+}
+
+function setSettingsTimeEditMode(timeOrNull) {
+  settingsEditingTime = timeOrNull || null;
+  const addBtn = document.getElementById('btnSettingsAddTime');
+  const cancelBtn = document.getElementById('btnSettingsCancelEdit');
+  const hint = document.getElementById('settingsComposerHint');
+  if (addBtn) addBtn.textContent = settingsEditingTime ? 'Save changes' : 'Add time';
+  if (cancelBtn) cancelBtn.hidden = !settingsEditingTime;
+  if (hint) {
+    hint.textContent = settingsEditingTime
+      ? `Editing ${formatScheduleTime12h(settingsEditingTime)} · runs daily while Auto-send is on`
+      : 'New slot · runs daily while Auto-send is on';
+  }
+  document.getElementById('settingsTimesEditor')?.classList.toggle('is-editing', Boolean(settingsEditingTime));
+  paintLoopScheduleTimesList();
+}
+
+function beginEditSettingsSendTime(time) {
+  const kind =
+    loopScheduleState.sendKindByTime?.[time] || loopScheduleState.sendKind || 'daily';
+  fillSettingsTimeEditor(time, kind);
+  setSettingsTimeEditMode(time);
+  document.getElementById('settingsTimesEditor')?.scrollIntoView?.({ block: 'nearest' });
+}
+
+async function saveSettingsSendTimeFromEditor() {
+  const value = readSettingsTimeEditor24h();
+  const kindInput = document.getElementById('settingsSendKindInput');
+  const sendKind = kindInput?.value || 'daily';
+  const existing = Array.isArray(loopScheduleState.sendTimes) ? loopScheduleState.sendTimes : [];
+
+  if (settingsEditingTime) {
+    if (value !== settingsEditingTime && existing.includes(value)) {
+      toast('That time is already saved', 'warn');
+      return;
+    }
+    await saveLoopSchedulePartial({
+      updateSlot: { from: settingsEditingTime, to: value, sendKind },
+    });
+    setSettingsTimeEditMode(null);
+    fillSettingsTimeEditor(value, sendKind);
+    return;
+  }
+
+  if (existing.includes(value)) {
+    toast('That time is already saved', 'warn');
+    return;
+  }
+  if (existing.length >= 12) {
+    toast('Maximum 12 send times', 'warn');
+    return;
+  }
+  await saveLoopSchedulePartial({ addTime: value, addSendKind: sendKind });
+}
+
+document.getElementById('btnSettingsAddTime')?.addEventListener('click', () => {
+  void saveSettingsSendTimeFromEditor();
+});
+document.getElementById('btnSettingsCancelEdit')?.addEventListener('click', () => {
+  setSettingsTimeEditMode(null);
+  fillSettingsTimeEditor('08:05', 'daily');
+});
+['settingsSendHourInput', 'settingsSendMinuteInput', 'settingsSendAmPmInput'].forEach((id) => {
+  document.getElementById(id)?.addEventListener('change', () => paintSettingsTimePreview());
+});
+document.querySelector('.settings-kind-segments')?.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-kind-seg]');
+  if (!btn) return;
+  const kind = btn.getAttribute('data-kind-seg');
+  if (!kind) return;
+  paintSettingsKindSegments(kind);
+});
+document.getElementById('settingsTimesFilter')?.addEventListener('input', () => {
+  paintLoopScheduleTimesList();
+});
+document.getElementById('settingsSendTimesBody')?.addEventListener('click', (event) => {
+  const editBtn = event.target.closest('[data-edit-time]');
+  if (editBtn) {
+    const time = editBtn.getAttribute('data-edit-time');
+    if (time) beginEditSettingsSendTime(time);
+    return;
+  }
+  const btn = event.target.closest('[data-remove-time]');
+  if (!btn) return;
+  const time = btn.getAttribute('data-remove-time');
+  if (!time) return;
+  const times = Array.isArray(loopScheduleState.sendTimes) ? loopScheduleState.sendTimes : [];
+  if (times.length <= 1) {
+    toast('Keep at least one send time', 'warn');
+    return;
+  }
+  if (settingsEditingTime === time) setSettingsTimeEditMode(null);
+  void saveLoopSchedulePartial({ removeTime: time });
 });
 
 document.getElementById('btnAccountsValidateNew')?.addEventListener('click', () => {
@@ -6946,7 +7268,7 @@ async function retryOneCorrlinksAccountValidation(email) {
 }
 
 function setMainTab(tab) {
-  const allowed = new Set(['automate', 'accounts', 'history']);
+  const allowed = new Set(['automate', 'accounts', 'history', 'settings']);
   activeMainTab = allowed.has(tab) ? tab : 'automate';
   document.querySelectorAll('.main-tab').forEach((btn) => {
     btn.classList.toggle('is-active', btn.dataset.tab === activeMainTab);
@@ -6957,11 +7279,569 @@ function setMainTab(tab) {
     panel.classList.toggle('is-active', on);
   });
   stepIndicator?.classList.toggle('is-hidden', activeMainTab !== 'automate');
+  // Keep native CorrLinks / traffic-light area clear when leaving Automate.
+  if (activeMainTab !== 'automate') {
+    hideCorrEmbedNow({ force: true });
+  }
   scheduleCorrPaneBounds();
   if (activeMainTab === 'accounts') renderAccountsValidationPanel();
-  if (activeMainTab === 'history') ensureHistoryGenerateDateDefault();
-  if (activeMainTab === 'history' && !historyLoaded) {
-    loadExchangeHistory();
+  if (activeMainTab === 'history') {
+    ensureHistoryGenerateDateDefault();
+    setHistoryMode(historyMode);
+  }
+  if (activeMainTab === 'settings') {
+    void refreshLoopScheduleUi();
+  }
+}
+
+function setHistoryMode(mode) {
+  historyMode = mode === 'sends' ? 'sends' : 'exchange';
+  const exchangeLayout = document.getElementById('historyExchangeLayout');
+  const sendsLayout = document.getElementById('historySendsLayout');
+  if (exchangeLayout) exchangeLayout.hidden = historyMode !== 'exchange';
+  if (sendsLayout) sendsLayout.hidden = historyMode !== 'sends';
+  document.querySelectorAll('[data-history-mode]').forEach((btn) => {
+    const on = btn.dataset.historyMode === historyMode;
+    btn.classList.toggle('is-active', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  if (historyMode === 'exchange' && !historyLoaded) loadExchangeHistory();
+  if (historyMode === 'sends') void loadSendHistoryRuns();
+}
+
+function scheduleSendKindLabel(kind) {
+  const key = String(kind || 'daily');
+  if (key === 'weekly_nfl') return 'Weekly NFL';
+  if (key === 'weekly_cfb') return 'Weekly CFB';
+  return 'Daily';
+}
+
+function formatScheduleFiredDate(isoDate) {
+  const raw = String(isoDate || '').trim();
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return raw || '—';
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  const month = months[Number(m[2]) - 1] || m[2];
+  return `${month} ${Number(m[3])}`;
+}
+
+function paintLoopScheduleTimesList() {
+  const body = document.getElementById('settingsSendTimesBody');
+  const empty = document.getElementById('settingsSendTimesEmpty');
+  const meta = document.getElementById('settingsTimesMeta');
+  const filterEl = document.getElementById('settingsTimesFilter');
+  if (!body) return;
+  const times = Array.isArray(loopScheduleState.sendTimes) ? loopScheduleState.sendTimes : [];
+  const kindMap = loopScheduleState.sendKindByTime || {};
+  const firedMap = loopScheduleState.lastFiredByTime || {};
+  const today = loopScheduleClock?.date || null;
+  const filter = String(filterEl?.value || '')
+    .trim()
+    .toLowerCase();
+  const filtered = filter
+    ? times.filter((time) => {
+        const kind = String(kindMap[time] || loopScheduleState.sendKind || 'daily');
+        const label = scheduleSendKindLabel(kind).toLowerCase();
+        const display = formatScheduleTime12h(time).toLowerCase();
+        return (
+          time.toLowerCase().includes(filter) ||
+          display.includes(filter) ||
+          label.includes(filter)
+        );
+      })
+    : times;
+  if (meta) meta.textContent = `${times.length} / 12 times · daily`;
+  body.innerHTML = '';
+  if (empty) empty.hidden = filtered.length > 0;
+  filtered.forEach((time) => {
+    const index = times.indexOf(time) + 1;
+    const kind = kindMap[time] || loopScheduleState.sendKind || 'daily';
+    const kindLabel = scheduleSendKindLabel(kind);
+    const firedToday = today && firedMap[time] === today;
+    const [hh, mm] = String(time).split(':').map(Number);
+    const targetMinutes = (Number(hh) || 0) * 60 + (Number(mm) || 0);
+    const nowMinutes = Number(loopScheduleClock?.minutes);
+    const missedToday =
+      !firedToday &&
+      today &&
+      Number.isFinite(nowMinutes) &&
+      nowMinutes > targetMinutes + 2;
+    let todayStatus = 'Pending';
+    let todayClass = 'is-pending';
+    if (firedToday) {
+      todayStatus = 'Sent';
+      todayClass = 'is-sent';
+    } else if (missedToday) {
+      todayStatus = 'Tomorrow';
+      todayClass = 'is-missed';
+    }
+    const canRemove = times.length > 1;
+    const display = formatScheduleTime12h(time);
+    const editing = settingsEditingTime === time;
+    const tr = document.createElement('tr');
+    if (editing) tr.classList.add('is-editing');
+    tr.innerHTML = `
+      <td class="settings-time-index tabular">${index}</td>
+      <td><span class="settings-time-value">${escapeHtml(display)}</span></td>
+      <td><span class="settings-kind-pill">${escapeHtml(kindLabel)}</span></td>
+      <td>
+        <span class="settings-time-status ${todayClass}">
+          ${todayStatus}
+        </span>
+      </td>
+      <td class="settings-time-actions">
+        <div class="settings-time-actions-inner">
+          <button
+            type="button"
+            class="ghost tiny"
+            data-edit-time="${escapeHtml(time)}"
+            title="Edit ${escapeHtml(display)}"
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            class="ghost tiny"
+            data-remove-time="${escapeHtml(time)}"
+            ${canRemove ? '' : 'disabled'}
+            title="${canRemove ? `Delete ${escapeHtml(display)}` : 'Keep at least one time'}"
+          >
+            Delete
+          </button>
+        </div>
+      </td>`;
+    body.appendChild(tr);
+  });
+}
+
+function paintLoopScheduleControls({ syncEnabled = true } = {}) {
+  const enabled = Boolean(loopScheduleState.enabled);
+  const enabledEl = document.getElementById('settingsAutoSendEnabled');
+  if (enabledEl && syncEnabled) {
+    enabledEl.classList.toggle('is-on', enabled);
+    enabledEl.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    const text = enabledEl.querySelector('.settings-toggle-text');
+    if (text) text.textContent = enabled ? 'On' : 'Off';
+  }
+  const stateLine = document.getElementById('settingsAutoSendStateLine');
+  if (stateLine) {
+    stateLine.textContent = enabled
+      ? 'On — next slot will start the loop'
+      : 'Off — times will not fire';
+  }
+  document.getElementById('settingsLayout')?.classList.toggle('is-armed', enabled);
+  const chipLabel = document.getElementById('settingsArmedChipLabel');
+  if (chipLabel) chipLabel.textContent = enabled ? 'Armed' : 'Standby';
+  paintLoopScheduleTimesList();
+  const statusValue = document.getElementById('settingsScheduleStatusValue');
+  const nextEl = document.getElementById('settingsScheduleNext');
+  const lastEl = document.getElementById('settingsScheduleLast');
+  const clockEl = document.getElementById('settingsScheduleClock');
+  const clock = loopScheduleClock;
+  if (clockEl) {
+    clockEl.textContent = clock
+      ? `${clock.date} ${formatScheduleTime12h(clock.timeLabel)} NY`
+      : '—';
+  }
+  if (lastEl) {
+    const map = loopScheduleState.lastFiredByTime || {};
+    const entries = Object.entries(map);
+    if (entries.length) {
+      lastEl.textContent = entries
+        .map(([t, d]) => `${formatScheduleTime12h(t)} · ${formatScheduleFiredDate(d)}`)
+        .join(' · ');
+    } else if (loopScheduleState.lastFiredNyDate) {
+      lastEl.textContent = formatScheduleFiredDate(loopScheduleState.lastFiredNyDate);
+    } else {
+      lastEl.textContent = '—';
+    }
+  }
+  if (statusValue) {
+    const count = (loopScheduleState.sendTimes || []).length;
+    statusValue.textContent = enabled
+      ? `Armed · ${count} time${count === 1 ? '' : 's'}`
+      : 'Auto-send off';
+  }
+  if (nextEl) {
+    nextEl.textContent = enabled ? loopScheduleNextDue || '—' : '—';
+  }
+}
+
+function applyLoopScheduleResult(result, { syncEnabled = true } = {}) {
+  if (result?.schedule) loopScheduleState = { ...loopScheduleState, ...result.schedule };
+  if (result?.clock) loopScheduleClock = result.clock;
+  if (result?.nextDue != null) loopScheduleNextDue = result.nextDue;
+  paintLoopScheduleControls({ syncEnabled });
+}
+
+async function refreshLoopScheduleUi({ syncEnabled = true } = {}) {
+  if (!window.api?.getLoopSchedule) return;
+  try {
+    const result = await window.api.getLoopSchedule();
+    applyLoopScheduleResult(result, { syncEnabled });
+  } catch (error) {
+    log(error?.message || String(error), 'warn');
+  }
+}
+
+async function saveLoopSchedulePartial(partial, { toastOnSave = true } = {}) {
+  if (!window.api?.setLoopSchedule) return null;
+  // Optimistic Auto-send toggle so the 15s ticker cannot stomp mid-click.
+  if (partial.enabled != null) {
+    loopScheduleState.enabled = Boolean(partial.enabled);
+    paintLoopScheduleControls({ syncEnabled: true });
+  }
+  const result = await window.api.setLoopSchedule(partial);
+  applyLoopScheduleResult(result, { syncEnabled: true });
+  if (
+    partial.sendKind != null ||
+    partial.addSendKind != null ||
+    partial.setTimeKind != null ||
+    partial.updateSlot != null
+  ) {
+    // Keep Automate template in sync with the kind just edited (not always first slot).
+    const kind =
+      partial.updateSlot?.sendKind ||
+      partial.setTimeKind?.sendKind ||
+      partial.addSendKind ||
+      partial.sendKind ||
+      loopScheduleState.sendKind;
+    applySendKindToTemplate(kind, { loadWeekly: true });
+  }
+  if (toastOnSave) toast('Schedule saved', 'success');
+  return result;
+}
+
+function isAppReadyForAutoSend() {
+  if (mainShell?.hidden) return false;
+  if (!accountsVerifiedOnce) return false;
+  if (loopRunning || corrlinksLoginBusy || bootVerifyRunning || loopScheduleFiring) return false;
+  return true;
+}
+
+async function maybeAutoStartLoopFromSchedule() {
+  if (!window.api?.getLoopSchedule || loopScheduleFiring) return;
+  let result;
+  try {
+    result = await window.api.getLoopSchedule();
+  } catch (_) {
+    return;
+  }
+  // Ticker refresh must not fight the user's Auto-send button.
+  applyLoopScheduleResult(result, { syncEnabled: true });
+  if (!result?.shouldFire?.fire) return;
+  if (!isAppReadyForAutoSend()) return;
+
+  const dueTime = result.shouldFire.sendTime || loopScheduleState.sendTime;
+  const dueKind =
+    result.shouldFire.sendKind ||
+    loopScheduleState.sendKindByTime?.[dueTime] ||
+    loopScheduleState.sendKind ||
+    'daily';
+  const dueLabel = formatScheduleTime12h(dueTime);
+  loopScheduleFiring = true;
+  try {
+    setMainTab('automate');
+    applySendKindToTemplate(dueKind, { loadWeekly: true });
+    log(`Auto-send · ${dueLabel} NY · ${String(dueKind).replace(/_/g, ' ')}`, 'info');
+    toast(`Auto-send · ${dueLabel} NY · ${String(dueKind).replace(/_/g, ' ')}…`, 'info');
+    pendingLoopHistorySource = 'auto';
+    const genBefore = loopGeneration;
+    await startInmateLoop({ source: 'auto' });
+    // Only consume this time slot if the loop actually started.
+    if (loopGeneration > genBefore) {
+      await window.api.markLoopScheduleFired?.({
+        nyDate: result.clock?.date,
+        sendTime: dueTime,
+      });
+      if (result.clock?.date && dueTime) {
+        loopScheduleState.lastFiredByTime = {
+          ...(loopScheduleState.lastFiredByTime || {}),
+          [dueTime]: result.clock.date,
+        };
+        loopScheduleState.lastFiredNyDate = result.clock.date;
+      }
+      paintLoopScheduleControls({ syncEnabled: false });
+    }
+  } finally {
+    loopScheduleFiring = false;
+    setMainTab('settings');
+    void refreshLoopScheduleUi({ syncEnabled: false });
+  }
+}
+
+function startLoopScheduleTicker() {
+  if (loopScheduleTimer) clearInterval(loopScheduleTimer);
+  void refreshLoopScheduleUi();
+  void maybeAutoStartLoopFromSchedule();
+  loopScheduleTimer = setInterval(() => {
+    void maybeAutoStartLoopFromSchedule();
+  }, 15_000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) void maybeAutoStartLoopFromSchedule();
+  });
+  window.addEventListener('focus', () => {
+    void maybeAutoStartLoopFromSchedule();
+  });
+}
+
+async function loadSendHistoryRuns() {
+  if (!window.api?.listSendHistory) return;
+  try {
+    const result = await window.api.listSendHistory();
+    sendHistoryRuns = Array.isArray(result?.runs) ? result.runs : [];
+    renderSendHistoryTable();
+    if (sendHistorySelectedId) {
+      const still = sendHistoryRuns.find((run) => run.id === sendHistorySelectedId);
+      if (still) renderSendHistoryDetail(still);
+      else {
+        sendHistorySelectedId = null;
+        renderSendHistoryDetail(null);
+      }
+    }
+  } catch (error) {
+    log(error?.message || String(error), 'warn');
+  }
+}
+
+function renderSendHistoryTable() {
+  const body = document.getElementById('sendHistoryTableBody');
+  const empty = document.getElementById('sendHistoryEmpty');
+  const wrap = document.getElementById('sendHistoryTableWrap');
+  if (!body) return;
+  body.innerHTML = '';
+  const rows = sendHistoryRuns;
+  if (empty) empty.hidden = rows.length > 0;
+  if (wrap) {
+    wrap.hidden = false;
+    wrap.classList.toggle('is-empty', rows.length === 0);
+  }
+  rows.forEach((run) => {
+    const tr = document.createElement('tr');
+    if (run.id === sendHistorySelectedId) tr.classList.add('is-active');
+    tr.dataset.runId = run.id;
+    const when = document.createElement('td');
+    when.className = 'tabular';
+    when.textContent = `${run.nyDate || '—'} · ${String(run.finishedAt || '')
+      .slice(11, 16) || '—'}`;
+    const kind = document.createElement('td');
+    kind.textContent = run.sendKindLabel || run.sendKind || '—';
+    const result = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = 'send-history-result';
+    if (run.aborted) {
+      badge.classList.add('is-warn');
+      badge.textContent = 'Stopped';
+    } else if (run.failCount > 0) {
+      badge.classList.add('is-fail');
+      badge.textContent = 'Failed';
+    } else {
+      badge.classList.add('is-ok');
+      badge.textContent = 'OK';
+    }
+    result.appendChild(badge);
+    const recipients = document.createElement('td');
+    recipients.className = 'tabular';
+    recipients.textContent = `${run.okCount}/${run.recipientTotal}`;
+    const actions = document.createElement('td');
+    actions.textContent = 'Review';
+    tr.append(when, kind, result, recipients, actions);
+    tr.addEventListener('click', () => {
+      sendHistorySelectedId = run.id;
+      renderSendHistoryTable();
+      renderSendHistoryDetail(run);
+    });
+    body.appendChild(tr);
+  });
+}
+
+function renderSendHistoryDetail(run) {
+  const empty = document.getElementById('sendHistoryDetailEmpty');
+  const body = document.getElementById('sendHistoryDetailBody');
+  const title = document.getElementById('sendHistoryDetailTitle');
+  const meta = document.getElementById('sendHistoryDetailMeta');
+  const summary = document.getElementById('sendHistoryDetailSummary');
+  const list = document.getElementById('sendHistoryDetailList');
+  if (!run) {
+    if (empty) empty.hidden = false;
+    if (body) body.hidden = true;
+    if (title) title.textContent = 'Run detail';
+    if (meta) meta.textContent = 'Select a send run to review failures';
+    return;
+  }
+  if (empty) empty.hidden = true;
+  if (body) body.hidden = false;
+  if (title) title.textContent = run.sendKindLabel || 'Send run';
+  if (meta) {
+    meta.textContent = `${run.nyDate || '—'} · ${run.source || 'loop'} · ${run.finishedAt || ''}`;
+  }
+  if (summary) summary.textContent = run.summary || '';
+  if (!list) return;
+  list.innerHTML = '';
+  const recipients = Array.isArray(run.recipients) ? run.recipients : [];
+  if (!recipients.length) {
+    const li = document.createElement('li');
+    li.innerHTML = '<div class="sh-reason">No per-recipient failures stored for this run.</div>';
+    list.appendChild(li);
+    return;
+  }
+  recipients.forEach((row) => {
+    const li = document.createElement('li');
+    const name = document.createElement('div');
+    name.className = 'sh-name';
+    name.textContent = `${row.name || 'Inmate'}${row.inmate_id ? ` (${row.inmate_id})` : ''} · ${row.status}`;
+    const reason = document.createElement('div');
+    reason.className = 'sh-reason';
+    reason.textContent = row.reason || '';
+    li.append(name, reason);
+    if (row.status === 'failed') {
+      const actions = document.createElement('div');
+      actions.className = 'sh-actions';
+      const resendBtn = document.createElement('button');
+      resendBtn.type = 'button';
+      resendBtn.className = 'action-secondary tiny';
+      resendBtn.textContent = 'Resend recipient';
+      resendBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void resendHistoryRecipient(run, row);
+      });
+      actions.appendChild(resendBtn);
+      li.appendChild(actions);
+      const files = Array.isArray(row.failedFiles) ? row.failedFiles : [];
+      if (files.length) {
+        const fileList = document.createElement('ul');
+        fileList.className = 'send-history-files';
+        files.forEach((file) => {
+          const fileLi = document.createElement('li');
+          const label = document.createElement('span');
+          label.textContent =
+            file.filename ||
+            (file.part != null ? `Part ${file.part}` : 'File') +
+              (file.reason ? ` — ${file.reason}` : '');
+          const fileBtn = document.createElement('button');
+          fileBtn.type = 'button';
+          fileBtn.className = 'ghost tiny';
+          fileBtn.textContent = 'Resend file';
+          fileBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void resendHistoryFailedFile(run, row, file);
+          });
+          fileLi.append(label, fileBtn);
+          fileList.appendChild(fileLi);
+        });
+        li.appendChild(fileList);
+      }
+    }
+    list.appendChild(li);
+  });
+}
+
+async function resendHistoryRecipient(run, row) {
+  if (loopRunning || corrlinksLoginBusy || bootVerifyRunning) {
+    toast('Wait for the current run to finish', 'warn');
+    return;
+  }
+  const inmateId = row?.inmateId;
+  if (!inmateId) {
+    toast('Missing inmate id', 'error');
+    return;
+  }
+  applySendKindToTemplate(run?.sendKind || 'daily', { loadWeekly: true });
+  setMainTab('automate');
+  pendingLoopHistorySource = 'retry';
+  log(`Resend recipient from history · ${row.name || inmateId}`, 'info');
+  toast(`Resending ${row.name || 'recipient'}…`, 'info');
+  await startInmateLoop({ inmateIds: [inmateId], source: 'retry' });
+}
+
+async function resendHistoryFailedFile(run, row, file) {
+  if (loopRunning || corrlinksLoginBusy || bootVerifyRunning) {
+    toast('Wait for the current run to finish', 'warn');
+    return;
+  }
+  const inmate = accounts.find((a) => String(a.id) === String(row.inmateId));
+  if (!inmate) {
+    toast('Inmate not in current roster — refresh accounts', 'warn');
+    return;
+  }
+  applySendKindToTemplate(run?.sendKind || 'daily', { loadWeekly: true });
+  if (templateMode === 'weekly') await loadWeeklyTemplate({ force: false });
+  setMainTab('automate');
+  selectInmate(inmate.id);
+  const sendable = currentSendableFiles(inmate);
+  const part = file?.part;
+  const wantName = String(file?.filename || '').trim();
+  const wantKey = String(file?.key || file?.url || '').trim();
+  const match = sendable.find((item, index) => {
+    if (part != null && String(item.part) === String(part)) return true;
+    if (wantName && String(item.filename || '') === wantName) return true;
+    if (wantKey && (String(item.url || '') === wantKey || String(item.key || '') === wantKey)) {
+      return true;
+    }
+    const key = `${item.part}:${item.filename || index}`;
+    return wantKey && key === wantKey;
+  });
+  if (!match) {
+    toast('Failed file not found on this inmate — try Resend recipient', 'warn');
+    return;
+  }
+  const matchIndex = sendable.indexOf(match);
+  selectedFileKeys = [`${match.part}:${match.filename || matchIndex}`];
+  renderFilesList(inmate);
+  updateActionButtons();
+  log(
+    `Resend failed file from history · ${row.name || inmate.id} · ${match.filename || match.part || 'file'}`,
+    'info'
+  );
+  toast('Resending failed file…', 'info');
+  pendingLoopHistorySource = 'retry';
+  const status = await startCorrlinksSend({ quietToast: false });
+  if (status) {
+    const ok = statusLooksGood(status, { requireSend: true });
+    void persistLoopSendHistory({
+      source: 'retry',
+      okCount: ok ? 1 : 0,
+      failCount: ok ? 0 : 1,
+      recipientTotal: 1,
+      aborted: false,
+      summary: ok
+        ? `Resend file OK · ${match.filename || match.part}`
+        : `Resend file failed · ${status.message || 'error'}`,
+      failedRecipients: ok
+        ? []
+        : [
+            {
+              id: inmate.id,
+              name: inmate.name || 'Inmate',
+              inmate_id: inmate.inmate_id ?? inmate.id,
+              reason: status.message || 'Send did not complete',
+              failedFiles: status.failedParts || [
+                {
+                  inmateId: String(inmate.id),
+                  part: match.part,
+                  filename: match.filename,
+                  url: match.url,
+                  reason: status.message || 'Send did not complete',
+                },
+              ],
+            },
+          ],
+    });
   }
 }
 
@@ -7512,6 +8392,7 @@ wireShellUi();
 
 init().finally(() => {
   startStatusClock();
+  startLoopScheduleTicker();
   scheduleCorrPaneBounds();
   setTimeout(syncCorrPaneBounds, 200);
 });

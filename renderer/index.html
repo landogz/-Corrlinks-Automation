@@ -149,6 +149,9 @@
           <button type="button" class="main-tab" data-tab="history" id="tabHistory">
             History
           </button>
+          <button type="button" class="main-tab" data-tab="settings" id="tabSettings">
+            Settings
+          </button>
         </nav>
 
         <div class="topbar-actions no-drag">
@@ -539,7 +542,29 @@
         </div>
 
         <div id="historyView" class="tab-panel" data-tab-panel="history" hidden>
-          <div class="history-layout">
+          <div class="history-mode-bar" role="tablist" aria-label="History mode">
+            <button
+              type="button"
+              class="history-mode-btn is-active"
+              data-history-mode="exchange"
+              id="btnHistoryModeExchange"
+              role="tab"
+              aria-selected="true"
+            >
+              Exchange files
+            </button>
+            <button
+              type="button"
+              class="history-mode-btn"
+              data-history-mode="sends"
+              id="btnHistoryModeSends"
+              role="tab"
+              aria-selected="false"
+            >
+              Send runs
+            </button>
+          </div>
+          <div class="history-layout" id="historyExchangeLayout">
             <section class="history-main card">
               <div class="history-toolbar">
                 <div class="history-toolbar-text">
@@ -639,6 +664,275 @@
                 </div>
               </div>
             </aside>
+          </div>
+
+          <div class="history-sends-layout" id="historySendsLayout" hidden>
+            <section class="history-main card history-sends-main">
+              <div class="history-toolbar">
+                <div class="history-toolbar-text">
+                  <h2>Send runs</h2>
+                  <p class="muted" id="sendHistoryHint">Loop and single-send outcomes (America/New_York)</p>
+                </div>
+                <div class="history-toolbar-actions">
+                  <button type="button" class="ghost history-ctrl-btn" id="btnSendHistoryRefresh" title="Refresh send runs">
+                    Refresh
+                  </button>
+                  <button type="button" class="ghost history-ctrl-btn" id="btnSendHistoryClear" title="Clear send history">
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div class="send-history-table-wrap" id="sendHistoryTableWrap">
+                <div id="sendHistoryEmpty" class="empty-state send-history-empty" hidden>
+                  <h3>No send runs yet</h3>
+                  <p class="muted">Complete a loop or send to see history here.</p>
+                </div>
+                <table class="send-history-table" id="sendHistoryTable" aria-label="Send runs">
+                  <thead>
+                    <tr>
+                      <th>When</th>
+                      <th>Kind</th>
+                      <th>Result</th>
+                      <th>Recipients</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="sendHistoryTableBody"></tbody>
+                </table>
+              </div>
+            </section>
+            <aside class="history-preview card send-history-detail" aria-label="Send run detail">
+              <div class="history-preview-head">
+                <div class="history-preview-titles">
+                  <h2 id="sendHistoryDetailTitle">Run detail</h2>
+                  <p id="sendHistoryDetailMeta" class="muted truncate">Select a send run to review failures</p>
+                </div>
+              </div>
+              <div class="send-history-detail-frame">
+                <div id="sendHistoryDetailEmpty" class="empty-state send-history-detail-empty">
+                  <h3>No run selected</h3>
+                  <p class="muted">Pick a send run to review recipients and resend failures.</p>
+                </div>
+                <div id="sendHistoryDetailBody" class="send-history-detail-body" hidden>
+                  <p id="sendHistoryDetailSummary" class="send-history-detail-summary"></p>
+                  <ul id="sendHistoryDetailList" class="send-history-detail-list" aria-label="Recipients"></ul>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
+
+        <div id="settingsView" class="tab-panel" data-tab-panel="settings" hidden>
+          <div class="settings-layout" id="settingsLayout">
+            <header class="settings-page-head">
+              <div class="settings-page-head-copy">
+                <p class="settings-eyebrow">Operations</p>
+                <h2 id="settingsScheduleTitle">Loop schedule</h2>
+                <p class="settings-page-lead">
+                  Arm Auto-send, then add America/New_York times with a send kind. While this app is
+                  open, Start loop runs once per time each NY day.
+                </p>
+              </div>
+              <div class="settings-armed-chip" id="settingsArmedChip" aria-hidden="true">
+                <span class="settings-armed-dot" aria-hidden="true"></span>
+                <span id="settingsArmedChipLabel">Standby</span>
+              </div>
+            </header>
+
+            <div class="settings-workspace">
+              <div class="settings-main-col">
+                <section class="settings-surface settings-arm-surface" aria-labelledby="settingsAutoSendHeading">
+                  <div class="settings-arm-copy">
+                    <h3 id="settingsAutoSendHeading">Auto-send</h3>
+                    <p class="settings-arm-help" id="settingsAutoSendStateLine">
+                      Off — times will not fire
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    class="settings-toggle-btn"
+                    id="settingsAutoSendEnabled"
+                    aria-pressed="false"
+                    aria-label="Toggle Auto-send"
+                  >
+                    <span class="settings-toggle-track" aria-hidden="true">
+                      <span class="settings-toggle-thumb"></span>
+                    </span>
+                    <span class="settings-toggle-text">Off</span>
+                  </button>
+                </section>
+
+                <section class="settings-surface" aria-labelledby="settingsComposerTitle">
+                  <div class="settings-surface-head">
+                    <div>
+                      <h3 id="settingsComposerTitle">Add or edit time</h3>
+                      <p class="settings-surface-sub" id="settingsComposerHint">
+                        New slot · runs daily while Auto-send is on
+                      </p>
+                    </div>
+                  </div>
+
+                  <div class="settings-composer" id="settingsTimesEditor">
+                    <div class="settings-time-selector" role="group" aria-labelledby="settingsTimeSelectorLabel">
+                      <div class="settings-time-selector-head">
+                        <span class="settings-field-label" id="settingsTimeSelectorLabel">Time (NY)</span>
+                        <output class="settings-time-preview tabular" id="settingsTimePreview" for="settingsSendHourInput settingsSendMinuteInput settingsSendAmPmInput">
+                          8:05 AM
+                        </output>
+                      </div>
+                      <div class="settings-time-wheels">
+                        <label class="settings-time-wheel" for="settingsSendHourInput">
+                          <span class="settings-time-wheel-label">Hour</span>
+                          <select id="settingsSendHourInput" aria-label="Hour">
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                            <option value="6">6</option>
+                            <option value="7">7</option>
+                            <option value="8" selected>8</option>
+                            <option value="9">9</option>
+                            <option value="10">10</option>
+                            <option value="11">11</option>
+                            <option value="12">12</option>
+                          </select>
+                        </label>
+                        <span class="settings-times-colon" aria-hidden="true">:</span>
+                        <label class="settings-time-wheel" for="settingsSendMinuteInput">
+                          <span class="settings-time-wheel-label">Minute</span>
+                          <select id="settingsSendMinuteInput" aria-label="Minute">
+                            <option value="00">00</option>
+                            <option value="05" selected>05</option>
+                            <option value="10">10</option>
+                            <option value="15">15</option>
+                            <option value="20">20</option>
+                            <option value="25">25</option>
+                            <option value="30">30</option>
+                            <option value="35">35</option>
+                            <option value="40">40</option>
+                            <option value="45">45</option>
+                            <option value="50">50</option>
+                            <option value="55">55</option>
+                          </select>
+                        </label>
+                        <label class="settings-time-wheel settings-time-wheel-ampm" for="settingsSendAmPmInput">
+                          <span class="settings-time-wheel-label">AM/PM</span>
+                          <select id="settingsSendAmPmInput" aria-label="AM or PM">
+                            <option value="AM" selected>AM</option>
+                            <option value="PM">PM</option>
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div class="settings-field-block settings-field-kind">
+                      <span class="settings-field-label" id="settingsSendKindLabel">Send kind</span>
+                      <input type="hidden" id="settingsSendKindInput" value="daily" />
+                      <div
+                        class="settings-kind-segments"
+                        role="group"
+                        aria-labelledby="settingsSendKindLabel"
+                      >
+                        <button type="button" class="settings-kind-seg is-active" data-kind-seg="daily">
+                          Daily
+                        </button>
+                        <button type="button" class="settings-kind-seg" data-kind-seg="weekly_nfl">
+                          Weekly NFL
+                        </button>
+                        <button type="button" class="settings-kind-seg" data-kind-seg="weekly_cfb">
+                          Weekly CFB
+                        </button>
+                      </div>
+                    </div>
+
+                    <div class="settings-composer-actions">
+                      <button type="button" class="action-secondary" id="btnSettingsAddTime">
+                        Add time
+                      </button>
+                      <button type="button" class="ghost" id="btnSettingsCancelEdit" hidden>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-surface settings-table-surface" aria-labelledby="settingsTimesTableTitle">
+                  <div class="settings-surface-head settings-table-head">
+                    <div>
+                      <h3 id="settingsTimesTableTitle">Saved times</h3>
+                      <p class="settings-surface-sub" id="settingsTimesMeta">0 / 12 times · daily</p>
+                    </div>
+                    <label class="settings-times-filter">
+                      <span class="sr-only">Filter times</span>
+                      <input
+                        type="search"
+                        id="settingsTimesFilter"
+                        placeholder="Search…"
+                        aria-label="Filter send times"
+                      />
+                    </label>
+                  </div>
+
+                  <div class="settings-times-table-wrap">
+                    <table
+                      class="settings-times-table"
+                      id="settingsSendTimesTable"
+                      aria-label="Saved send times"
+                    >
+                      <thead>
+                        <tr>
+                          <th scope="col">#</th>
+                          <th scope="col">Time (NY)</th>
+                          <th scope="col">Send kind</th>
+                          <th scope="col">Today</th>
+                          <th scope="col">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody id="settingsSendTimesBody"></tbody>
+                    </table>
+                    <div id="settingsSendTimesEmpty" class="settings-times-empty" hidden>
+                      No times match this filter.
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <aside class="settings-side-col" aria-label="Schedule status">
+                <section class="settings-surface settings-status-surface" id="settingsScheduleStatus" aria-live="polite">
+                  <div class="settings-surface-head">
+                    <div>
+                      <h3>Live status</h3>
+                      <p class="settings-surface-sub">America/New_York clock</p>
+                    </div>
+                  </div>
+                  <dl class="settings-metrics">
+                    <div class="settings-metric settings-metric-lead">
+                      <dt>Next run</dt>
+                      <dd class="tabular" id="settingsScheduleNext">—</dd>
+                    </div>
+                    <div class="settings-metric">
+                      <dt>Last fired</dt>
+                      <dd class="tabular" id="settingsScheduleLast">—</dd>
+                    </div>
+                    <div class="settings-metric settings-metric-clock">
+                      <dt>NY now</dt>
+                      <dd class="tabular" id="settingsScheduleClock">—</dd>
+                    </div>
+                  </dl>
+                  <p class="sr-only" id="settingsScheduleStatusValue">Auto-send off</p>
+                </section>
+
+                <section class="settings-surface settings-note-surface">
+                  <h3>How it works</h3>
+                  <ul class="settings-note-list">
+                    <li>Keep the app open for Auto-send to fire.</li>
+                    <li>Missed times today are skipped — Next run is the next upcoming slot (or tomorrow).</li>
+                    <li>When a slot starts, Automate opens; Settings returns after the loop.</li>
+                  </ul>
+                </section>
+              </aside>
+            </div>
           </div>
         </div>
       </main>

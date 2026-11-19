@@ -53,6 +53,22 @@ const {
   normalizeTypeScale,
 } = require('./uiPreferences');
 const {
+  loadLoopSchedule,
+  saveLoopSchedule,
+  nyClock,
+  shouldFireLoopSchedule,
+  nextDueLabel,
+  sendKindToTemplate,
+  templateToSendKind,
+  sendKindLabel,
+} = require('./loopSchedule');
+const {
+  listSendHistory,
+  getSendHistoryRun,
+  appendSendHistory,
+  clearSendHistory,
+} = require('./sendHistory');
+const {
   resolveScheme,
   resolveThemeId,
   getWindowBackground,
@@ -310,6 +326,81 @@ function registerIpc() {
   ipcMain.handle('ui:setAppearance', async (_event, partial = {}) => {
     return applyAppearancePreferences(partial || {}, { persist: true });
   });
+
+  ipcMain.handle('loopSchedule:get', async () => {
+    const schedule = loadLoopSchedule();
+    const clock = nyClock();
+    const shouldFire = shouldFireLoopSchedule(schedule, clock);
+    const kind = shouldFire.sendKind || schedule.sendKind;
+    return {
+      ok: true,
+      schedule,
+      clock,
+      shouldFire,
+      nextDue: nextDueLabel(schedule, clock),
+      template: sendKindToTemplate(kind),
+      label: sendKindLabel(kind),
+    };
+  });
+
+  ipcMain.handle('loopSchedule:set', async (_event, partial = {}) => {
+    const schedule = saveLoopSchedule(partial || {});
+    const clock = nyClock();
+    const shouldFire = shouldFireLoopSchedule(schedule, clock);
+    const kind = shouldFire.sendKind || schedule.sendKind;
+    return {
+      ok: true,
+      schedule,
+      clock,
+      shouldFire,
+      nextDue: nextDueLabel(schedule, clock),
+      template: sendKindToTemplate(kind),
+      label: sendKindLabel(kind),
+    };
+  });
+
+  ipcMain.handle('loopSchedule:markFired', async (_event, payload = {}) => {
+    const clock = nyClock();
+    const nyDate =
+      (payload && typeof payload === 'object' ? payload.nyDate : null) ||
+      (typeof payload === 'string' ? payload : null) ||
+      clock.date;
+    const sendTime =
+      payload && typeof payload === 'object' ? payload.sendTime || null : null;
+    const schedule = saveLoopSchedule({
+      markFiredNyDate: nyDate,
+      markFiredTime: sendTime || undefined,
+      lastFiredNyDate: nyDate,
+    });
+    return { ok: true, schedule, clock };
+  });
+
+  ipcMain.handle('loopSchedule:helpers', async () => ({
+    ok: true,
+    sendKindToTemplate,
+    templateToSendKind,
+    sendKindLabel,
+  }));
+
+  ipcMain.handle('sendHistory:list', async () => ({
+    ok: true,
+    runs: listSendHistory(),
+  }));
+
+  ipcMain.handle('sendHistory:get', async (_event, id) => ({
+    ok: true,
+    run: getSendHistoryRun(id),
+  }));
+
+  ipcMain.handle('sendHistory:append', async (_event, run = {}) => {
+    const saved = appendSendHistory(run || {});
+    return { ok: true, run: saved };
+  });
+
+  ipcMain.handle('sendHistory:clear', async () => ({
+    ok: true,
+    runs: clearSendHistory(),
+  }));
 
   ipcMain.handle('config:summary', async () => {
     const cfg = getSportsDataConfig();

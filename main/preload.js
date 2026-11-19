@@ -108,4 +108,12 @@ contextBridge.exposeInMainWorld('api', {
   getThemePreference: () => ipcRenderer.invoke('ui:getThemePreference'),
   setThemePreference: (pref) => ipcRenderer.invoke('ui:setThemePreference', pref),
   setAppearance: (partial) => ipcRenderer.invoke('ui:setAppearance', partial || {}),
+  getLoopSchedule: () => ipcRenderer.invoke('loopSchedule:get'),
+  setLoopSchedule: (partial) => ipcRenderer.invoke('loopSchedule:set', partial || {}),
+  markLoopScheduleFired: (nyDateOrPayload) =>
+    ipcRenderer.invoke('loopSchedule:markFired', nyDateOrPayload),
+  listSendHistory: () => ipcRenderer.invoke('sendHistory:list'),
+  getSendHistory: (id) => ipcRenderer.invoke('sendHistory:get', id),
+  appendSendHistory: (run) => ipcRenderer.invoke('sendHistory:append', run || {}),
+  clearSendHistory: () => ipcRenderer.invoke('sendHistory:clear'),
 });

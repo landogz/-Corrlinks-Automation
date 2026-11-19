@@ -1,7 +1,7 @@
 {
   "name": "inmateexchange-auto",
   "productName": "Inside Scores",
-  "version": "0.1.60",
+  "version": "0.1.61",
   "description": "Inside Scores — CorrLinks login automation via Electron",
   "main": "main/main.js",
   "author": "MJR",
@@ -14,6 +14,8 @@
     "smoke:login-helpers": "node scripts/smoke-login-helpers.js",
     "smoke:corr-bounds": "node scripts/smoke-corr-bounds.js",
     "smoke:appearance": "node scripts/smoke-appearance.js",
+    "smoke:loop-schedule": "node scripts/smoke-loop-schedule.js",
+    "smoke:send-history": "node scripts/smoke-send-history.js",
     "smoke:exchange": "node scripts/smoke-exchange-files.js",
     "gate": "node .cursor/hooks/loop-gate.js",
     "pack": "electron-builder --dir",

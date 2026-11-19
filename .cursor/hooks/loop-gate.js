@@ -28,8 +28,12 @@ const CHECK_FILES = [
   'scripts/smoke-login-helpers.js',
   'scripts/smoke-corr-bounds.js',
   'scripts/smoke-appearance.js',
+  'scripts/smoke-loop-schedule.js',
+  'scripts/smoke-send-history.js',
   'shared/appearance.js',
   'main/uiPreferences.js',
+  'main/loopSchedule.js',
+  'main/sendHistory.js',
 ];
 
 function readStdin() {
@@ -104,6 +108,24 @@ function smokeAppearance() {
   return [`smoke:appearance failed: ${err || `exit ${r.status}`}`];
 }
 
+function smokeLoopSchedule() {
+  const r = run('npm', ['run', 'smoke:loop-schedule', '--silent'], {
+    timeout: 15_000,
+  });
+  if (r.status === 0) return [];
+  const err = String(r.stderr || r.stdout || '').trim().slice(0, 1200);
+  return [`smoke:loop-schedule failed: ${err || `exit ${r.status}`}`];
+}
+
+function smokeSendHistory() {
+  const r = run('npm', ['run', 'smoke:send-history', '--silent'], {
+    timeout: 15_000,
+  });
+  if (r.status === 0) return [];
+  const err = String(r.stderr || r.stdout || '').trim().slice(0, 1200);
+  return [`smoke:send-history failed: ${err || `exit ${r.status}`}`];
+}
+
 function emit(followupMessage) {
   const out = followupMessage ? { followup_message: followupMessage } : {};
   process.stdout.write(`${JSON.stringify(out)}\n`);
@@ -121,6 +143,8 @@ function main() {
       ...smokeLoginHelpers(),
       ...smokeCorrBounds(),
       ...smokeAppearance(),
+      ...smokeLoopSchedule(),
+      ...smokeSendHistory(),
     ];
     if (failures.length) {
       console.error('LOOP GATE RED');
@@ -128,7 +152,7 @@ function main() {
       process.exit(1);
     }
     console.log(
-      'LOOP GATE GREEN (syntax + smoke:subject + smoke:login-helpers + smoke:corr-bounds + smoke:appearance)'
+      'LOOP GATE GREEN (syntax + smoke:subject + smoke:login-helpers + smoke:corr-bounds + smoke:appearance + smoke:loop-schedule + smoke:send-history)'
     );
     process.exit(0);
   }
@@ -145,6 +169,8 @@ function main() {
     ...smokeLoginHelpers(),
     ...smokeCorrBounds(),
     ...smokeAppearance(),
+    ...smokeLoopSchedule(),
+    ...smokeSendHistory(),
   ];
   if (!failures.length) {
     emit();
