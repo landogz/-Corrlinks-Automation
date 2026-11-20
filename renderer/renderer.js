@@ -4592,6 +4592,8 @@ function loopStillActive(generation) {
 }
 
 async function startInmateLoop(options = {}) {
+  // Always clear leftover modals (Loop done, Updates, etc.) before a new run.
+  closeAllModalDialogs();
   const retryIds = Array.isArray(options.inmateIds)
     ? options.inmateIds.map(String).filter(Boolean)
     : null;
@@ -5783,10 +5785,22 @@ function stopModalCorrHideWatch() {
   }
 }
 
+function listAppModalDialogs() {
+  return [updatesDialog, aboutDialog, shortcutsDialog, loopDoneDialog].filter(Boolean);
+}
+
 function anyModalDialogOpen() {
-  return [updatesDialog, aboutDialog, shortcutsDialog, loopDoneDialog].some(
-    (dialog) => dialog && dialog.open
-  );
+  return listAppModalDialogs().some((dialog) => dialog.open);
+}
+
+/** Dismiss completion / about / shortcuts / updates so a new loop is not blocked by a leftover modal. */
+function closeAllModalDialogs() {
+  listAppModalDialogs().forEach((dialog) => {
+    try {
+      if (dialog.open) dialog.close();
+    } catch (_) {}
+  });
+  stopModalCorrHideWatch();
 }
 
 function forceHideCorrForModal() {
@@ -7554,6 +7568,7 @@ async function maybeAutoStartLoopFromSchedule() {
   const dueLabel = formatScheduleTime12h(dueTime);
   loopScheduleFiring = true;
   try {
+    closeAllModalDialogs();
     setMainTab('automate');
     applySendKindToTemplate(dueKind, { loadWeekly: true });
     log(`Auto-send · ${dueLabel} NY · ${String(dueKind).replace(/_/g, ' ')}`, 'info');

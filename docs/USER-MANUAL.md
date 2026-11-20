@@ -1,6 +1,6 @@
 # Inside Scores — User Manual
 
-**Version:** 0.1.62  
+**Version:** 0.1.63  
 **Product:** Inside Scores  
 **Audience:** SportsData operators who send Inmate Exchange reports through CorrLinks
 
