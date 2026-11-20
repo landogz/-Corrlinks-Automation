@@ -59,9 +59,17 @@ function previousWeekday(weekday) {
   return WEEK_ORDER[(idx + 6) % 7];
 }
 
+function nextWeekday(weekday) {
+  const abbr = weekdayAbbr(weekday);
+  const idx = WEEK_ORDER.indexOf(abbr);
+  if (idx < 0) return abbr;
+  return WEEK_ORDER[(idx + 1) % 7];
+}
+
 /**
  * CorrLinks subject in America/New_York (always — ignores OS timezone):
  * - 1:30am up to (but not including) 5:00am: "yesterday & today" e.g. "thu & fri"
+ * - 5:30pm–6:30pm inclusive: tomorrow only — e.g. Fri 5:30pm → "sat"
  * - Otherwise: today's short weekday only — e.g. "fri"
  */
 function buildCorrlinksSubject(now = new Date(), timeZone = getAppTimezone()) {
@@ -72,6 +80,11 @@ function buildCorrlinksSubject(now = new Date(), timeZone = getAppTimezone()) {
   // 1:30am (90) inclusive → 5:00am (300) exclusive.
   if (minutes >= 90 && minutes < 300) {
     return `${previousWeekday(today.weekday)} & ${todayAbbr}`;
+  }
+
+  // 5:30pm (1050) inclusive → 6:30pm (1110) inclusive — matches API evening_tomorrow_window.
+  if (minutes >= 1050 && minutes <= 1110) {
+    return nextWeekday(today.weekday);
   }
 
   return todayAbbr;
@@ -109,6 +122,7 @@ module.exports = {
   zonedParts,
   weekdayAbbr,
   previousWeekday,
+  nextWeekday,
   buildCorrlinksSubject,
   normalizeWeeklyLeague,
   buildWeeklySubject,

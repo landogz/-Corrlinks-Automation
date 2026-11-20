@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.64**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.65**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.64-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.64.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.64.exe` or portable `Inside-Scores-0.1.64.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.65-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.65.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.65.exe` or portable `Inside-Scores-0.1.65.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.64.exe`.
+1. Run `Inside-Scores-Setup-0.1.65.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.64.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.65.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 
@@ -125,10 +125,11 @@ CORRLINKS_ALLOW_SEND=0
 
 ### Daily subject (always America/New_York)
 
-| Wall time (ET) | Subject example (Tuesday) |
+| Wall time (ET) | Subject example |
 | --- | --- |
 | **1:30am–4:59am** | `mon & tue` (yesterday & today) |
-| Otherwise | `tue` (today only) |
+| **5:30pm–6:30pm** (inclusive) | tomorrow only — e.g. Fri → `sat` (matches API evening tomorrow slate) |
+| Otherwise | today only — e.g. `tue` / `fri` |
 
 The on-screen subject hint refreshes every minute; compose/send always computes the subject live.
 
