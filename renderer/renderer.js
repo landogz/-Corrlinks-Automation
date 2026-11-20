@@ -421,7 +421,6 @@ const historyControlsFind = document.getElementById('historyControlsFind');
 const historyToolbarActions = document.getElementById('historyToolbarActions');
 const historyTableEmpty = document.getElementById('historyTableEmpty');
 const historyPreviewHeading = document.getElementById('historyPreviewHeading');
-const btnHistoryEmptyGenerate = document.getElementById('btnHistoryEmptyGenerate');
 const loopCountdown = document.getElementById('loopCountdown');
 const loopCountdownNum = document.getElementById('loopCountdownNum');
 const loopCountdownNext = document.getElementById('loopCountdownNext');
@@ -592,18 +591,27 @@ let historyLoaded = false;
 let sendHistoryRuns = [];
 /** @type {string|null} */
 let sendHistorySelectedId = null;
-/** @type {{ enabled: boolean, sendTime: string, sendTimes: string[], sendKind: string, sendKindByTime: Record<string, string>, lastFiredNyDate: string|null, lastFiredByTime: Record<string, string> }} */
+/** @type {{ enabled: boolean, sendTime: string, sendTimes: string[], sendKind: string, sendKindByTime: Record<string, string>, saveLocalByTime: Record<string, boolean>, lastFiredNyDate: string|null, lastFiredByTime: Record<string, string> }} */
 let loopScheduleState = {
   enabled: false,
-  sendTime: '08:05',
-  sendTimes: ['08:05', '09:30', '10:05', '11:30', '12:05'],
+  sendTime: '02:00',
+  sendTimes: ['02:00', '08:05', '09:30', '10:05', '11:30', '12:05'],
   sendKind: 'daily',
   sendKindByTime: {
+    '02:00': 'daily',
     '08:05': 'daily',
     '09:30': 'weekly_cfb',
     '10:05': 'daily',
     '11:30': 'weekly_cfb',
     '12:05': 'daily',
+  },
+  saveLocalByTime: {
+    '02:00': true,
+    '08:05': false,
+    '09:30': false,
+    '10:05': false,
+    '11:30': false,
+    '12:05': false,
   },
   lastFiredNyDate: null,
   lastFiredByTime: {},
@@ -618,9 +626,11 @@ let loopScheduleFiring = false;
 let settingsEditingTime = null;
 /** Source tag for the in-flight / next loop history row. */
 let pendingLoopHistorySource = 'loop';
+/** Schedule HH:mm for the in-flight auto-send (cleared when loop starts). */
+let pendingLoopScheduleTime = null;
 let loopRunStartedAt = null;
 /** @type {{ url: string|null, text: string, date: string|null, filename: string|null }} */
-let historyPreviewState = { url: null, text: '', date: null, filename: null };
+let historyPreviewState = { id: null, url: null, text: '', date: null, filename: null };
 /** @type {{ to: string, subject: string, body: string, chars: number }} */
 let composePreview = { to: '', subject: '', body: '', chars: 0, parts: 0 };
 let optionHighlight = -1;
@@ -633,8 +643,6 @@ const historyPreviewEmpty = document.getElementById('historyPreviewEmpty');
 const historyPreviewMeta = document.getElementById('historyPreviewMeta');
 const historyPreviewBody = document.getElementById('historyPreviewBody');
 const btnHistoryRefresh = document.getElementById('btnHistoryRefresh');
-const btnHistoryGenerate = document.getElementById('btnHistoryGenerate');
-const historyGenerateDate = document.getElementById('historyGenerateDate');
 const btnHistoryCopy = document.getElementById('btnHistoryCopy');
 const btnHistoryDownloadPreview = document.getElementById('btnHistoryDownloadPreview');
 const btnHistoryExport = document.getElementById('btnHistoryExport');
@@ -4598,7 +4606,9 @@ async function startInmateLoop(options = {}) {
     ? options.inmateIds.map(String).filter(Boolean)
     : null;
   const historySource = String(options.source || pendingLoopHistorySource || 'loop');
+  const scheduleTime = options.scheduleTime || pendingLoopScheduleTime || null;
   pendingLoopHistorySource = 'loop';
+  pendingLoopScheduleTime = null;
   if (loopRunning || corrlinksLoginBusy || bootVerifyRunning) return;
   // Pull latest inmate roster from SportsData before grouping the loop.
   await syncCorrlinksAccountsQuiet({ reason: 'preflight', force: true });
@@ -5061,7 +5071,87 @@ async function startInmateLoop(options = {}) {
     failedRecipients: lastLoopFailed,
     startedAt: loopRunStartedAt,
   });
+  void maybeArchiveExchangeHistoryAfterLoop({
+    source: historySource,
+    scheduleTime,
+    groups,
+    aborted: wasAborted,
+  });
   loopRunStartedAt = null;
+}
+
+/** Unique TXT parts from this loop for local Exchange history. */
+function collectUniqueLoopArchiveFiles(groups) {
+  const map = new Map();
+  const add = (file) => {
+    if (!file) return;
+    const filename = String(file.filename || '').trim() || `part-${file.part || 1}.txt`;
+    const url = file.url ? String(file.url) : '';
+    const key = url || `${file.part || ''}:${filename}`;
+    if (!key || map.has(key)) return;
+    map.set(key, {
+      filename,
+      url: url || null,
+      part: file.part != null ? Number(file.part) : null,
+    });
+  };
+  if (templateMode === 'weekly') {
+    const files = buildTemplatePayload(null, loopFileSnapshot)?.files || [];
+    files.forEach(add);
+    return [...map.values()];
+  }
+  const inmates = [];
+  (Array.isArray(groups) ? groups : []).forEach((group) => {
+    (group?.inmates || []).forEach((inmate) => inmates.push(inmate));
+  });
+  if (!inmates.length) {
+    (accounts || []).forEach((inmate) => inmates.push(inmate));
+  }
+  inmates.forEach((inmate) => {
+    filesFromSnapshot(inmate, loopFileSnapshot).forEach(add);
+  });
+  return [...map.values()];
+}
+
+async function maybeArchiveExchangeHistoryAfterLoop({
+  source = 'loop',
+  scheduleTime = null,
+  groups = [],
+  aborted = false,
+} = {}) {
+  if (aborted) return;
+  if (String(source || '').toLowerCase() !== 'auto') return;
+  const time = String(scheduleTime || '').trim();
+  if (!time) return;
+  if (!loopScheduleState.saveLocalByTime?.[time]) return;
+  if (!window.api?.archiveExchangeHistory) return;
+  const files = collectUniqueLoopArchiveFiles(groups);
+  if (!files.length) {
+    log('Exchange archive skipped · no TXT parts in this loop', 'warn');
+    return;
+  }
+  try {
+    const nyDate = loopScheduleClock?.date || todayIsoDate();
+    const result = await window.api.archiveExchangeHistory({
+      nyDate,
+      sendTime: time,
+      files,
+    });
+    if (!result?.ok) throw new Error(result?.message || 'Archive failed');
+    const count = Number(result.count) || 0;
+    log(
+      count
+        ? `Exchange archive · ${count} file(s) · ${formatScheduleTime12h(time)} NY`
+        : `Exchange archive · nothing written · ${formatScheduleTime12h(time)} NY`,
+      count ? 'success' : 'warn'
+    );
+    if (count) toast(`Archived ${count} exchange file(s)`, 'success');
+    if (historyMode === 'exchange' && activeMainTab === 'history') {
+      await loadExchangeHistory();
+    }
+  } catch (error) {
+    log(error?.message || String(error), 'warn');
+  }
 }
 
 function currentSendKindFromTemplate() {
@@ -6302,11 +6392,26 @@ function paintSettingsKindSegments(selected) {
   });
 }
 
-function fillSettingsTimeEditor(hhmm, sendKind = 'daily') {
-  const raw = String(hhmm || '08:05');
+function paintSettingsSaveLocalToggle(on) {
+  const btn = document.getElementById('settingsSaveLocalToggle');
+  if (!btn) return;
+  const enabled = Boolean(on);
+  btn.classList.toggle('is-on', enabled);
+  btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+  const text = btn.querySelector('.settings-toggle-text');
+  if (text) text.textContent = enabled ? 'On' : 'Off';
+}
+
+function readSettingsSaveLocalToggle() {
+  const btn = document.getElementById('settingsSaveLocalToggle');
+  return Boolean(btn?.classList.contains('is-on'));
+}
+
+function fillSettingsTimeEditor(hhmm, sendKind = 'daily', saveLocal = false) {
+  const raw = String(hhmm || '02:00');
   const m = raw.match(/^(\d{1,2}):(\d{2})$/);
-  let hour24 = 8;
-  let minute = '05';
+  let hour24 = 2;
+  let minute = '00';
   if (m) {
     hour24 = Number(m[1]);
     minute = String(m[2]).padStart(2, '0');
@@ -6328,6 +6433,7 @@ function fillSettingsTimeEditor(hhmm, sendKind = 'daily') {
   }
   if (ampmEl) ampmEl.value = ampm;
   paintSettingsKindSegments(sendKind || 'daily');
+  paintSettingsSaveLocalToggle(saveLocal);
   paintSettingsTimePreview();
 }
 
@@ -6350,7 +6456,8 @@ function setSettingsTimeEditMode(timeOrNull) {
 function beginEditSettingsSendTime(time) {
   const kind =
     loopScheduleState.sendKindByTime?.[time] || loopScheduleState.sendKind || 'daily';
-  fillSettingsTimeEditor(time, kind);
+  const saveLocal = Boolean(loopScheduleState.saveLocalByTime?.[time]);
+  fillSettingsTimeEditor(time, kind, saveLocal);
   setSettingsTimeEditMode(time);
   document.getElementById('settingsTimesEditor')?.scrollIntoView?.({ block: 'nearest' });
 }
@@ -6359,6 +6466,7 @@ async function saveSettingsSendTimeFromEditor() {
   const value = readSettingsTimeEditor24h();
   const kindInput = document.getElementById('settingsSendKindInput');
   const sendKind = kindInput?.value || 'daily';
+  const saveLocal = readSettingsSaveLocalToggle();
   const existing = Array.isArray(loopScheduleState.sendTimes) ? loopScheduleState.sendTimes : [];
 
   if (settingsEditingTime) {
@@ -6367,10 +6475,10 @@ async function saveSettingsSendTimeFromEditor() {
       return;
     }
     await saveLoopSchedulePartial({
-      updateSlot: { from: settingsEditingTime, to: value, sendKind },
+      updateSlot: { from: settingsEditingTime, to: value, sendKind, saveLocal },
     });
     setSettingsTimeEditMode(null);
-    fillSettingsTimeEditor(value, sendKind);
+    fillSettingsTimeEditor(value, sendKind, saveLocal);
     return;
   }
 
@@ -6382,7 +6490,11 @@ async function saveSettingsSendTimeFromEditor() {
     toast('Maximum 12 send times', 'warn');
     return;
   }
-  await saveLoopSchedulePartial({ addTime: value, addSendKind: sendKind });
+  await saveLoopSchedulePartial({
+    addTime: value,
+    addSendKind: sendKind,
+    addSaveLocal: saveLocal,
+  });
 }
 
 document.getElementById('btnSettingsAddTime')?.addEventListener('click', () => {
@@ -6390,7 +6502,7 @@ document.getElementById('btnSettingsAddTime')?.addEventListener('click', () => {
 });
 document.getElementById('btnSettingsCancelEdit')?.addEventListener('click', () => {
   setSettingsTimeEditMode(null);
-  fillSettingsTimeEditor('08:05', 'daily');
+  fillSettingsTimeEditor('02:00', 'daily', true);
 });
 ['settingsSendHourInput', 'settingsSendMinuteInput', 'settingsSendAmPmInput'].forEach((id) => {
   document.getElementById(id)?.addEventListener('change', () => paintSettingsTimePreview());
@@ -6401,6 +6513,9 @@ document.querySelector('.settings-kind-segments')?.addEventListener('click', (ev
   const kind = btn.getAttribute('data-kind-seg');
   if (!kind) return;
   paintSettingsKindSegments(kind);
+});
+document.getElementById('settingsSaveLocalToggle')?.addEventListener('click', () => {
+  paintSettingsSaveLocalToggle(!readSettingsSaveLocalToggle());
 });
 document.getElementById('settingsTimesFilter')?.addEventListener('input', () => {
   paintLoopScheduleTimesList();
@@ -6440,28 +6555,27 @@ document.getElementById('accountsTableBody')?.addEventListener('click', (event) 
 });
 
 btnHistoryRefresh?.addEventListener('click', () => loadExchangeHistory());
-btnHistoryGenerate?.addEventListener('click', () => generateExchangeAllManual());
-btnHistoryEmptyGenerate?.addEventListener('click', () => generateExchangeAllManual());
 
 document.getElementById('historyTable')?.addEventListener('click', (event) => {
-  const btn = event.target.closest('button[data-url]');
-  if (btn?.classList.contains('hist-download')) {
-    const url = decodeURIComponent(btn.dataset.url || '');
+  const btn = event.target.closest('button.hist-download');
+  if (btn) {
+    const id = decodeURIComponent(btn.dataset.id || '');
     const date = decodeURIComponent(btn.dataset.date || '');
-    const filename = decodeURIComponent(btn.dataset.filename || 'all.txt');
-    downloadHistoryRow({ url, date, filename });
+    const filename = decodeURIComponent(btn.dataset.filename || 'part.txt');
+    downloadHistoryRow({ id, date, filename });
     return;
   }
   const tr = event.target.closest('tbody tr');
   if (!tr || !historyDataTable) return;
   const row = historyDataTable.row(tr).data();
-  if (!row?.url) return;
+  if (!row?.id && !row?.localPath) return;
   document.querySelectorAll('#historyTable tbody tr').forEach((el) => el.classList.remove('is-active-row'));
   tr.classList.add('is-active-row');
   previewHistoryRow({
-    url: row.url,
-    date: row.date || '',
-    filename: row.filename || row.file || 'all.txt',
+    id: row.id || null,
+    localPath: row.localPath || null,
+    date: row.date || row.nyDate || '',
+    filename: row.filename || row.file || 'part.txt',
   });
 });
 
@@ -6471,8 +6585,9 @@ btnHistoryCopy?.addEventListener('click', async () => {
 });
 
 btnHistoryDownloadPreview?.addEventListener('click', () => {
-  if (!historyPreviewState.url) return;
+  if (!historyPreviewState.id && !historyPreviewState.url) return;
   downloadHistoryRow({
+    id: historyPreviewState.id,
     url: historyPreviewState.url,
     date: historyPreviewState.date,
     filename: historyPreviewState.filename,
@@ -7300,7 +7415,6 @@ function setMainTab(tab) {
   scheduleCorrPaneBounds();
   if (activeMainTab === 'accounts') renderAccountsValidationPanel();
   if (activeMainTab === 'history') {
-    ensureHistoryGenerateDateDefault();
     setHistoryMode(historyMode);
   }
   if (activeMainTab === 'settings') {
@@ -7360,6 +7474,7 @@ function paintLoopScheduleTimesList() {
   if (!body) return;
   const times = Array.isArray(loopScheduleState.sendTimes) ? loopScheduleState.sendTimes : [];
   const kindMap = loopScheduleState.sendKindByTime || {};
+  const saveMap = loopScheduleState.saveLocalByTime || {};
   const firedMap = loopScheduleState.lastFiredByTime || {};
   const today = loopScheduleClock?.date || null;
   const filter = String(filterEl?.value || '')
@@ -7370,10 +7485,12 @@ function paintLoopScheduleTimesList() {
         const kind = String(kindMap[time] || loopScheduleState.sendKind || 'daily');
         const label = scheduleSendKindLabel(kind).toLowerCase();
         const display = formatScheduleTime12h(time).toLowerCase();
+        const local = saveMap[time] ? 'local' : '';
         return (
           time.toLowerCase().includes(filter) ||
           display.includes(filter) ||
-          label.includes(filter)
+          label.includes(filter) ||
+          local.includes(filter)
         );
       })
     : times;
@@ -7384,6 +7501,7 @@ function paintLoopScheduleTimesList() {
     const index = times.indexOf(time) + 1;
     const kind = kindMap[time] || loopScheduleState.sendKind || 'daily';
     const kindLabel = scheduleSendKindLabel(kind);
+    const saveLocal = Boolean(saveMap[time]);
     const firedToday = today && firedMap[time] === today;
     const [hh, mm] = String(time).split(':').map(Number);
     const targetMinutes = (Number(hh) || 0) * 60 + (Number(mm) || 0);
@@ -7411,6 +7529,11 @@ function paintLoopScheduleTimesList() {
       <td class="settings-time-index tabular">${index}</td>
       <td><span class="settings-time-value">${escapeHtml(display)}</span></td>
       <td><span class="settings-kind-pill">${escapeHtml(kindLabel)}</span></td>
+      <td>
+        <span class="settings-local-pill ${saveLocal ? 'is-on' : ''}">
+          ${saveLocal ? 'Yes' : 'No'}
+        </span>
+      </td>
       <td>
         <span class="settings-time-status ${todayClass}">
           ${todayStatus}
@@ -7574,8 +7697,9 @@ async function maybeAutoStartLoopFromSchedule() {
     log(`Auto-send · ${dueLabel} NY · ${String(dueKind).replace(/_/g, ' ')}`, 'info');
     toast(`Auto-send · ${dueLabel} NY · ${String(dueKind).replace(/_/g, ' ')}…`, 'info');
     pendingLoopHistorySource = 'auto';
+    pendingLoopScheduleTime = dueTime;
     const genBefore = loopGeneration;
-    await startInmateLoop({ source: 'auto' });
+    await startInmateLoop({ source: 'auto', scheduleTime: dueTime });
     // Only consume this time slot if the loop actually started.
     if (loopGeneration > genBefore) {
       await window.api.markLoopScheduleFired?.({
@@ -7868,7 +7992,7 @@ function setHistoryPreviewEmptyVisible(visible) {
 function renderHistoryPreviewLines(text) {
   const content = text || '';
   const lines = content ? content.split('\n') : [];
-  const hasContent = Boolean(historyPreviewState.url || content);
+  const hasContent = Boolean(historyPreviewState.id || historyPreviewState.url || content);
   setHistoryPreviewEmptyVisible(!hasContent);
   if (historyPreviewLines) {
     historyPreviewLines.textContent = lines.length
@@ -7901,28 +8025,35 @@ function applyHistoryPreviewSearch(query) {
   historyPreviewBody.classList.toggle('is-filtered', true);
 }
 
-function setHistoryPreview({ url = null, text = '', date = null, filename = null } = {}) {
-  historyPreviewState = { url, text: text || '', date, filename };
+function setHistoryPreview({
+  id = null,
+  url = null,
+  text = '',
+  date = null,
+  filename = null,
+} = {}) {
+  historyPreviewState = { id, url, text: text || '', date, filename };
+  const selected = Boolean(id || url);
   const isLoading = text === 'Loading preview…';
   if (historyPreviewHeading) {
-    historyPreviewHeading.textContent = url ? date || 'Preview' : 'Preview';
-    historyPreviewHeading.classList.toggle('has-selection', Boolean(url));
+    historyPreviewHeading.textContent = selected ? date || 'Preview' : 'Preview';
+    historyPreviewHeading.classList.toggle('has-selection', selected);
   }
   if (historyPreviewMeta) {
-    historyPreviewMeta.textContent = url
+    historyPreviewMeta.textContent = selected
       ? isLoading
-        ? `${filename || 'export'} · Loading…`
-        : `${filename || 'export'} · ${(text || '').length.toLocaleString()} chars`
-      : 'Select a day to preview the export';
+        ? `${filename || 'file'} · Loading…`
+        : `${filename || 'file'} · ${(text || '').length.toLocaleString()} chars`
+      : 'Select a file to preview the archive';
     historyPreviewMeta.title = historyPreviewMeta.textContent;
   }
   if (historyPreviewSearch) {
     historyPreviewSearch.disabled = !text || isLoading;
     historyPreviewSearch.value = '';
   }
-  renderHistoryPreviewLines(url ? text || '' : '');
+  renderHistoryPreviewLines(selected ? text || '' : '');
   if (btnHistoryCopy) btnHistoryCopy.disabled = !text || isLoading;
-  if (btnHistoryDownloadPreview) btnHistoryDownloadPreview.disabled = !url;
+  if (btnHistoryDownloadPreview) btnHistoryDownloadPreview.disabled = !selected || isLoading;
   syncHistoryActiveRow();
 }
 
@@ -7934,10 +8065,10 @@ function syncHistoryTableEmpty(count) {
 
 function syncHistoryActiveRow() {
   if (!historyDataTable) return;
-  const activeUrl = historyPreviewState.url || '';
+  const activeId = historyPreviewState.id || '';
   document.querySelectorAll('#historyTable tbody tr').forEach((tr) => {
     const data = historyDataTable.row(tr).data();
-    tr.classList.toggle('is-active-row', Boolean(activeUrl && data?.url === activeUrl));
+    tr.classList.toggle('is-active-row', Boolean(activeId && data?.id === activeId));
   });
 }
 
@@ -7989,14 +8120,22 @@ function renderHistoryTable(rows) {
     orderClasses: false,
     dom: '<"history-dt-toolbar"<"history-dt-search"f>>rt<"history-table-foot"<"history-dt-length"l>ip>',
     columns: [
-      { data: 'date', title: 'Date' },
+      {
+        data: 'date',
+        title: 'Date',
+        render: (value, _type, row) => {
+          const date = value || row.nyDate || '—';
+          const time = row.sendTime ? formatScheduleTime12h(row.sendTime) : '';
+          return time ? `${escapeHtml(date)} · ${escapeHtml(time)}` : escapeHtml(date);
+        },
+      },
       {
         data: 'filename',
         title: 'File',
-        defaultContent: 'all.txt',
+        defaultContent: 'part.txt',
         orderable: true,
         render: (value, _type, row) => {
-          const name = escapeHtml(value || row.file || 'all.txt');
+          const name = escapeHtml(value || row.file || 'part.txt');
           return `<span class="history-file-name" title="${name}">${name}</span>`;
         },
       },
@@ -8011,11 +8150,11 @@ function renderHistoryTable(rows) {
         orderable: false,
         searchable: false,
         render: (_value, _type, row) => {
-          const url = encodeURIComponent(row.url || '');
-          const date = encodeURIComponent(row.date || '');
-          const filename = encodeURIComponent(row.filename || 'all.txt');
+          const id = encodeURIComponent(row.id || '');
+          const date = encodeURIComponent(row.date || row.nyDate || '');
+          const filename = encodeURIComponent(row.filename || 'part.txt');
           return `<div class="history-row-actions">
-            <button type="button" class="ghost tiny hist-download" data-url="${url}" data-date="${date}" data-filename="${filename}">Download</button>
+            <button type="button" class="ghost tiny hist-download" data-id="${id}" data-date="${date}" data-filename="${filename}">Download</button>
           </div>`;
         },
       },
@@ -8065,49 +8204,30 @@ function todayIsoDate() {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
-function ensureHistoryGenerateDateDefault() {
-  if (!historyGenerateDate) return;
-  if (!historyGenerateDate.value) historyGenerateDate.value = todayIsoDate();
-}
-
 async function loadExchangeHistory() {
   if (!btnHistoryRefresh) return;
   btnHistoryRefresh.disabled = true;
   btnHistoryRefresh.classList.add('loading');
-  if (btnHistoryGenerate) btnHistoryGenerate.disabled = true;
-  if (historyHint) historyHint.textContent = 'Loading SportsData exchange files…';
+  if (historyHint) historyHint.textContent = 'Loading local exchange archive…';
   setStatusHint('Loading exchange history…');
-  log('Loading SportsData exchange history…', 'info');
+  log('Loading local exchange archive…', 'info');
   try {
-    const result = await window.api.fetchExchangeHistory({ withCharacters: true });
+    const result = await window.api.fetchExchangeHistory();
     if (!result?.ok) throw new Error(result?.message || 'Failed to load history');
     historyLoaded = true;
     const count = result.count ?? result.rows?.length ?? 0;
-    const skippedNoOdds = Number(result.skippedNoOdds || 0);
     if (historyHint) {
       historyHint.textContent =
         count > 0
-          ? `${count} exchange file(s)` +
-            (skippedNoOdds ? ` · ${skippedNoOdds} “No odds” hidden` : '')
-          : skippedNoOdds
-            ? `No odds days only · ${skippedNoOdds} hidden`
-            : result.message || 'No exchange files found';
+          ? `${count} local file(s) · Save file locally slots`
+          : result.message || 'No local archives yet';
     }
     historyRowsCache = result.rows || [];
     if (btnHistoryExport) btnHistoryExport.disabled = historyRowsCache.length === 0;
     renderHistoryTable(historyRowsCache);
     syncHistoryTableEmpty(historyRowsCache.length);
-    log(
-      `History loaded · ${count} file(s)` +
-        (skippedNoOdds ? ` · skipped ${skippedNoOdds} “No odds”` : ''),
-      'success'
-    );
-    toast(
-      skippedNoOdds
-        ? `History · ${count} file(s) · ${skippedNoOdds} No odds hidden`
-        : `History · ${count} file(s)`,
-      'success'
-    );
+    log(`History loaded · ${count} local file(s)`, 'success');
+    toast(`History · ${count} file(s)`, 'success');
     setStatusHint(`${count} exchange file(s) ready`);
   } catch (error) {
     const message = error.message || String(error);
@@ -8118,61 +8238,13 @@ async function loadExchangeHistory() {
   } finally {
     btnHistoryRefresh.disabled = false;
     btnHistoryRefresh.classList.remove('loading');
-    if (btnHistoryGenerate) btnHistoryGenerate.disabled = false;
   }
 }
 
-/** Manual All export: POST /inmate-exchange/all (?date= optional), then refresh history. */
-async function generateExchangeAllManual() {
-  if (!btnHistoryGenerate || !window.api?.generateExchangeAll) return;
-  ensureHistoryGenerateDateDefault();
-  const date = String(historyGenerateDate?.value || '').trim() || null;
-  btnHistoryGenerate.disabled = true;
-  btnHistoryGenerate.classList.add('loading');
-  if (btnHistoryEmptyGenerate) btnHistoryEmptyGenerate.disabled = true;
-  if (btnHistoryRefresh) btnHistoryRefresh.disabled = true;
-  const label = date || 'today';
-  if (historyHint) historyHint.textContent = `Exporting for date · ${label}…`;
-  setStatusHint(`Exporting exchange for ${label}…`);
-  log(`Exporting exchange for date` + (date ? ` · date=${date}` : ''), 'info');
-  try {
-    const result = await window.api.generateExchangeAll({ date });
-    if (!result?.ok) throw new Error(result?.message || 'Generate failed');
-    const summary =
-      result.message ||
-      `Export ready` + (result.date ? ` · ${result.date}` : date ? ` · ${date}` : '');
-    log(summary, 'success');
-    toast(summary, 'success');
-    setStatusHint(summary);
-    await loadExchangeHistory();
-    const previewDate = result.date || date;
-    if (previewDate) {
-      const row = (historyRowsCache || []).find((r) => r.date === previewDate);
-      if (row?.url) {
-        previewHistoryRow({
-          url: row.url,
-          date: row.date,
-          filename: row.filename || row.file || 'all.txt',
-        });
-      }
-    }
-  } catch (error) {
-    const message = error.message || String(error);
-    if (historyHint) historyHint.textContent = 'Generate failed';
-    log(message, 'error');
-    toast(message, 'error');
-    setStatusHint('Generate failed');
-  } finally {
-    btnHistoryGenerate.disabled = false;
-    btnHistoryGenerate.classList.remove('loading');
-    if (btnHistoryEmptyGenerate) btnHistoryEmptyGenerate.disabled = false;
-    if (btnHistoryRefresh) btnHistoryRefresh.disabled = false;
-  }
-}
-
-async function previewHistoryRow({ url, date, filename }) {
-  if (!url) return;
+async function previewHistoryRow({ id = null, localPath = null, url = null, date, filename }) {
+  if (!id && !localPath && !url) return;
   setHistoryPreview({
+    id,
     url,
     text: 'Loading preview…',
     date,
@@ -8180,9 +8252,16 @@ async function previewHistoryRow({ url, date, filename }) {
   });
   setStatusHint(`Preview ${date || filename || 'file'}…`);
   try {
-    const result = await window.api.previewExchangeFile({ url, date, filename });
+    const result = await window.api.previewExchangeFile({
+      id,
+      localPath,
+      url,
+      date,
+      filename,
+    });
     if (!result?.ok) throw new Error(result?.message || 'Preview failed');
     setHistoryPreview({
+      id: result.id || id,
       url: result.url || url,
       text: result.text || '',
       date: result.date || date,
@@ -8192,24 +8271,25 @@ async function previewHistoryRow({ url, date, filename }) {
     setStatusHint(`Preview ready · ${(result.characters || 0).toLocaleString()} chars`);
   } catch (error) {
     const message = error.message || String(error);
-    setHistoryPreview({ url: null, text: '', date: null, filename: null });
+    setHistoryPreview({ id: null, url: null, text: '', date: null, filename: null });
     log(message, 'error');
     toast(message, 'error');
     setStatusHint('Preview failed');
   }
 }
 
-async function downloadHistoryRow({ url, date, filename }) {
-  if (!url) return;
+async function downloadHistoryRow({ id = null, url = null, date, filename }) {
+  if (!id && !url) return;
   setStatusHint(`Downloading ${date || filename || 'file'}…`);
   try {
     const suggestedName =
       date && filename
         ? `inmate-exchange-${date}-${filename}`
         : date
-          ? `inmate-exchange-all-${date}.txt`
-          : filename || 'inmate-exchange-all.txt';
+          ? `inmate-exchange-${date}.txt`
+          : filename || 'inmate-exchange.txt';
     const result = await window.api.downloadExchangeFile({
+      id,
       url,
       date,
       suggestedName,
@@ -8278,14 +8358,15 @@ function exportHistoryCsv() {
     toast('No filtered rows to export', 'warn');
     return;
   }
-  const header = ['date', 'filename', 'characters', 'url'];
+  const header = ['date', 'sendTime', 'filename', 'characters', 'localPath'];
   const lines = [header.join(',')];
   rows.forEach((row) => {
     const vals = [
-      row.date || '',
-      row.filename || row.file || 'all.txt',
+      row.date || row.nyDate || '',
+      row.sendTime || '',
+      row.filename || row.file || 'part.txt',
       row.characters == null ? '' : String(row.characters),
-      row.url || '',
+      row.localPath || '',
     ].map((v) => `"${String(v).replace(/"/g, '""')}"`);
     lines.push(vals.join(','));
   });

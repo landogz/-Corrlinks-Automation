@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.65**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.66**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.65-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.65.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.65.exe` or portable `Inside-Scores-0.1.65.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.66-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.66.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.66.exe` or portable `Inside-Scores-0.1.66.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.65.exe`.
+1. Run `Inside-Scores-Setup-0.1.66.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.65.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.66.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 
@@ -89,10 +89,10 @@ Preparing your workspace used to hide the CorrLinks pane at 0×0 during probes, 
 2. Inmates load automatically. **Preparing your workspace** probes only **new or changed** CorrLinks logins (not every account again).
 3. Open the **Accounts** tab to see each unique login status, **Validate new**, **Refresh all**, or per-row **Retry**.
 4. Top-bar **Refresh** (on Automate/Accounts) forces a full CorrLinks re-validation of every unique login.
-5. Open **Settings** to arm **Auto-send**. Add one or more America/New_York times and pick **Send kind** per time (Daily / Weekly NFL / Weekly CFB). While the app is open, Start loop fires once per saved time per NY day using that row’s kind.
+5. Open **Settings** to arm **Auto-send**. Add one or more America/New_York times, pick **Send kind** per time (Daily / Weekly NFL / Weekly CFB), and optionally turn on **Save file locally**. Defaults include **2:00 AM Daily** with local save on. While the app is open, Start loop fires once per saved time per NY day using that row’s kind.
 6. Select an inmate, choose **Daily** or **Weekly** template, check which file parts to send.
 7. Use **Send all files** (single inmate) or **Start loop** (all grouped recipients). Each sendable row also has **Copy** and **Download**.
-8. Open **History → Send runs** to review successes/failures and **Resend** a failed recipient or file.
+8. Open **History → Exchange files** for the local archive of TXT parts saved after auto-send slots with **Save file locally**. Open **History → Send runs** to review successes/failures and **Resend** a failed recipient or file.
 
 The app will:
 
@@ -102,6 +102,7 @@ The app will:
 - paste selected Inmate Exchange TXT parts and **Send** each part (packaged builds only)
 - track failed recipients / probe failures with per-account **Retry**
 - persist send-run history for later review/resend (`send-history.json`)
+- archive sent TXT parts into local Exchange history when a Save file locally slot finishes (`exchange-history/`)
 
 ### Appearance
 

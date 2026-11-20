@@ -30,10 +30,12 @@ const CHECK_FILES = [
   'scripts/smoke-appearance.js',
   'scripts/smoke-loop-schedule.js',
   'scripts/smoke-send-history.js',
+  'scripts/smoke-exchange-history-archive.js',
   'shared/appearance.js',
   'main/uiPreferences.js',
   'main/loopSchedule.js',
   'main/sendHistory.js',
+  'main/exchangeHistoryArchive.js',
 ];
 
 function readStdin() {
@@ -126,6 +128,15 @@ function smokeSendHistory() {
   return [`smoke:send-history failed: ${err || `exit ${r.status}`}`];
 }
 
+function smokeExchangeHistoryArchive() {
+  const r = run('npm', ['run', 'smoke:exchange-history-archive', '--silent'], {
+    timeout: 15_000,
+  });
+  if (r.status === 0) return [];
+  const err = String(r.stderr || r.stdout || '').trim().slice(0, 1200);
+  return [`smoke:exchange-history-archive failed: ${err || `exit ${r.status}`}`];
+}
+
 function emit(followupMessage) {
   const out = followupMessage ? { followup_message: followupMessage } : {};
   process.stdout.write(`${JSON.stringify(out)}\n`);
@@ -145,6 +156,7 @@ function main() {
       ...smokeAppearance(),
       ...smokeLoopSchedule(),
       ...smokeSendHistory(),
+      ...smokeExchangeHistoryArchive(),
     ];
     if (failures.length) {
       console.error('LOOP GATE RED');
@@ -152,7 +164,7 @@ function main() {
       process.exit(1);
     }
     console.log(
-      'LOOP GATE GREEN (syntax + smoke:subject + smoke:login-helpers + smoke:corr-bounds + smoke:appearance + smoke:loop-schedule + smoke:send-history)'
+      'LOOP GATE GREEN (syntax + smoke:subject + smoke:login-helpers + smoke:corr-bounds + smoke:appearance + smoke:loop-schedule + smoke:send-history + smoke:exchange-history-archive)'
     );
     process.exit(0);
   }
@@ -171,6 +183,7 @@ function main() {
     ...smokeAppearance(),
     ...smokeLoopSchedule(),
     ...smokeSendHistory(),
+    ...smokeExchangeHistoryArchive(),
   ];
   if (!failures.length) {
     emit();

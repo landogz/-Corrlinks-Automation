@@ -48,14 +48,25 @@ assert(
 
 const fresh = normalizeLoopSchedule({ ...DEFAULTS, enabled: true });
 assert(
-  fresh.sendTimes.join(',') === '08:05,09:30,10:05,11:30,12:05',
+  fresh.sendTimes.join(',') === '02:00,08:05,09:30,10:05,11:30,12:05',
   'default sendTimes list'
 );
+assert(fresh.sendKindByTime['02:00'] === 'daily', 'default 2:00 daily');
+assert(fresh.saveLocalByTime['02:00'] === true, 'default 2:00 save local on');
+assert(fresh.saveLocalByTime['08:05'] === false, 'default 8:05 save local off');
 assert(fresh.sendKindByTime['08:05'] === 'daily', 'default 8:05 daily');
 assert(fresh.sendKindByTime['09:30'] === 'weekly_cfb', 'default 9:30 weekly cfb');
 assert(fresh.sendKindByTime['10:05'] === 'daily', 'default 10:05 daily');
 assert(fresh.sendKindByTime['11:30'] === 'weekly_cfb', 'default 11:30 weekly cfb');
 assert(fresh.sendKindByTime['12:05'] === 'daily', 'default 12:05 daily');
+
+const migratedLocal = normalizeLoopSchedule({
+  enabled: true,
+  sendTimes: ['02:00', '08:05'],
+  sendKindByTime: { '02:00': 'daily', '08:05': 'daily' },
+});
+assert(migratedLocal.saveLocalByTime['02:00'] === true, 'migrate 02:00 saveLocal');
+assert(migratedLocal.saveLocalByTime['08:05'] === false, 'migrate other saveLocal off');
 
 const base = normalizeLoopSchedule({
   enabled: true,
@@ -154,25 +165,31 @@ try {
     enabled: true,
     sendTimes: ['05:30'],
     sendKindByTime: { '05:30': 'daily' },
+    saveLocalByTime: { '05:30': false },
     addTime: '17:45',
     addSendKind: 'weekly_cfb',
+    addSaveLocal: true,
     lastFiredNyDate: null,
     lastFiredByTime: {},
   });
   assert(added.sendTimes.includes('05:30') && added.sendTimes.includes('17:45'), 'addTime');
   assert(added.sendKindByTime['17:45'] === 'weekly_cfb', 'addSendKind');
+  assert(added.saveLocalByTime['17:45'] === true, 'addSaveLocal');
   const kinded = saveLoopSchedule({
     setTimeKind: { time: '05:30', sendKind: 'weekly_nfl' },
   });
   assert(kinded.sendKindByTime['05:30'] === 'weekly_nfl', 'setTimeKind');
   const updated = saveLoopSchedule({
-    updateSlot: { from: '05:30', to: '06:15', sendKind: 'daily' },
+    updateSlot: { from: '05:30', to: '06:15', sendKind: 'daily', saveLocal: true },
   });
   assert(updated.sendTimes.includes('06:15') && !updated.sendTimes.includes('05:30'), 'updateSlot time');
   assert(updated.sendKindByTime['06:15'] === 'daily', 'updateSlot kind');
+  assert(updated.saveLocalByTime['06:15'] === true, 'updateSlot saveLocal');
+  assert(updated.saveLocalByTime['05:30'] == null, 'updateSlot clears old saveLocal');
   const removed = saveLoopSchedule({ removeTime: '17:45' });
   assert(!removed.sendTimes.includes('17:45'), 'removeTime');
   assert(!removed.sendKindByTime['17:45'], 'removeTime clears kind');
+  assert(!removed.saveLocalByTime['17:45'], 'removeTime clears saveLocal');
   const marked = saveLoopSchedule({
     markFiredTime: '06:15',
     markFiredNyDate: '2026-11-19',

@@ -92,6 +92,7 @@ contextBridge.exposeInMainWorld('api', {
   saveCorrlinksVerifyCache: (payload) => ipcRenderer.invoke('corrlinksVerify:save', payload),
   clearCorrlinksVerifyCache: () => ipcRenderer.invoke('corrlinksVerify:clear'),
   fetchExchangeHistory: (payload) => ipcRenderer.invoke('exchange:history', payload),
+  archiveExchangeHistory: (payload) => ipcRenderer.invoke('exchange:archiveFromLoop', payload || {}),
   generateExchangeAll: (payload) => ipcRenderer.invoke('exchange:generateAll', payload),
   fetchExchangeWeekly: (payload) => ipcRenderer.invoke('exchange:weekly', payload),
   previewExchangeFile: (payload) => ipcRenderer.invoke('exchange:preview', payload),

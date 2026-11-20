@@ -3,6 +3,9 @@ node_modules/
 sportsdata-credentials.json
 corrlinks-verify-cache.json
 ui-preferences.json
+loop-schedule.json
+send-history.json
+exchange-history/
 dist/
 out/
 release/

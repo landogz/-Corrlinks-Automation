@@ -190,11 +190,11 @@ If CorrLinks fails to load, use **Retry** or **View log**. Complete CAPTCHA or u
 ### Exchange files
 
 1. Open **History** → **Exchange files**.
-2. Pick a date (New York calendar date) and click **Export for date**.
-3. Browse the table (Date, File, Characters).
+2. Browse the **local archive** of TXT parts saved after Auto-send slots with **Save file locally** (default: 2:00 AM Daily).
+3. Browse the table (Date · time, File, Characters).
 4. Select a row to **Preview**.
 5. **Copy**, **Download**, or **Export CSV** for filtered rows.
-6. Use **Refresh** to reload the list; filter by date in the search box.
+6. Use **Refresh** to reload the local list; filter by date in the search box.
 
 ### Send runs
 
@@ -209,8 +209,8 @@ If CorrLinks fails to load, use **Retry** or **View log**. Complete CAPTCHA or u
 
 1. Open **Settings**.
 2. Turn **Auto-send** On (button toggle).
-3. Add a **Send time (NY)** and choose its **Send kind** (Daily / Weekly NFL / Weekly CFB).
-4. Each saved row can change kind later from the table; Delete removes a time (keep at least one).
+3. Add a **Send time (NY)**, choose **Send kind** (Daily / Weekly NFL / Weekly CFB), and set **Save file locally** if that slot should archive TXT parts into Exchange history.
+4. Each saved row can change kind / local save later from Edit; Delete removes a time (keep at least one). The **Local** column shows Yes/No.
 5. Keep the app open — at each due America/New_York time, Start loop runs once for that slot using that row’s kind.
 6. Status shows next run, last fired slots, and current NY clock.
 

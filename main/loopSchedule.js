@@ -8,15 +8,24 @@ const MAX_SEND_TIMES = 12;
 
 const DEFAULTS = Object.freeze({
   enabled: false,
-  sendTime: '08:05',
-  sendTimes: Object.freeze(['08:05', '09:30', '10:05', '11:30', '12:05']),
+  sendTime: '02:00',
+  sendTimes: Object.freeze(['02:00', '08:05', '09:30', '10:05', '11:30', '12:05']),
   sendKind: 'daily',
   sendKindByTime: Object.freeze({
+    '02:00': 'daily',
     '08:05': 'daily',
     '09:30': 'weekly_cfb',
     '10:05': 'daily',
     '11:30': 'weekly_cfb',
     '12:05': 'daily',
+  }),
+  saveLocalByTime: Object.freeze({
+    '02:00': true,
+    '08:05': false,
+    '09:30': false,
+    '10:05': false,
+    '11:30': false,
+    '12:05': false,
   }),
   lastFiredNyDate: null,
   lastFiredByTime: Object.freeze({}),
@@ -91,6 +100,27 @@ function normalizeSendKindByTime(raw, sendTimes = [], fallbackKind = DEFAULTS.se
   return out;
 }
 
+function normalizeSaveLocalByTime(raw, sendTimes = []) {
+  const out = {};
+  const src = raw && typeof raw === 'object' ? raw : {};
+  for (const time of sendTimes) {
+    if (Object.prototype.hasOwnProperty.call(src, time)) {
+      out[time] = Boolean(src[time]);
+      continue;
+    }
+    // Migrate: 2:00 AM Daily archives by default when the flag was never set.
+    out[time] = time === '02:00';
+  }
+  return out;
+}
+
+function saveLocalForTime(schedule, sendTime) {
+  const cfg = normalizeLoopSchedule(schedule);
+  const time = normalizeSendTime(sendTime, null);
+  if (!time) return false;
+  return Boolean(cfg.saveLocalByTime?.[time]);
+}
+
 function normalizeLastFiredByTime(raw, sendTimes = [], legacyDate = null) {
   const out = {};
   const src = raw && typeof raw === 'object' ? raw : {};
@@ -127,6 +157,18 @@ function normalizeLoopSchedule(raw = {}) {
     if (Object.keys(migrated).length) kindSource = migrated;
   }
   const sendKindByTime = normalizeSendKindByTime(kindSource, sendTimes, sendKind);
+  let saveLocalSource = src.saveLocalByTime;
+  if ((!saveLocalSource || typeof saveLocalSource !== 'object') && Array.isArray(src.sendTimes)) {
+    const migrated = {};
+    for (const item of src.sendTimes) {
+      if (item && typeof item === 'object' && (item.time || item.sendTime)) {
+        const t = normalizeSendTime(item.time || item.sendTime, null);
+        if (t && item.saveLocal != null) migrated[t] = Boolean(item.saveLocal);
+      }
+    }
+    if (Object.keys(migrated).length) saveLocalSource = migrated;
+  }
+  const saveLocalByTime = normalizeSaveLocalByTime(saveLocalSource, sendTimes);
   const lastFiredByTime = normalizeLastFiredByTime(
     src.lastFiredByTime,
     sendTimes,
@@ -138,6 +180,7 @@ function normalizeLoopSchedule(raw = {}) {
     sendTimes,
     sendKind: sendKindByTime[sendTimes[0]] || sendKind,
     sendKindByTime,
+    saveLocalByTime,
     lastFiredNyDate: normalizeNyDate(src.lastFiredNyDate),
     lastFiredByTime,
   };
@@ -295,6 +338,8 @@ function saveLoopSchedule(partial = {}) {
     sendKind: partial.sendKind != null ? partial.sendKind : current.sendKind,
     sendKindByTime:
       partial.sendKindByTime !== undefined ? partial.sendKindByTime : current.sendKindByTime,
+    saveLocalByTime:
+      partial.saveLocalByTime !== undefined ? partial.saveLocalByTime : current.saveLocalByTime,
     lastFiredNyDate:
       partial.lastFiredNyDate !== undefined ? partial.lastFiredNyDate : current.lastFiredNyDate,
     lastFiredByTime:
@@ -306,9 +351,19 @@ function saveLoopSchedule(partial = {}) {
     if (time) {
       merged.sendTimes = normalizeSendTimes([...(merged.sendTimes || []), time]);
       const kind = normalizeSendKind(partial.addSendKind || partial.sendKind || merged.sendKind);
+      const saveLocal =
+        partial.addSaveLocal != null
+          ? Boolean(partial.addSaveLocal)
+          : partial.saveLocal != null
+            ? Boolean(partial.saveLocal)
+            : time === '02:00';
       merged.sendKindByTime = {
         ...(merged.sendKindByTime || {}),
         [time]: kind,
+      };
+      merged.saveLocalByTime = {
+        ...(merged.saveLocalByTime || {}),
+        [time]: saveLocal,
       };
       merged.sendKind = kind;
     }
@@ -323,6 +378,11 @@ function saveLoopSchedule(partial = {}) {
       const nextKinds = { ...merged.sendKindByTime };
       delete nextKinds[remove];
       merged.sendKindByTime = nextKinds;
+    }
+    if (remove && merged.saveLocalByTime) {
+      const nextSave = { ...merged.saveLocalByTime };
+      delete nextSave[remove];
+      merged.saveLocalByTime = nextSave;
     }
   }
   if (partial.setTimeKind && typeof partial.setTimeKind === 'object') {
@@ -348,21 +408,33 @@ function saveLoopSchedule(partial = {}) {
         (from && merged.sendKindByTime?.[from]) ||
         merged.sendKind
     );
+    const saveLocalExplicit = partial.updateSlot.saveLocal;
     if (from && to) {
       const times = (merged.sendTimes || []).filter((t) => t !== from);
       if (!times.includes(to)) times.push(to);
       merged.sendTimes = normalizeSendTimes(times, to);
       const nextKinds = { ...(merged.sendKindByTime || {}) };
+      const nextSave = { ...(merged.saveLocalByTime || {}) };
       const nextFired = { ...(merged.lastFiredByTime || {}) };
+      let saveLocal =
+        saveLocalExplicit != null
+          ? Boolean(saveLocalExplicit)
+          : Boolean(from && nextSave[from]);
       if (from !== to) {
         delete nextKinds[from];
+        if (Object.prototype.hasOwnProperty.call(nextSave, from)) {
+          if (saveLocalExplicit == null) saveLocal = Boolean(nextSave[from]);
+          delete nextSave[from];
+        }
         if (nextFired[from]) {
           nextFired[to] = nextFired[from];
           delete nextFired[from];
         }
       }
       nextKinds[to] = kind;
+      nextSave[to] = saveLocal;
       merged.sendKindByTime = nextKinds;
+      merged.saveLocalByTime = nextSave;
       merged.lastFiredByTime = nextFired;
       merged.sendKind = kind;
     }
@@ -397,8 +469,11 @@ module.exports = {
   normalizeSendKind,
   normalizeSendTimes,
   normalizeSendKindByTime,
+  normalizeSaveLocalByTime,
+  normalizeNyDate,
   normalizeLoopSchedule,
   sendKindForTime,
+  saveLocalForTime,
   sendKindToTemplate,
   templateToSendKind,
   sendKindLabel,

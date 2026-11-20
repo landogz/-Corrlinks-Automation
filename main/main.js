@@ -69,6 +69,12 @@ const {
   clearSendHistory,
 } = require('./sendHistory');
 const {
+  listArchive,
+  getArchiveRow,
+  readArchivedText,
+  archiveSentFiles,
+} = require('./exchangeHistoryArchive');
+const {
   resolveScheme,
   resolveThemeId,
   getWindowBackground,
@@ -842,12 +848,16 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle('exchange:history', async (_event, payload = {}) => {
+  ipcMain.handle('exchange:history', async () => {
     try {
-      const result = await sportsData.fetchInmateExchangeHistory({
-        withCharacters: payload.withCharacters !== false,
-      });
-      return { ok: true, ...result };
+      const rows = listArchive();
+      return {
+        ok: true,
+        count: rows.length,
+        rows,
+        skippedNoOdds: 0,
+        message: rows.length ? null : 'No local exchange archives yet',
+      };
     } catch (error) {
       return {
         ok: false,
@@ -857,6 +867,37 @@ function registerIpc() {
     }
   });
 
+  ipcMain.handle('exchange:archiveFromLoop', async (_event, payload = {}) => {
+    try {
+      const result = await archiveSentFiles(payload || {}, {
+        resolveText: async (url) => {
+          const cached = sportsData.getCachedExchangeFile(url);
+          if (cached?.text != null) {
+            return { text: cached.text, characters: cached.characters };
+          }
+          const file = await sportsData.fetchExchangeFileText(url);
+          return { text: file.text, characters: file.characters };
+        },
+      });
+      return {
+        ok: true,
+        count: result.count,
+        rows: result.rows,
+        message:
+          result.count > 0
+            ? `Archived ${result.count} exchange file(s)`
+            : 'No exchange files to archive',
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error.message || 'Failed to archive exchange files',
+        rows: [],
+      };
+    }
+  });
+
+  // Kept for Scripts / tooling; Exchange History UI no longer calls this.
   ipcMain.handle('exchange:generateAll', async (_event, payload = {}) => {
     try {
       const date = payload.date ? String(payload.date).trim() : null;
@@ -880,7 +921,23 @@ function registerIpc() {
 
   ipcMain.handle('exchange:preview', async (_event, payload = {}) => {
     try {
-      if (!payload.url) throw new Error('File URL is required');
+      const archiveId = payload.id || payload.archiveId || null;
+      const localPath = payload.localPath || null;
+      if (archiveId || localPath) {
+        const row = archiveId ? getArchiveRow(archiveId) : null;
+        const file = readArchivedText(archiveId || localPath);
+        return {
+          ok: true,
+          id: row?.id || archiveId || null,
+          localPath: file.localPath,
+          url: null,
+          text: file.text,
+          characters: file.characters,
+          date: payload.date || row?.nyDate || null,
+          filename: payload.filename || row?.filename || path.basename(file.localPath) || 'part.txt',
+        };
+      }
+      if (!payload.url) throw new Error('File URL or archive id is required');
       const file = await sportsData.fetchExchangeFileText(payload.url);
       return {
         ok: true,
@@ -900,18 +957,38 @@ function registerIpc() {
 
   ipcMain.handle('exchange:download', async (_event, payload = {}) => {
     try {
-      if (!payload.url) throw new Error('File URL is required');
-      const file = await sportsData.fetchExchangeFileText(payload.url);
-      const text = applyContinuationPrefix(file.text || '', {
-        part: payload.part,
-        continuation: payload.continuation,
-        index: payload.index,
-      });
-      const suggested =
+      const archiveId = payload.id || payload.archiveId || null;
+      const localPath = payload.localPath || null;
+      let text = '';
+      let suggested =
         payload.suggestedName ||
-        (payload.date ? `inmate-exchange-all-${payload.date}.txt` : 'inmate-exchange-all.txt');
+        (payload.date ? `inmate-exchange-${payload.date}.txt` : 'inmate-exchange.txt');
+
+      if (archiveId || localPath) {
+        const row = archiveId ? getArchiveRow(archiveId) : null;
+        const file = readArchivedText(archiveId || localPath);
+        text = file.text || '';
+        suggested =
+          payload.suggestedName ||
+          (row?.nyDate && row?.filename
+            ? `inmate-exchange-${row.nyDate}-${row.filename}`
+            : path.basename(file.localPath) || suggested);
+      } else if (payload.url) {
+        const file = await sportsData.fetchExchangeFileText(payload.url);
+        text = applyContinuationPrefix(file.text || '', {
+          part: payload.part,
+          continuation: payload.continuation,
+          index: payload.index,
+        });
+        suggested =
+          payload.suggestedName ||
+          (payload.date ? `inmate-exchange-all-${payload.date}.txt` : 'inmate-exchange-all.txt');
+      } else {
+        throw new Error('File URL or archive id is required');
+      }
+
       const result = await dialog.showSaveDialog(controlWindow, {
-        title: 'Save exchange export',
+        title: 'Save exchange file',
         defaultPath: suggested,
         filters: [{ name: 'Text files', extensions: ['txt'] }],
       });

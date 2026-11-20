@@ -569,7 +569,7 @@
               <div class="history-toolbar">
                 <div class="history-toolbar-text">
                   <h2>Exchange history</h2>
-                  <p class="muted" id="historyHint">SportsData exchange files</p>
+                  <p class="muted" id="historyHint">Local archive · slots with Save file locally</p>
                 </div>
               </div>
               <div class="history-controls" id="historyControls">
@@ -580,28 +580,10 @@
                   </label>
                 </div>
                 <div class="history-toolbar-actions" id="historyToolbarActions">
-                  <label class="history-filter history-generate-date">
-                    <span class="sr-only">Export date</span>
-                    <input
-                      id="historyGenerateDate"
-                      type="date"
-                      aria-label="Date for exchange export"
-                      title="Date for SportsData exchange export"
-                    />
-                  </label>
-                  <button
-                    id="btnHistoryGenerate"
-                    type="button"
-                    class="ghost history-ctrl-btn"
-                    title="Generate exchange export for the selected date"
-                  >
-                    <span class="btn-label">Export for date</span>
-                    <span class="spinner" aria-hidden="true"></span>
-                  </button>
                   <button id="btnHistoryExport" type="button" class="ghost history-ctrl-btn" title="Export filtered rows as CSV" disabled>
                     Export CSV
                   </button>
-                  <button id="btnHistoryRefresh" type="button" class="ghost icon-btn history-ctrl-btn" title="Refresh history">
+                  <button id="btnHistoryRefresh" type="button" class="ghost icon-btn history-ctrl-btn" title="Refresh local archive">
                     <span class="btn-icon refresh-icon" aria-hidden="true"></span>
                     <span class="btn-label">Refresh</span>
                     <span class="spinner" aria-hidden="true"></span>
@@ -611,8 +593,9 @@
               <div class="history-table-wrap">
                 <div id="historyTableEmpty" class="empty-state history-table-empty" hidden>
                   <h3>No exchange files</h3>
-                  <p class="muted">Generate an export for a date to populate this list.</p>
-                  <button type="button" class="action-secondary" id="btnHistoryEmptyGenerate">Export for date</button>
+                  <p class="muted">
+                    Turn on <strong>Save file locally</strong> for a schedule slot (e.g. 2:00 AM Daily), then let Auto-send finish.
+                  </p>
                 </div>
                 <table id="historyTable" class="display history-table" style="width: 100%">
                   <thead>
@@ -631,7 +614,7 @@
               <div class="history-preview-head">
                 <div class="history-preview-titles">
                   <h2 id="historyPreviewHeading">Preview</h2>
-                  <p id="historyPreviewMeta" class="muted truncate">Select a day to preview the export</p>
+                  <p id="historyPreviewMeta" class="muted truncate">Select a file to preview the archive</p>
                 </div>
                 <div class="history-preview-actions">
                   <button id="btnHistoryCopy" type="button" class="ghost" disabled>Copy</button>
@@ -656,7 +639,7 @@
                     <path d="M14 3v5h5" stroke="currentColor" stroke-width="1.5"/>
                   </svg>
                   <h3>No file selected</h3>
-                  <p class="muted">Choose a day from the history list to preview the export.</p>
+                  <p class="muted">Choose a file from the history list to preview the archive.</p>
                 </div>
                 <div class="history-preview-code" id="historyPreviewCode">
                   <pre id="historyPreviewLines" class="history-preview-lines" aria-hidden="true"></pre>
@@ -777,7 +760,7 @@
                       <div class="settings-time-selector-head">
                         <span class="settings-field-label" id="settingsTimeSelectorLabel">Time (NY)</span>
                         <output class="settings-time-preview tabular" id="settingsTimePreview" for="settingsSendHourInput settingsSendMinuteInput settingsSendAmPmInput">
-                          8:05 AM
+                          2:00 AM
                         </output>
                       </div>
                       <div class="settings-time-wheels">
@@ -785,13 +768,13 @@
                           <span class="settings-time-wheel-label">Hour</span>
                           <select id="settingsSendHourInput" aria-label="Hour">
                             <option value="1">1</option>
-                            <option value="2">2</option>
+                            <option value="2" selected>2</option>
                             <option value="3">3</option>
                             <option value="4">4</option>
                             <option value="5">5</option>
                             <option value="6">6</option>
                             <option value="7">7</option>
-                            <option value="8" selected>8</option>
+                            <option value="8">8</option>
                             <option value="9">9</option>
                             <option value="10">10</option>
                             <option value="11">11</option>
@@ -802,8 +785,8 @@
                         <label class="settings-time-wheel" for="settingsSendMinuteInput">
                           <span class="settings-time-wheel-label">Minute</span>
                           <select id="settingsSendMinuteInput" aria-label="Minute">
-                            <option value="00">00</option>
-                            <option value="05" selected>05</option>
+                            <option value="00" selected>00</option>
+                            <option value="05">05</option>
                             <option value="10">10</option>
                             <option value="15">15</option>
                             <option value="20">20</option>
@@ -842,6 +825,30 @@
                         </button>
                         <button type="button" class="settings-kind-seg" data-kind-seg="weekly_cfb">
                           Weekly CFB
+                        </button>
+                      </div>
+                    </div>
+
+                    <div class="settings-field-block settings-field-save-local">
+                      <div class="settings-save-local-row">
+                        <div class="settings-save-local-copy">
+                          <span class="settings-field-label" id="settingsSaveLocalLabel">Save file locally</span>
+                          <p class="settings-surface-sub" id="settingsSaveLocalHelp">
+                            After this auto-send finishes, archive the TXT parts into Exchange history.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          class="settings-toggle-btn is-on"
+                          id="settingsSaveLocalToggle"
+                          aria-pressed="true"
+                          aria-labelledby="settingsSaveLocalLabel"
+                          aria-describedby="settingsSaveLocalHelp"
+                        >
+                          <span class="settings-toggle-track" aria-hidden="true">
+                            <span class="settings-toggle-thumb"></span>
+                          </span>
+                          <span class="settings-toggle-text">On</span>
                         </button>
                       </div>
                     </div>
@@ -885,6 +892,7 @@
                           <th scope="col">#</th>
                           <th scope="col">Time (NY)</th>
                           <th scope="col">Send kind</th>
+                          <th scope="col">Local</th>
                           <th scope="col">Today</th>
                           <th scope="col">Actions</th>
                         </tr>

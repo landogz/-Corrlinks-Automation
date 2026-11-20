@@ -4549,6 +4549,47 @@ html[data-theme='light'] .settings-surface {
   min-width: 0;
 }
 
+.settings-field-save-local {
+  grid-column: 1 / -1;
+}
+
+.settings-save-local-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+}
+
+.settings-save-local-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-save-local-copy .settings-surface-sub {
+  margin: 0;
+}
+
+.settings-local-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-app) 40%, var(--bg-surface-1));
+}
+
+.settings-local-pill.is-on {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-surface-1));
+}
+
 .settings-field-label {
   font-size: 11px;
   font-weight: 600;
