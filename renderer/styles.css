@@ -4206,11 +4206,21 @@ button.close-confirm-danger:focus-visible {
 }
 
 .send-history-detail-body {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  max-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
   display: grid;
+  align-content: start;
   gap: 10px;
+  padding-right: 4px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.send-history-detail-body[hidden] {
+  display: none !important;
 }
 
 .send-history-detail-summary {
@@ -4657,31 +4667,36 @@ html[data-theme='light'] .settings-surface {
 .settings-kind-seg {
   min-height: 36px;
   padding: 6px 8px;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
   cursor: pointer;
   transition:
     background var(--dur) var(--ease),
-    color var(--dur) var(--ease);
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 
-.settings-kind-seg:hover {
+.settings-kind-seg:hover:not(.is-active) {
   color: var(--text-primary);
   background: var(--soft-fill);
 }
 
 .settings-kind-seg.is-active {
-  background: var(--bg-surface-1);
-  color: var(--text-primary);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 4px 12px rgba(0, 0, 0, 0.12);
+  background: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 70%, #fff 10%);
+  color: var(--accent-on);
+  font-weight: 750;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 html[data-theme='light'] .settings-kind-seg.is-active {
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  color: #fff;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .settings-composer-actions {
@@ -5021,6 +5036,14 @@ html[data-theme='light'] .settings-kind-seg.is-active {
 .send-history-detail-frame {
   position: relative;
   flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.send-history-detail.card,
+.history-preview.send-history-detail {
   min-height: 0;
   overflow: hidden;
 }
