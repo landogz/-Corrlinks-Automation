@@ -1,0 +1,40 @@
+---
+description: ALWAYS use UI/UX Pro Max on visual / interface work
+alwaysApply: true
+---
+
+# UI/UX Pro Max (mandatory on UI turns)
+
+This repo **always** uses UI/UX Pro Max for interface work. Follow `.cursor/skills/ui-ux-pro-max/SKILL.md` whenever the task touches how something looks, feels, moves, or is interacted with. Do not skip it.
+
+Source: [nextlevelbuilder/ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill)  
+Installed via: `npx ui-ux-pro-max-cli init --ai cursor` (v2.x)
+
+## Non-negotiable
+
+**Search before inventing UI guidance.** Run the local search script, then apply results. Do not invent palettes, type scales, or UX rules from memory when the database has a match.
+
+## Required when the task is visual / UX
+
+1. Read `.cursor/skills/ui-ux-pro-max/SKILL.md` and follow its workflow (analyze → search → apply).
+2. Prefer project paths:
+   - `python3 .cursor/skills/ui-ux-pro-max/scripts/search.py "<query>" --domain <domain>`
+   - `--design-system` for new pages / system-wide direction
+   - `--stack html-tailwind` (or detected stack) for implementation details
+3. Priority order from the skill: Accessibility → Touch → Performance → Style → Layout → Typography/Color → Animation → Forms → Navigation → Charts.
+4. Respect **existing** app chrome and user design rules for this Electron app; use Pro Max to improve clarity, a11y, spacing, and consistency — not to restyle the whole product unprompted.
+5. Skip for pure backend / non-visual scripts unless the change affects UI.
+
+## Never cut
+
+Contrast, focus rings, keyboard access, tap targets (≥44px where interactive), labels on icon-only controls, reduced-motion respect, and anything the user explicitly asked for.
+
+## Wiring (do not remove)
+
+| Piece | Path |
+| --- | --- |
+| Skill (read/follow) | `.cursor/skills/ui-ux-pro-max/SKILL.md` |
+| Search CLI | `.cursor/skills/ui-ux-pro-max/scripts/search.py` |
+| Always-on rule | `.cursor/rules/ui-ux-pro-max.mdc` |
+
+Works with ponytail (small diffs), graphify (navigate first), and loop engineering (gate still proves done).

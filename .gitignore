@@ -13,3 +13,14 @@ tests/viewports-results/
 tests/viewports-report/
 test-results/
 playwright-report/
+
+# graphify knowledge graph output
+graphify-out/
+.graphify_detect.json
+.venv-graphify/
+
+# ui-ux-pro-max persisted design systems
+design-system/
+
+__pycache__/
+*.pyc

@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.63**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.64**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.63-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.63.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.63.exe` or portable `Inside-Scores-0.1.63.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.64-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.64.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.64.exe` or portable `Inside-Scores-0.1.64.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.63.exe`.
+1. Run `Inside-Scores-Setup-0.1.64.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.63.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.64.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 
@@ -71,7 +71,7 @@ Do not commit a filled `.env` or `sportsdata-credentials.json`.
 
 ### Clock & timezone
 
-- The app **always** uses **America/New_York** for the status clock, log stamps, history date, and daily subject.
+- The app **always** uses **America/New_York** for the status clock, log stamps, History dates (Send runs use 12-hour NY time), and daily subject.
 - Your Mac/Windows display timezone does **not** matter (Philippines, EST, PST, etc.).
 - The OS must still have the correct **UTC instant** (keep **Set date and time automatically** on).
 

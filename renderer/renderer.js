@@ -7650,8 +7650,7 @@ function renderSendHistoryTable() {
     tr.dataset.runId = run.id;
     const when = document.createElement('td');
     when.className = 'tabular';
-    when.textContent = `${run.nyDate || '—'} · ${String(run.finishedAt || '')
-      .slice(11, 16) || '—'}`;
+    when.textContent = formatDateTime(run.finishedAt || run.startedAt);
     const kind = document.createElement('td');
     kind.textContent = run.sendKindLabel || run.sendKind || '—';
     const result = document.createElement('td');
@@ -7701,7 +7700,7 @@ function renderSendHistoryDetail(run) {
   if (body) body.hidden = false;
   if (title) title.textContent = run.sendKindLabel || 'Send run';
   if (meta) {
-    meta.textContent = `${run.nyDate || '—'} · ${run.source || 'loop'} · ${run.finishedAt || ''}`;
+    meta.textContent = `${formatDateTime(run.finishedAt || run.startedAt)} · ${run.source || 'loop'}`;
   }
   if (summary) summary.textContent = run.summary || '';
   if (!list) return;

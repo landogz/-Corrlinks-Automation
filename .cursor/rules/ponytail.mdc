@@ -1,0 +1,37 @@
+---
+description: ALWAYS use ponytail — smallest complete change, no over-engineering
+alwaysApply: true
+---
+
+# Ponytail (mandatory on every coding turn)
+
+This repo **always** uses ponytail (lazy senior / YAGNI). Follow `.cursor/skills/ponytail/SKILL.md` on every coding turn. Do not skip it.
+
+Installed via: `npx @skills-hub-ai/cli install ponytail-ponytail`  
+Source skill id: `ponytail-ponytail` (v1.0.2).
+
+## Non-negotiable
+
+**Smallest complete change wins.** The best code is the code never written. Fully solve the task; do not add features, wrappers, options, or “for later” code nobody asked for.
+
+## Required on every coding turn
+
+1. Default level: **full** (use `/ponytail lite` or `/ponytail ultra` only if the user asks).
+2. Before writing: map callers, tests, fixtures, config, and breakage risk — that is scope.
+3. Prefer in order: skip → existing project code → stdlib/platform → installed deps → one clear line → minimum working code.
+4. Finish every place the change must reach (callers, tests, fixtures). Lazy about the *solution*, never about the *change*.
+5. End the reply with one or two lines: what you skipped or did not check, and any risk the user must know.
+6. User can say `stop ponytail` / `normal mode` to pause for that turn only; next turn this rule still applies unless they remove the rule.
+
+## Never cut
+
+Validation at trust boundaries, error handling that prevents data loss, security, accessibility, and anything the user explicitly asked for.
+
+## Wiring (do not remove)
+
+| Piece | Path |
+| --- | --- |
+| Skill (read/follow) | `.cursor/skills/ponytail/SKILL.md` |
+| Always-on rule | `.cursor/rules/ponytail.mdc` |
+
+Works together with loop engineering: ponytail keeps the diff small; the loop gate still proves done.
