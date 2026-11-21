@@ -36,16 +36,33 @@ function safeFilename(name) {
   return base || 'part.txt';
 }
 
-function timeFolderSegment(sendTime) {
-  const t = normalizeSendTime(sendTime, '00:00');
-  return t.replace(':', '-');
+/** 2026-11-20 → 11202026 (MMDDYYYY). */
+function archiveDateStamp(nyDate) {
+  const m = String(nyDate || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return String(nyDate || '').replace(/\D/g, '') || '00000000';
+  return `${m[2]}${m[3]}${m[1]}`;
+}
+
+function normalizePartNumber(part, fallback = 1) {
+  const n = Number(part);
+  if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  return Math.max(1, Math.floor(Number(fallback) || 1));
+}
+
+/** One archive name per day + part: 11202026_1.txt */
+function archivePartFilename(nyDate, part) {
+  const p = normalizePartNumber(part);
+  return `${archiveDateStamp(nyDate)}_${p}.txt`;
 }
 
 function normalizeArchiveRow(raw = {}) {
   const src = raw && typeof raw === 'object' ? raw : {};
   const nyDate = normalizeNyDate(src.nyDate || src.date);
   const sendTime = normalizeSendTime(src.sendTime, null);
-  const filename = String(src.filename || src.file || '').trim() || 'part.txt';
+  const part = src.part != null ? normalizePartNumber(src.part) : null;
+  const filename =
+    String(src.filename || src.file || '').trim() ||
+    (nyDate && part ? archivePartFilename(nyDate, part) : 'part.txt');
   const localPath = String(src.localPath || '').trim() || null;
   if (!nyDate || !localPath) return null;
   const characters =
@@ -57,6 +74,7 @@ function normalizeArchiveRow(raw = {}) {
     nyDate,
     date: nyDate,
     sendTime: sendTime || null,
+    part,
     filename,
     file: filename,
     characters,
@@ -71,8 +89,9 @@ function capRows(rows, max = MAX_ROWS) {
   list.sort((a, b) => {
     const d = String(b.nyDate || '').localeCompare(String(a.nyDate || ''));
     if (d) return d;
-    const t = String(b.sendTime || '').localeCompare(String(a.sendTime || ''));
-    if (t) return t;
+    const pa = Number(a.part) || 0;
+    const pb = Number(b.part) || 0;
+    if (pa !== pb) return pa - pb;
     return String(b.archivedAt || '').localeCompare(String(a.archivedAt || ''));
   });
   return list.slice(0, Math.max(1, Number(max) || MAX_ROWS));
@@ -125,8 +144,9 @@ function readArchivedText(idOrPath) {
 }
 
 /**
- * Write unique TXT parts for a finished auto-send slot.
- * @param {{ nyDate: string, sendTime: string, files: Array<{ filename?: string, url?: string, text?: string, characters?: number }> }} payload
+ * Write one TXT per NY date + part (not per recipient).
+ * Disk name: MMDDYYYY_part.txt (e.g. 11202026_1.txt).
+ * @param {{ nyDate: string, sendTime: string, files: Array<{ part?: number, filename?: string, url?: string, text?: string }> }} payload
  * @param {{ resolveText?: (url: string) => Promise<{ text: string, characters?: number }|null> }} [opts]
  */
 async function archiveSentFiles(payload = {}, opts = {}) {
@@ -149,15 +169,22 @@ async function archiveSentFiles(payload = {}, opts = {}) {
       : async () => null;
 
   const existing = loadIndex();
+  // One row per date+part — never one copy per inmate filename.
   const byKey = new Map(
-    existing.map((row) => [`${row.nyDate}|${row.sendTime}|${row.filename}`, row])
+    existing.map((row) => {
+      const part =
+        row.part != null
+          ? normalizePartNumber(row.part)
+          : normalizePartNumber(String(row.filename || '').match(/_(\d+)\.txt$/i)?.[1]);
+      return [`${row.nyDate}|${part}`, row];
+    })
   );
   const written = [];
   const seen = new Set();
 
   for (const file of files) {
-    const filename = safeFilename(file?.filename || file?.file || 'part.txt');
-    const dedupeKey = `${nyDate}|${sendTime}|${filename}`;
+    const part = normalizePartNumber(file?.part, seen.size + 1);
+    const dedupeKey = `${nyDate}|${part}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
 
@@ -173,8 +200,8 @@ async function archiveSentFiles(payload = {}, opts = {}) {
     }
     if (!text) continue;
 
-    const diskName = `${timeFolderSegment(sendTime)}__${filename}`;
-    const localPath = path.join(dayDir, diskName);
+    const filename = archivePartFilename(nyDate, part);
+    const localPath = path.join(dayDir, safeFilename(filename));
     fs.writeFileSync(localPath, text, 'utf8');
     const characters = text.length;
     const prev = byKey.get(dedupeKey);
@@ -182,6 +209,7 @@ async function archiveSentFiles(payload = {}, opts = {}) {
       id: prev?.id || newRowId(),
       nyDate,
       sendTime,
+      part,
       filename,
       characters,
       localPath,
@@ -207,4 +235,7 @@ module.exports = {
   archiveSentFiles,
   normalizeArchiveRow,
   safeFilename,
+  archiveDateStamp,
+  archivePartFilename,
+  normalizePartNumber,
 };

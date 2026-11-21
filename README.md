@@ -7,13 +7,13 @@ Desktop app that loads CorrLinks inmate accounts from SportsData, logs into Corr
 
 ## Download
 
-Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.66**):
+Get the latest installers from the [Releases](https://github.com/landogz/-Corrlinks-Automation/releases/latest) page (current: **v0.1.67**):
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `Inside-Scores-0.1.66-arm64.dmg` / `-arm64-mac.zip` |
-| macOS (Intel) | `Inside-Scores-0.1.66.dmg` / `-mac.zip` |
-| Windows | `Inside-Scores-Setup-0.1.66.exe` or portable `Inside-Scores-0.1.66.exe` |
+| macOS (Apple Silicon) | `Inside-Scores-0.1.67-arm64.dmg` / `-arm64-mac.zip` |
+| macOS (Intel) | `Inside-Scores-0.1.67.dmg` / `-mac.zip` |
+| Windows | `Inside-Scores-Setup-0.1.67.exe` or portable `Inside-Scores-0.1.67.exe` |
 
 GitHub release assets use **hyphenated** names (for electron-updater). Local `release/` builds may still show spaces (`Inside Scores …`).
 
@@ -35,11 +35,11 @@ xattr -dr com.apple.quarantine "/Applications/Inside Scores.app"
 
 ## Install on Windows
 
-1. Run `Inside-Scores-Setup-0.1.66.exe`.
+1. Run `Inside-Scores-Setup-0.1.67.exe`.
 2. If SmartScreen appears, click **More info** then **Run anyway**.
 3. Open **Inside Scores** from the Start menu.
 
-Portable `Inside-Scores-0.1.66.exe` runs without installing — put `.env` next to the `.exe` if you use one.
+Portable `Inside-Scores-0.1.67.exe` runs without installing — put `.env` next to the `.exe` if you use one.
 
 ## Configuration
 
@@ -102,7 +102,7 @@ The app will:
 - paste selected Inmate Exchange TXT parts and **Send** each part (packaged builds only)
 - track failed recipients / probe failures with per-account **Retry**
 - persist send-run history for later review/resend (`send-history.json`)
-- archive sent TXT parts into local Exchange history when a Save file locally slot finishes (`exchange-history/`)
+- archive one TXT per date + part when a Save file locally slot finishes (`exchange-history/`, e.g. `11202026_1.txt`) — not one copy per recipient
 
 ### Appearance
 

@@ -1605,15 +1605,12 @@ async function downloadSendableFile(file, { order = 1 } = {}) {
 
 function renderFilesList(
   sendable,
-  { skippedCount = 0, emptyMessage = 'No sendable files for this inmate.', preserveKeys = null } = {}
+  { skippedCount = 0, emptyMessage = 'No sendable files for this inmate.' } = {}
 ) {
+  // Always check every sendable part — live refresh used to preserve old keys and
+  // leave a newly added File 3 unchecked.
   const allKeys = sendable.map((file, index) => `${file.part}:${file.filename || index}`);
-  if (Array.isArray(preserveKeys) && preserveKeys.length) {
-    const kept = allKeys.filter((key) => preserveKeys.includes(key));
-    selectedFileKeys = kept.length ? kept : allKeys.slice();
-  } else {
-    selectedFileKeys = allKeys.slice();
-  }
+  selectedFileKeys = allKeys.slice();
   if (filesHint) {
     filesHint.textContent = sendable.length
       ? `${selectedFileKeys.length} of ${sendable.length} selected` +
@@ -1727,7 +1724,7 @@ function renderFilesList(
   if (filesBlock) filesBlock.hidden = false;
 }
 
-function renderAccountMeta(inmate, { preserveFileKeys = null } = {}) {
+function renderAccountMeta(inmate) {
   if (!inmate) {
     accountMeta.hidden = true;
     inmateCollapsedSummary.hidden = false;
@@ -1842,7 +1839,6 @@ function renderAccountMeta(inmate, { preserveFileKeys = null } = {}) {
       templateMode === 'weekly'
         ? `No ${weeklyLeague} weekly update file available.`
         : 'No sendable files for this inmate.',
-    preserveKeys: preserveFileKeys,
   });
 
   const canLogin = Boolean(
@@ -2916,7 +2912,6 @@ function applyAccountsLive(list) {
   const added = [...nextIds].filter((id) => !prevIds.has(id)).length;
   const removed = [...prevIds].filter((id) => !nextIds.has(id)).length;
   const prevSelectedId = accountSelect?.value || '';
-  const prevFileKeys = selectedFileKeys.slice();
   const dropdownOpen = Boolean(inmateOptions && !inmateOptions.hidden);
 
   accounts = next;
@@ -2939,7 +2934,7 @@ function applyAccountsLive(list) {
   if (stillSelected) {
     accountSelect.value = String(stillSelected.id);
     syncInmateComboboxDisplay({ editing: dropdownOpen && document.activeElement === inmateSearch });
-    renderAccountMeta(stillSelected, { preserveFileKeys: prevFileKeys });
+    renderAccountMeta(stillSelected);
   } else if (prevSelectedId) {
     // Selection disappeared from SportsData — clear rather than silently jump.
     clearInmateSelection({ keepEditing: false });
@@ -5080,37 +5075,50 @@ async function startInmateLoop(options = {}) {
   loopRunStartedAt = null;
 }
 
-/** Unique TXT parts from this loop for local Exchange history. */
+/** One TXT per part for local Exchange history (not per recipient). */
 function collectUniqueLoopArchiveFiles(groups) {
-  const map = new Map();
-  const add = (file) => {
+  const byPart = new Map();
+  const add = (file, index = 0) => {
     if (!file) return;
-    const filename = String(file.filename || '').trim() || `part-${file.part || 1}.txt`;
-    const url = file.url ? String(file.url) : '';
-    const key = url || `${file.part || ''}:${filename}`;
-    if (!key || map.has(key)) return;
-    map.set(key, {
-      filename,
-      url: url || null,
-      part: file.part != null ? Number(file.part) : null,
+    const partNum =
+      Number.isFinite(Number(file.part)) && Number(file.part) > 0
+        ? Number(file.part)
+        : index + 1;
+    if (byPart.has(partNum)) return;
+    byPart.set(partNum, {
+      part: partNum,
+      filename: String(file.filename || '').trim() || `part-${partNum}.txt`,
+      url: file.url ? String(file.url) : null,
     });
   };
   if (templateMode === 'weekly') {
     const files = buildTemplatePayload(null, loopFileSnapshot)?.files || [];
-    files.forEach(add);
-    return [...map.values()];
+    files.forEach((file, index) => add(file, index));
+    return [...byPart.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, file]) => file);
   }
-  const inmates = [];
-  (Array.isArray(groups) ? groups : []).forEach((group) => {
-    (group?.inmates || []).forEach((inmate) => inmates.push(inmate));
-  });
-  if (!inmates.length) {
-    (accounts || []).forEach((inmate) => inmates.push(inmate));
+  // Prefer the selected inmate’s parts (same part # across recipients).
+  const selected = selectedInmate();
+  if (selected) {
+    filesFromSnapshot(selected, loopFileSnapshot).forEach((file, index) => add(file, index));
   }
-  inmates.forEach((inmate) => {
-    filesFromSnapshot(inmate, loopFileSnapshot).forEach(add);
-  });
-  return [...map.values()];
+  if (!byPart.size) {
+    const inmates = [];
+    (Array.isArray(groups) ? groups : []).forEach((group) => {
+      (group?.inmates || []).forEach((inmate) => inmates.push(inmate));
+    });
+    if (!inmates.length) {
+      (accounts || []).forEach((inmate) => inmates.push(inmate));
+    }
+    for (const inmate of inmates) {
+      filesFromSnapshot(inmate, loopFileSnapshot).forEach((file, index) => add(file, index));
+      if (byPart.size) break;
+    }
+  }
+  return [...byPart.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, file]) => file);
 }
 
 async function maybeArchiveExchangeHistoryAfterLoop({

@@ -2645,58 +2645,104 @@ async function settlePostLogin(win) {
   return { lockMessage, dismiss };
 }
 
+const SEND_SUCCESS_TEXT_RE =
+  /message\s+successfully\s+sent|successfully\s+sent(?:\s+your\s+message)?|message\s+has\s+been\s+sent|your\s+message\s+(?:was\s+)?sent|message\s+sent\s+successfully/i;
+
 const SEND_SUCCESS_DIALOG_JS = `(() => {
+  const SUCCESS_RE = ${SEND_SUCCESS_TEXT_RE};
+
   function isReallyVisible(el) {
     if (!el) return false;
     const style = window.getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    // Opacity 0 is common mid-animation — still treat as present if it has size.
     if (el.getAttribute('aria-hidden') === 'true') return false;
     if (el.classList.contains('e-popup-close') || el.classList.contains('e-dlg-close')) return false;
     const r = el.getBoundingClientRect();
-    if (r.width < 40 || r.height < 40) return false;
+    if (r.width < 24 || r.height < 24) return false;
     if (r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth) return false;
     return true;
   }
-  const dialogs = [...document.querySelectorAll('.e-dialog, [role="dialog"]')].filter((dlg) => {
+
+  function normalizeText(el) {
+    return String(el?.innerText || el?.textContent || '').replace(/\\s+/g, ' ').trim();
+  }
+
+  const dialogs = [
+    ...document.querySelectorAll(
+      '.e-dialog, [role="dialog"], .e-toast, .e-toast-container, [class*="toast"], .swal2-popup, .alert, [role="alert"]'
+    ),
+  ].filter((dlg) => {
     if (!isReallyVisible(dlg)) return false;
-    const text = String(dlg.innerText || dlg.textContent || '');
-    return /message successfully sent/i.test(text);
+    return SUCCESS_RE.test(normalizeText(dlg));
   });
-  const dlg = dialogs[0];
-  if (!dlg) return null;
+  let dlg = dialogs[0] || null;
+
+  // Fallback: success copy somewhere on the page (dialog markup varies).
+  if (!dlg) {
+    const bodyText = String(document.body?.innerText || '');
+    if (!SUCCESS_RE.test(bodyText)) return null;
+    dlg =
+      [...document.querySelectorAll('.e-dialog, [role="dialog"], .e-toast, [role="alert"]')].find(
+        (el) => isReallyVisible(el) && SUCCESS_RE.test(normalizeText(el))
+      ) || null;
+    if (!dlg) {
+      return { found: true, hasButton: false, text: 'Message successfully sent.', via: 'page-text' };
+    }
+  }
+
   const okBtn =
     [...dlg.querySelectorAll('button, input[type="button"], a.e-btn, .e-btn, [role="button"]')].find((b) =>
       /^\\s*ok\\s*$/i.test(String(b.innerText || b.value || '').trim())
     ) ||
     dlg.querySelector('.e-footer-content button, .e-dlg-footer button, button.e-primary');
   if (!okBtn || !isReallyVisible(okBtn)) {
-    return { found: true, hasButton: false, text: (dlg.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 120) };
+    return {
+      found: true,
+      hasButton: false,
+      text: normalizeText(dlg).slice(0, 120) || 'Message successfully sent.',
+      via: 'dialog-no-ok',
+    };
   }
   const r = okBtn.getBoundingClientRect();
   return {
     found: true,
     hasButton: true,
-    text: (dlg.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 120),
+    text: normalizeText(dlg).slice(0, 120) || 'Message successfully sent.',
     btn: String(okBtn.innerText || okBtn.value || 'OK').trim(),
     x: r.left + r.width / 2,
     y: r.top + r.height / 2,
+    via: 'dialog-ok',
   };
 })()`;
+
+/** Pause after the success dialog appears, before clicking OK (post-Send only). */
+const SEND_SUCCESS_HOLD_MS = 2000;
 
 /**
  * CorrLinks shows Syncfusion dialog: "Send Message" / "Message successfully sent." + OK.
  * waitMs=0 → single peek (no downtime). After Send, pass a short wait budget.
+ * holdBeforeCloseMs → delay after finding success, before dismissing OK.
  */
-async function dismissSendSuccessDialog(win, { waitMs = 0 } = {}) {
+async function dismissSendSuccessDialog(win, { waitMs = 0, holdBeforeCloseMs = 0 } = {}) {
   const started = Date.now();
   const budget = Math.max(0, Number(waitMs) || 0);
+  const holdMs = Math.max(0, Number(holdBeforeCloseMs) || 0);
   do {
     const target = await win.webContents.executeJavaScript(SEND_SUCCESS_DIALOG_JS, true).catch(() => null);
 
     if (!target?.found) {
       if (Date.now() - started >= budget) break;
-      await new Promise((r) => setTimeout(r, 25));
+      await new Promise((r) => setTimeout(r, 40));
       continue;
+    }
+
+    if (holdMs > 0) {
+      setStatus({
+        state: 'sending',
+        message: `Message sent — waiting ${Math.round(holdMs / 1000)}s before closing…`,
+      });
+      await new Promise((r) => setTimeout(r, holdMs));
     }
 
     if (target.hasButton && target.x != null) {
@@ -2706,19 +2752,20 @@ async function dismissSendSuccessDialog(win, { waitMs = 0 } = {}) {
 
     await win.webContents.executeJavaScript(
       `(() => {
+        const SUCCESS_RE = ${SEND_SUCCESS_TEXT_RE};
         function isReallyVisible(el) {
           if (!el) return false;
           const style = window.getComputedStyle(el);
-          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+          if (style.display === 'none' || style.visibility === 'hidden') return false;
           if (el.getAttribute('aria-hidden') === 'true') return false;
           const r = el.getBoundingClientRect();
-          return r.width >= 40 && r.height >= 40;
+          return r.width >= 24 && r.height >= 24;
         }
-        const dialogs = [...document.querySelectorAll('.e-dialog, [role="dialog"]')];
+        const dialogs = [...document.querySelectorAll('.e-dialog, [role="dialog"], .e-toast, [role="alert"]')];
         for (const dlg of dialogs) {
           if (!isReallyVisible(dlg)) continue;
           const text = String(dlg.innerText || dlg.textContent || '');
-          if (!/message successfully sent/i.test(text)) continue;
+          if (!SUCCESS_RE.test(text)) continue;
           const okBtn =
             [...dlg.querySelectorAll('button, input[type="button"], a.e-btn, .e-btn')].find((b) =>
               /^\\s*ok\\s*$/i.test(String(b.innerText || b.value || '').trim())
@@ -2741,7 +2788,12 @@ async function dismissSendSuccessDialog(win, { waitMs = 0 } = {}) {
     ).catch(() => ({ ok: false }));
 
     await new Promise((r) => setTimeout(r, 30));
-    return { dismissed: true, success: true, text: target.text || 'Message successfully sent.' };
+    return {
+      dismissed: true,
+      success: true,
+      text: target.text || 'Message successfully sent.',
+      via: target.via || 'dialog',
+    };
   } while (Date.now() - started < budget);
 
   return { dismissed: false, success: false };
@@ -3966,8 +4018,8 @@ async function waitForComposeSendReady(win, timeoutMs = 8000) {
 
 /**
  * Click the CorrLinks compose Send button with a trusted CDP click (Syncfusion-safe).
- * Success = ONLY a visible “Message successfully sent” dialog (then OK).
- * Never treat navigation alone as success — that was skipping part 1.
+ * Prefer the “Message successfully sent” dialog; also accept body-cleared after Send
+ * (false failures when the dialog was missed but mail already posted).
  */
 async function clickComposeSend(win, { expectedFingerprint = '', expectedBodyLength = 0 } = {}) {
   try {
@@ -4063,12 +4115,15 @@ async function clickComposeSend(win, { expectedFingerprint = '', expectedBodyLen
     ).catch(() => false);
 
     // Give CorrLinks a beat to process before polling for the success dialog.
-    await new Promise((r) => setTimeout(r, 120));
+    await new Promise((r) => setTimeout(r, 200));
     setStatus({
       state: 'sending',
       message: 'Waiting for “Message successfully sent”…',
     });
-    let successDlg = await dismissSendSuccessDialog(win, { waitMs: 6000 });
+    let successDlg = await dismissSendSuccessDialog(win, {
+      waitMs: 10000,
+      holdBeforeCloseMs: SEND_SUCCESS_HOLD_MS,
+    });
     if (successDlg.success) {
       setStatus({
         state: 'sending',
@@ -4089,8 +4144,30 @@ async function clickComposeSend(win, { expectedFingerprint = '', expectedBodyLen
     await dismissValidationDialog(win).catch(() => {});
     let url = win.webContents.getURL();
     let stillOnCompose = /mailbox\/compose/i.test(String(url || ''));
+    let afterBody = await readComposeBodyState(win).catch(() => null);
 
-    // One retry only — still require the real success dialog afterward.
+    // Body cleared after Send → CorrLinks almost always already posted the mail.
+    const beforeLen = Number(beforeBody?.length || expectedBodyLength || 0);
+    const afterLen = Number(afterBody?.length || 0);
+    const bodyCleared =
+      beforeLen >= 200 && afterLen <= Math.max(40, Math.floor(beforeLen * 0.05));
+    if (bodyCleared) {
+      setStatus({
+        state: 'sending',
+        message: `Send confirmed (body cleared) · was ${beforeLen} chars`,
+      });
+      return {
+        ok: true,
+        text: ready.send.text,
+        via: 'body-cleared',
+        url,
+        bodyLength: beforeLen,
+        bodyHead: beforeBody?.head || '',
+        afterBodyLength: afterLen,
+      };
+    }
+
+    // One retry only — require dialog or body-cleared afterward.
     if (stillOnCompose) {
       const again = await readComposeSendReady(win);
       if (again?.send) {
@@ -4100,8 +4177,11 @@ async function clickComposeSend(win, { expectedFingerprint = '', expectedBodyLen
         });
         clickAt(win, again.send.x, again.send.y);
         await cdpClick(win, again.send.x, again.send.y).catch(() => {});
-        await new Promise((r) => setTimeout(r, 120));
-        successDlg = await dismissSendSuccessDialog(win, { waitMs: 6000 });
+        await new Promise((r) => setTimeout(r, 200));
+        successDlg = await dismissSendSuccessDialog(win, {
+          waitMs: 10000,
+          holdBeforeCloseMs: SEND_SUCCESS_HOLD_MS,
+        });
         if (successDlg.success) {
           return {
             ok: true,
@@ -4111,6 +4191,19 @@ async function clickComposeSend(win, { expectedFingerprint = '', expectedBodyLen
             successDialog: successDlg,
             bodyLength: beforeBody?.length || 0,
             bodyHead: beforeBody?.head || '',
+          };
+        }
+        afterBody = await readComposeBodyState(win).catch(() => null);
+        const retryAfterLen = Number(afterBody?.length || 0);
+        if (beforeLen >= 200 && retryAfterLen <= Math.max(40, Math.floor(beforeLen * 0.05))) {
+          return {
+            ok: true,
+            text: ready.send.text,
+            via: 'body-cleared-retry',
+            url: win.webContents.getURL(),
+            bodyLength: beforeLen,
+            bodyHead: beforeBody?.head || '',
+            afterBodyLength: retryAfterLen,
           };
         }
         url = win.webContents.getURL();
@@ -4126,6 +4219,7 @@ async function clickComposeSend(win, { expectedFingerprint = '', expectedBodyLen
       stillOnCompose,
       bodyLength: beforeBody?.length || 0,
       bodyHead: beforeBody?.head || '',
+      afterBodyLength: afterBody?.length || 0,
     };
   } catch (error) {
     return {
@@ -4641,13 +4735,13 @@ async function composeAllParts(win, {
       break;
     }
 
-    // Only count real CorrLinks success dialog — never navigation-only “success”.
-    // Dev/test dry-run counts as sent for loop progress (message was not posted).
+    // Count dialog confirm or body-cleared after Send (mail often posted even when
+    // the success dialog is missed). Dev dry-run counts for loop progress only.
+    const sendVia = String(compose.sendResult?.via || '');
     const sentOk = Boolean(
       compose.bodyResult?.ok &&
       compose.sendResult?.ok &&
-      (/success-dialog/i.test(String(compose.sendResult?.via || '')) ||
-        compose.sendResult?.dryRun === true)
+      (/success-dialog|body-cleared/i.test(sendVia) || compose.sendResult?.dryRun === true)
     );
     if (sentOk) {
       sentParts.push({

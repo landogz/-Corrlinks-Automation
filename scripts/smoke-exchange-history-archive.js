@@ -11,7 +11,8 @@ const {
   readArchivedText,
   getArchiveRoot,
   getIndexPath,
-  safeFilename,
+  archiveDateStamp,
+  archivePartFilename,
 } = require('../main/exchangeHistoryArchive');
 
 function assert(cond, msg) {
@@ -21,10 +22,11 @@ function assert(cond, msg) {
   }
 }
 
-assert(safeFilename('a/b:c*.txt') === 'a_b_c_.txt' || safeFilename('a/b:c*.txt').includes('_'), 'safe filename');
+assert(archiveDateStamp('2026-11-20') === '11202026', 'MMDDYYYY stamp');
+assert(archivePartFilename('2026-11-20', 1) === '11202026_1.txt', 'part 1 name');
+assert(archivePartFilename('2026-11-20', 3) === '11202026_3.txt', 'part 3 name');
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'exh-archive-'));
-// Without Electron ready, archive root falls back to repo-relative exchange-history/.
 const archiveDir = getArchiveRoot();
 const indexPath = getIndexPath();
 const backupIndex = fs.existsSync(indexPath) ? fs.readFileSync(indexPath, 'utf8') : null;
@@ -47,21 +49,24 @@ async function main() {
       nyDate: '2026-11-21',
       sendTime: '02:00',
       files: [
-        { filename: 'part-1.txt', text: 'hello one' },
-        { filename: 'part-1.txt', text: 'dup ignored body' },
-        { filename: 'part-2.txt', text: 'hello two' },
-        { filename: 'skip-empty.txt', text: '' },
+        { part: 1, filename: 'inmate_a_part1.txt', text: 'hello one' },
+        { part: 1, filename: 'inmate_b_part1.txt', text: 'dup recipient ignored' },
+        { part: 2, filename: 'inmate_a_part2.txt', text: 'hello two' },
+        { part: 3, filename: 'inmate_a_part3.txt', text: '' },
       ],
     });
     assert(first.ok === true, 'archive ok');
-    assert(first.count === 2, `wrote 2 files, got ${first.count}`);
+    assert(first.count === 2, `wrote 2 parts, got ${first.count}`);
 
     const listed = listArchive();
-    const rows = listed.filter((r) => r.nyDate === '2026-11-21' && r.sendTime === '02:00');
-    assert(rows.length >= 2, 'list has archived rows');
-    const part1 = rows.find((r) => r.filename === 'part-1.txt');
-    assert(part1 && part1.characters === 9, 'part-1 chars');
+    const rows = listed.filter((r) => r.nyDate === '2026-11-21');
+    const part1 = rows.find((r) => r.part === 1 || r.filename === '11212026_1.txt');
+    const part2 = rows.find((r) => r.part === 2 || r.filename === '11212026_2.txt');
+    assert(part1 && part1.filename === '11212026_1.txt', 'date_part filename');
+    assert(part1.characters === 9, 'part-1 chars');
+    assert(part2 && part2.filename === '11212026_2.txt', 'part-2 filename');
     assert(fs.existsSync(part1.localPath), 'part-1 on disk');
+    assert(path.basename(part1.localPath) === '11212026_1.txt', 'disk basename');
 
     const read = readArchivedText(part1.id);
     assert(read.text === 'hello one', 'read by id');
@@ -69,9 +74,9 @@ async function main() {
     const again = await archiveSentFiles({
       nyDate: '2026-11-21',
       sendTime: '02:00',
-      files: [{ filename: 'part-1.txt', text: 'hello one updated' }],
+      files: [{ part: 1, filename: 'other_inmate_part1.txt', text: 'hello one updated' }],
     });
-    assert(again.count === 1, 'overwrite same slot+name');
+    assert(again.count === 1, 'overwrite same date+part');
     const reread = readArchivedText(part1.id);
     assert(reread.text === 'hello one updated', 'overwrite content');
     assert(reread.characters === 17, 'overwrite chars');
