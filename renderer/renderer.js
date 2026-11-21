@@ -4381,10 +4381,8 @@ async function waitLoopGap(ms, { current, total, nextLabel }) {
 function statusLooksGood(status, { requireSend = false } = {}) {
   if (!status) return false;
   if (requireSend) {
-    return Boolean(
-      status.sent ||
-        (Number(status.sendSummary?.sent) > 0 && !status.sendSummary?.failed)
-    );
+    // Any confirmed send counts — leftover failed parts stay listed for retry.
+    return Boolean(status.sent || Number(status.sendSummary?.sent) > 0);
   }
   return Boolean(
     status.state === 'success' ||

@@ -16,6 +16,7 @@ const {
   liveWebContents,
   destroyCorrWebContentsView,
 } = require('./corrViews/createCorrWebContentsView');
+const { matchRecentSentRows } = require('./corrlinksSentVerify');
 
 /**
  * Unpackaged `npm start` never clicks CorrLinks Send.
@@ -4016,12 +4017,149 @@ async function waitForComposeSendReady(win, timeoutMs = 8000) {
   };
 }
 
+const SENT_MAILBOX_URLS = Object.freeze([
+  'https://www.corrlinks.com/en-US/mailbox/sent',
+  'https://www.corrlinks.com/en-US/mailbox/sent-messages',
+]);
+
+/**
+ * Confirm a just-sent message appears in CorrLinks Sent Messages.
+ * Used when the success dialog is missed but mail often already posted.
+ */
+async function verifyRecentSentMessage(
+  win,
+  {
+    recipientName = '',
+    inmateId = '',
+    subject = '',
+    withinMinutes = 15,
+    afterTimestamp = 0,
+  } = {}
+) {
+  const idNeedle = String(inmateId || '').trim();
+  const nameNeedle = String(recipientName || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  if (!idNeedle && !nameNeedle) {
+    return { ok: false, reason: 'No recipient to match in Sent' };
+  }
+
+  const prevUrl = win.webContents.getURL();
+  let loadedUrl = null;
+  for (const url of SENT_MAILBOX_URLS) {
+    try {
+      await win.loadURL(url);
+      await new Promise((r) => setTimeout(r, 700));
+      const landed = win.webContents.getURL();
+      if (isCorrlinksLoginUrl(landed)) {
+        return { ok: false, reason: 'Session lost on Sent page', sessionLost: true, url: landed };
+      }
+      if (/mailbox\/sent/i.test(landed) || /sent/i.test(landed)) {
+        loadedUrl = landed;
+        break;
+      }
+    } catch (_) {
+      /* try next */
+    }
+  }
+  if (!loadedUrl) {
+    return { ok: false, reason: 'Could not open Sent Messages' };
+  }
+
+  // Syncfusion grid often paints a beat after navigation — wait for rows.
+  for (let i = 0; i < 10; i += 1) {
+    const ready = await win.webContents
+      .executeJavaScript(
+        `(() => {
+          const rows = document.querySelectorAll('table tbody tr, .e-gridcontent tr, [role="row"]');
+          let n = 0;
+          for (const tr of rows) {
+            if (tr.querySelectorAll('td, [role="gridcell"]').length >= 2) n += 1;
+          }
+          return n;
+        })()`,
+        true
+      )
+      .catch(() => 0);
+    if (ready > 0) break;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+
+  const scraped = await win.webContents
+    .executeJavaScript(
+      `(() => {
+        const out = [];
+        const rows = [...document.querySelectorAll('table tbody tr, .e-gridcontent tr, [role="row"]')];
+        for (const tr of rows) {
+          const cells = [...tr.querySelectorAll('td, [role="gridcell"]')].map((c) =>
+            String(c.innerText || c.textContent || '').replace(/\\s+/g, ' ').trim()
+          );
+          if (cells.length < 2) continue;
+          out.push({
+            cells,
+            to: cells[0] || '',
+            subject: cells[1] || '',
+            sentDate: cells[cells.length - 1] || '',
+          });
+          if (out.length >= 40) break;
+        }
+        return out;
+      })()`,
+      true
+    )
+    .catch((error) => ({ __error: error.message || String(error) }));
+
+  // Return to compose so multi-part / next recipient can continue.
+  try {
+    const back = /mailbox\/compose/i.test(String(prevUrl || '')) ? prevUrl : CORRLINKS.composeUrl;
+    await win.loadURL(back);
+    await new Promise((r) => setTimeout(r, 400));
+  } catch (_) {}
+
+  if (scraped?.__error) {
+    return { ok: false, reason: scraped.__error, url: loadedUrl };
+  }
+
+  const match = matchRecentSentRows(Array.isArray(scraped) ? scraped : [], {
+    inmateId: idNeedle,
+    recipientName,
+    subject,
+    withinMinutes,
+    afterTimestamp,
+  });
+
+  if (match?.ok) {
+    return {
+      ok: true,
+      via: 'sent-folder',
+      url: loadedUrl,
+      hit: match.hits?.[0] || null,
+      count: match.count || 0,
+    };
+  }
+  return {
+    ok: false,
+    reason: match?.reason || 'Not found in Sent Messages',
+    url: loadedUrl,
+  };
+}
+
 /**
  * Click the CorrLinks compose Send button with a trusted CDP click (Syncfusion-safe).
- * Prefer the “Message successfully sent” dialog; also accept body-cleared after Send
+ * Prefer the “Message successfully sent” dialog; also accept body-cleared / Sent folder
  * (false failures when the dialog was missed but mail already posted).
  */
-async function clickComposeSend(win, { expectedFingerprint = '', expectedBodyLength = 0 } = {}) {
+async function clickComposeSend(
+  win,
+  {
+    expectedFingerprint = '',
+    expectedBodyLength = 0,
+    recipientName = '',
+    inmateId = '',
+    subject = '',
+  } = {}
+) {
   try {
     if (isDevTestRuntime()) {
       const bodyCheck = await readComposeBodyState(win).catch(() => null);
@@ -4091,6 +4229,7 @@ async function clickComposeSend(win, { expectedFingerprint = '', expectedBodyLen
 
     // Brief settle once Send is enabled — Angular needs a moment after large paste.
     await new Promise((r) => setTimeout(r, 180));
+    const sendStartedAt = Date.now();
 
     win.focus();
     clickAt(win, ready.send.x, ready.send.y);
@@ -4144,36 +4283,81 @@ async function clickComposeSend(win, { expectedFingerprint = '', expectedBodyLen
     await dismissValidationDialog(win).catch(() => {});
     let url = win.webContents.getURL();
     let stillOnCompose = /mailbox\/compose/i.test(String(url || ''));
-    let afterBody = await readComposeBodyState(win).catch(() => null);
-
-    // Body cleared after Send → CorrLinks almost always already posted the mail.
     const beforeLen = Number(beforeBody?.length || expectedBodyLength || 0);
-    const afterLen = Number(afterBody?.length || 0);
-    const bodyCleared =
-      beforeLen >= 200 && afterLen <= Math.max(40, Math.floor(beforeLen * 0.05));
-    if (bodyCleared) {
-      setStatus({
-        state: 'sending',
-        message: `Send confirmed (body cleared) · was ${beforeLen} chars`,
-      });
-      return {
-        ok: true,
-        text: ready.send.text,
-        via: 'body-cleared',
-        url,
-        bodyLength: beforeLen,
-        bodyHead: beforeBody?.head || '',
-        afterBodyLength: afterLen,
-      };
+
+    // Poll briefly — CorrLinks often clears the body a moment after post.
+    let afterBody = null;
+    for (let i = 0; i < 8; i += 1) {
+      afterBody = await readComposeBodyState(win).catch(() => null);
+      const afterLen = Number(afterBody?.length || 0);
+      if (beforeLen >= 200 && afterLen <= Math.max(40, Math.floor(beforeLen * 0.05))) {
+        setStatus({
+          state: 'sending',
+          message: `Send confirmed (body cleared) · was ${beforeLen} chars`,
+        });
+        return {
+          ok: true,
+          text: ready.send.text,
+          via: 'body-cleared',
+          url: win.webContents.getURL(),
+          bodyLength: beforeLen,
+          bodyHead: beforeBody?.head || '',
+          afterBodyLength: afterLen,
+        };
+      }
+      await new Promise((r) => setTimeout(r, 400));
     }
 
-    // One retry only — require dialog or body-cleared afterward.
+    // Dialog/body miss — check Sent Messages before clicking Send again (avoids duplicates).
+    if (recipientName || inmateId) {
+      setStatus({
+        state: 'sending',
+        message: 'No success dialog — checking Sent Messages…',
+      });
+      const sentCheck = await verifyRecentSentMessage(win, {
+        recipientName,
+        inmateId,
+        subject,
+        withinMinutes: 20,
+        afterTimestamp: sendStartedAt - 5000,
+      }).catch((error) => ({ ok: false, reason: error.message || String(error) }));
+      if (sentCheck?.sessionLost) {
+        return {
+          ok: false,
+          reason: sentCheck.reason || 'Session lost while checking Sent',
+          text: ready.send.text,
+          url: sentCheck.url,
+          bodyLength: beforeLen,
+          bodyHead: beforeBody?.head || '',
+        };
+      }
+      if (sentCheck?.ok) {
+        setStatus({
+          state: 'sending',
+          message: `Send confirmed (found in Sent) · ${recipientName || inmateId}`,
+        });
+        return {
+          ok: true,
+          text: ready.send.text,
+          via: 'sent-folder',
+          url: win.webContents.getURL(),
+          sentCheck,
+          bodyLength: beforeLen,
+          bodyHead: beforeBody?.head || '',
+        };
+      }
+    }
+
+    url = win.webContents.getURL();
+    stillOnCompose = /mailbox\/compose/i.test(String(url || ''));
+
+    // Last resort: one retry click, then dialog / body / Sent again.
     if (stillOnCompose) {
       const again = await readComposeSendReady(win);
       if (again?.send) {
         setStatus({
           state: 'sending',
-          message: 'No success dialog yet — retrying Send click…',
+          message: 'Still unconfirmed — retrying Send click once…',
         });
         clickAt(win, again.send.x, again.send.y);
         await cdpClick(win, again.send.x, again.send.y).catch(() => {});
@@ -4205,6 +4389,26 @@ async function clickComposeSend(win, { expectedFingerprint = '', expectedBodyLen
             bodyHead: beforeBody?.head || '',
             afterBodyLength: retryAfterLen,
           };
+        }
+        if (recipientName || inmateId) {
+          const sentRetry = await verifyRecentSentMessage(win, {
+            recipientName,
+            inmateId,
+            subject,
+            withinMinutes: 20,
+            afterTimestamp: sendStartedAt - 5000,
+          }).catch(() => null);
+          if (sentRetry?.ok) {
+            return {
+              ok: true,
+              text: ready.send.text,
+              via: 'sent-folder-retry',
+              url: win.webContents.getURL(),
+              sentCheck: sentRetry,
+              bodyLength: beforeLen,
+              bodyHead: beforeBody?.head || '',
+            };
+          }
         }
         url = win.webContents.getURL();
         stillOnCompose = /mailbox\/compose/i.test(String(url || ''));
@@ -4558,6 +4762,9 @@ async function goToCompose(win, {
         })
       ),
       expectedBodyLength: expectedLen,
+      recipientName,
+      inmateId,
+      subject: composedSubject,
     });
     bodyResult = {
       ...bodyResult,
@@ -4735,13 +4942,13 @@ async function composeAllParts(win, {
       break;
     }
 
-    // Count dialog confirm or body-cleared after Send (mail often posted even when
-    // the success dialog is missed). Dev dry-run counts for loop progress only.
+    // Dialog, body-cleared, or Sent-folder confirm. Dev dry-run for loop progress only.
     const sendVia = String(compose.sendResult?.via || '');
     const sentOk = Boolean(
       compose.bodyResult?.ok &&
       compose.sendResult?.ok &&
-      (/success-dialog|body-cleared/i.test(sendVia) || compose.sendResult?.dryRun === true)
+      (/success-dialog|body-cleared|sent-folder/i.test(sendVia) ||
+        compose.sendResult?.dryRun === true)
     );
     if (sentOk) {
       sentParts.push({
@@ -5361,9 +5568,11 @@ async function applyComposeToStatus(win, status, composeArgs) {
     const compose = await composeAllParts(win, composeArgs);
     const { toMsg, subMsg, bodyMsg, pendingMsg } = summarizeCompose(compose);
     const sendFailed = Boolean(compose.sendSummary?.failed);
-    const sentAny = Boolean(compose.sendSummary?.sent);
+    const sentAny = Number(compose.sendSummary?.sent) > 0;
     const subjectFailed = compose.subjectResult && compose.subjectResult.ok === false;
-    const hardFail = sendFailed || subjectFailed || compose.recipient?.ok === false;
+    // Partial send still counts as sent — failed leftover parts stay in failedParts.
+    const hardFail =
+      (!sentAny && (sendFailed || subjectFailed || compose.recipient?.ok === false));
     return setStatus({
       ...status,
       state: hardFail ? 'error' : status.state === 'success' ? 'success' : status.state,
@@ -5383,7 +5592,7 @@ async function applyComposeToStatus(win, status, composeArgs) {
       pastedPart: compose.pastedPart || null,
       pendingParts: compose.pendingParts || [],
       exchangeSkipped: compose.exchangeSkipped || [],
-      sent: sentAny && !sendFailed,
+      sent: sentAny,
     });
   } catch (error) {
     const msg = String(error?.message || error);
@@ -5950,14 +6159,19 @@ async function composeForInmate(
       });
     }
     const { toMsg, subMsg, bodyMsg, pendingMsg } = summarizeCompose(compose);
+    const sentAny = Number(compose.sendSummary?.sent) > 0;
     const sendFailed = Boolean(compose.sendSummary?.failed);
+    const subjectFailed = compose.subjectResult && compose.subjectResult.ok === false;
+    // Same rule as applyComposeToStatus: any confirmed send counts as ok for the loop.
+    const hardFail =
+      !sentAny && (sendFailed || subjectFailed || compose.recipient?.ok === false);
     const composeOk =
+      sentAny ||
       Boolean(compose.recipient?.ok) ||
       Boolean(compose.subjectResult?.ok) ||
-      Boolean(compose.bodyResult?.ok) ||
-      Boolean(compose.sendSummary?.sent);
+      Boolean(compose.bodyResult?.ok);
     return setStatus({
-      state: sendFailed ? 'error' : composeOk ? 'success' : 'error',
+      state: hardFail ? 'error' : composeOk ? 'success' : 'error',
       message: `${toMsg} · ${subMsg} · ${bodyMsg}${pendingMsg}`,
       url: compose.url || CORRLINKS.composeUrl,
       recipient: compose.recipient || null,
@@ -5972,7 +6186,7 @@ async function composeForInmate(
       pendingParts: compose.pendingParts || [],
       exchangeSkipped: compose.exchangeSkipped || [],
       loggedIn: true,
-      sent: Boolean(compose.sendSummary?.sent) && !sendFailed,
+      sent: sentAny,
     });
   } catch (error) {
     return setStatus({

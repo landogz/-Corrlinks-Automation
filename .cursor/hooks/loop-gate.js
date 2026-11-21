@@ -31,6 +31,8 @@ const CHECK_FILES = [
   'scripts/smoke-loop-schedule.js',
   'scripts/smoke-send-history.js',
   'scripts/smoke-exchange-history-archive.js',
+  'scripts/smoke-sent-verify.js',
+  'main/corrlinksSentVerify/index.js',
   'shared/appearance.js',
   'main/uiPreferences.js',
   'main/loopSchedule.js',
@@ -137,6 +139,15 @@ function smokeExchangeHistoryArchive() {
   return [`smoke:exchange-history-archive failed: ${err || `exit ${r.status}`}`];
 }
 
+function smokeSentVerify() {
+  const r = run('npm', ['run', 'smoke:sent-verify', '--silent'], {
+    timeout: 15_000,
+  });
+  if (r.status === 0) return [];
+  const err = String(r.stderr || r.stdout || '').trim().slice(0, 1200);
+  return [`smoke:sent-verify failed: ${err || `exit ${r.status}`}`];
+}
+
 function emit(followupMessage) {
   const out = followupMessage ? { followup_message: followupMessage } : {};
   process.stdout.write(`${JSON.stringify(out)}\n`);
@@ -157,6 +168,7 @@ function main() {
       ...smokeLoopSchedule(),
       ...smokeSendHistory(),
       ...smokeExchangeHistoryArchive(),
+      ...smokeSentVerify(),
     ];
     if (failures.length) {
       console.error('LOOP GATE RED');
@@ -164,7 +176,7 @@ function main() {
       process.exit(1);
     }
     console.log(
-      'LOOP GATE GREEN (syntax + smoke:subject + smoke:login-helpers + smoke:corr-bounds + smoke:appearance + smoke:loop-schedule + smoke:send-history + smoke:exchange-history-archive)'
+      'LOOP GATE GREEN (syntax + smoke:subject + smoke:login-helpers + smoke:corr-bounds + smoke:appearance + smoke:loop-schedule + smoke:send-history + smoke:exchange-history-archive + smoke:sent-verify)'
     );
     process.exit(0);
   }
@@ -184,6 +196,7 @@ function main() {
     ...smokeLoopSchedule(),
     ...smokeSendHistory(),
     ...smokeExchangeHistoryArchive(),
+    ...smokeSentVerify(),
   ];
   if (!failures.length) {
     emit();
