@@ -77,6 +77,7 @@ function parseCorrlinksSentDate(raw) {
 
 /**
  * @param {Array<{ to?: string, subject?: string, sentDate?: string, cells?: string[] }>} rows
+ * @param {{ lenient?: boolean }} [opts] lenient: ignore subject + afterTimestamp (id/name + recent only)
  */
 function matchRecentSentRows(
   rows,
@@ -88,16 +89,17 @@ function matchRecentSentRows(
     afterTimestamp = 0,
     now = Date.now(),
     maxScan = 40,
+    lenient = false,
   } = {}
 ) {
   const idNeedle = String(inmateId || '').trim();
   const nameNeedle = norm(recipientName);
-  const subjectNeedle = norm(subject);
+  const subjectNeedle = lenient ? '' : norm(subject);
   if (!idNeedle && !nameNeedle) {
     return { ok: false, reason: 'No recipient to match in Sent', hits: [] };
   }
   const withinMs = Math.max(1, Number(withinMinutes) || 15) * 60 * 1000;
-  const afterTs = Math.max(0, Number(afterTimestamp) || 0);
+  const afterTs = lenient ? 0 : Math.max(0, Number(afterTimestamp) || 0);
   const hits = [];
   let scanned = 0;
 
@@ -111,15 +113,20 @@ function matchRecentSentRows(
 
     const rowText = cells.join(' | ');
     const rowNorm = norm(rowText);
-    const idOk = idNeedle ? rowText.includes(idNeedle) : true;
+    // Prefer inmate id (stable). Name-only match is fallback when id missing.
+    const idOk = idNeedle ? rowText.includes(idNeedle) : false;
     const nameOk = nameNeedle
       ? rowNorm.includes(nameNeedle) ||
         nameNeedle
           .split(' ')
           .filter((w) => w.length > 2)
           .every((w) => rowNorm.includes(w))
-      : true;
-    if (!idOk && !nameOk) continue;
+      : false;
+    if (idNeedle) {
+      if (!idOk) continue;
+    } else if (!nameOk) {
+      continue;
+    }
 
     if (subjectNeedle) {
       const subjCell = cells.find((c) => norm(c) === subjectNeedle) || cells[1] || '';

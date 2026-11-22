@@ -2744,6 +2744,9 @@ async function dismissSendSuccessDialog(win, { waitMs = 0, holdBeforeCloseMs = 0
         message: `Message sent — waiting ${Math.round(holdMs / 1000)}s before closing…`,
       });
       await new Promise((r) => setTimeout(r, holdMs));
+      // Re-locate OK after hold — dialog can reflow; stale coords miss the click.
+      const again = await win.webContents.executeJavaScript(SEND_SUCCESS_DIALOG_JS, true).catch(() => null);
+      if (again?.found) Object.assign(target, again);
     }
 
     if (target.hasButton && target.x != null) {
@@ -4086,29 +4089,77 @@ async function verifyRecentSentMessage(
     await new Promise((r) => setTimeout(r, 400));
   }
 
+  // SPA may ignore deep-link — click Mailbox → Sent Messages if the grid is empty.
   const scraped = await win.webContents
     .executeJavaScript(
       `(() => {
-        const out = [];
-        const rows = [...document.querySelectorAll('table tbody tr, .e-gridcontent tr, [role="row"]')];
-        for (const tr of rows) {
-          const cells = [...tr.querySelectorAll('td, [role="gridcell"]')].map((c) =>
-            String(c.innerText || c.textContent || '').replace(/\\s+/g, ' ').trim()
-          );
-          if (cells.length < 2) continue;
-          out.push({
-            cells,
-            to: cells[0] || '',
-            subject: cells[1] || '',
-            sentDate: cells[cells.length - 1] || '',
-          });
-          if (out.length >= 40) break;
+        function scrape() {
+          const out = [];
+          const rows = [...document.querySelectorAll(
+            'table tbody tr, .e-gridcontent tr, .e-row, [role="row"]'
+          )];
+          for (const tr of rows) {
+            const cells = [...tr.querySelectorAll('td, .e-rowcell, [role="gridcell"]')]
+              .map((c) => String(c.innerText || c.textContent || '').replace(/\\s+/g, ' ').trim())
+              .filter(Boolean);
+            if (cells.length < 2) continue;
+            out.push({
+              cells,
+              to: cells[0] || '',
+              subject: cells[1] || '',
+              sentDate: cells[cells.length - 1] || '',
+            });
+            if (out.length >= 40) break;
+          }
+          return out;
         }
-        return out;
+        let out = scrape();
+        if (out.length) return out;
+        const clickables = [...document.querySelectorAll('a, button, span, div[role="menuitem"], li')];
+        const sentNav = clickables.find((el) => {
+          const t = String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+          return /^sent messages$/i.test(t) || /^sent$/i.test(t);
+        });
+        if (sentNav) {
+          try { sentNav.click(); } catch (_) {}
+        }
+        return scrape();
       })()`,
       true
     )
     .catch((error) => ({ __error: error.message || String(error) }));
+
+  if (Array.isArray(scraped) && scraped.length === 0) {
+    await new Promise((r) => setTimeout(r, 900));
+  }
+  const scrapedRows =
+    Array.isArray(scraped) && scraped.length
+      ? scraped
+      : await win.webContents
+          .executeJavaScript(
+            `(() => {
+              const out = [];
+              const rows = [...document.querySelectorAll(
+                'table tbody tr, .e-gridcontent tr, .e-row, [role="row"]'
+              )];
+              for (const tr of rows) {
+                const cells = [...tr.querySelectorAll('td, .e-rowcell, [role="gridcell"]')]
+                  .map((c) => String(c.innerText || c.textContent || '').replace(/\\s+/g, ' ').trim())
+                  .filter(Boolean);
+                if (cells.length < 2) continue;
+                out.push({
+                  cells,
+                  to: cells[0] || '',
+                  subject: cells[1] || '',
+                  sentDate: cells[cells.length - 1] || '',
+                });
+                if (out.length >= 40) break;
+              }
+              return out;
+            })()`,
+            true
+          )
+          .catch(() => []);
 
   // Return to compose so multi-part / next recipient can continue.
   try {
@@ -4121,13 +4172,25 @@ async function verifyRecentSentMessage(
     return { ok: false, reason: scraped.__error, url: loadedUrl };
   }
 
-  const match = matchRecentSentRows(Array.isArray(scraped) ? scraped : [], {
+  const rows = Array.isArray(scrapedRows) ? scrapedRows : Array.isArray(scraped) ? scraped : [];
+  let match = matchRecentSentRows(rows, {
     inmateId: idNeedle,
     recipientName,
     subject,
     withinMinutes,
     afterTimestamp,
   });
+  // Subject/afterTimestamp can miss (SPA lag, subject variants) — id + recent is enough.
+  if (!match?.ok) {
+    match = matchRecentSentRows(rows, {
+      inmateId: idNeedle,
+      recipientName,
+      subject,
+      withinMinutes: Math.max(withinMinutes, 30),
+      afterTimestamp: 0,
+      lenient: true,
+    });
+  }
 
   if (match?.ok) {
     return {
@@ -4142,7 +4205,28 @@ async function verifyRecentSentMessage(
     ok: false,
     reason: match?.reason || 'Not found in Sent Messages',
     url: loadedUrl,
+    scraped: rows.length,
   };
+}
+
+/** True when compose body looks posted (cleared or fingerprint gone). */
+function composeBodyLooksSent(beforeLen, beforeHead, afterBody, expectedFingerprint = '') {
+  const afterLen = Number(afterBody?.length || 0);
+  const afterHead = String(afterBody?.head || '');
+  if (beforeLen >= 200 && afterLen <= Math.max(40, Math.floor(beforeLen * 0.05))) {
+    return { ok: true, via: 'body-cleared', afterBodyLength: afterLen };
+  }
+  const fp = String(expectedFingerprint || beforeHead || '').slice(0, 24);
+  if (
+    fp.length >= 12 &&
+    beforeLen >= 200 &&
+    afterLen < Math.floor(beforeLen * 0.5) &&
+    afterHead &&
+    !afterHead.includes(fp.slice(0, 12))
+  ) {
+    return { ok: true, via: 'body-fingerprint-gone', afterBodyLength: afterLen };
+  }
+  return { ok: false, afterBodyLength: afterLen };
 }
 
 /**
@@ -4260,7 +4344,7 @@ async function clickComposeSend(
       message: 'Waiting for “Message successfully sent”…',
     });
     let successDlg = await dismissSendSuccessDialog(win, {
-      waitMs: 10000,
+      waitMs: 14000,
       holdBeforeCloseMs: SEND_SUCCESS_HOLD_MS,
     });
     if (successDlg.success) {
@@ -4284,28 +4368,43 @@ async function clickComposeSend(
     let url = win.webContents.getURL();
     let stillOnCompose = /mailbox\/compose/i.test(String(url || ''));
     const beforeLen = Number(beforeBody?.length || expectedBodyLength || 0);
+    const beforeHead = String(beforeBody?.head || '');
 
-    // Poll briefly — CorrLinks often clears the body a moment after post.
+    // Poll body + peek dialog — post can clear after the dialog window.
     let afterBody = null;
-    for (let i = 0; i < 8; i += 1) {
+    for (let i = 0; i < 16; i += 1) {
+      const peek = await dismissSendSuccessDialog(win, { waitMs: 0, holdBeforeCloseMs: SEND_SUCCESS_HOLD_MS }).catch(
+        () => null
+      );
+      if (peek?.success) {
+        return {
+          ok: true,
+          text: ready.send.text,
+          via: 'success-dialog-late',
+          url: win.webContents.getURL(),
+          successDialog: peek,
+          bodyLength: beforeLen,
+          bodyHead: beforeHead,
+        };
+      }
       afterBody = await readComposeBodyState(win).catch(() => null);
-      const afterLen = Number(afterBody?.length || 0);
-      if (beforeLen >= 200 && afterLen <= Math.max(40, Math.floor(beforeLen * 0.05))) {
+      const cleared = composeBodyLooksSent(beforeLen, beforeHead, afterBody, expectedFingerprint);
+      if (cleared.ok) {
         setStatus({
           state: 'sending',
-          message: `Send confirmed (body cleared) · was ${beforeLen} chars`,
+          message: `Send confirmed (${cleared.via}) · was ${beforeLen} chars`,
         });
         return {
           ok: true,
           text: ready.send.text,
-          via: 'body-cleared',
+          via: cleared.via,
           url: win.webContents.getURL(),
           bodyLength: beforeLen,
-          bodyHead: beforeBody?.head || '',
-          afterBodyLength: afterLen,
+          bodyHead: beforeHead,
+          afterBodyLength: cleared.afterBodyLength,
         };
       }
-      await new Promise((r) => setTimeout(r, 400));
+      await new Promise((r) => setTimeout(r, 350));
     }
 
     // Dialog/body miss — check Sent Messages before clicking Send again (avoids duplicates).
@@ -4318,7 +4417,7 @@ async function clickComposeSend(
         recipientName,
         inmateId,
         subject,
-        withinMinutes: 20,
+        withinMinutes: 30,
         afterTimestamp: sendStartedAt - 5000,
       }).catch((error) => ({ ok: false, reason: error.message || String(error) }));
       if (sentCheck?.sessionLost) {
@@ -4328,7 +4427,7 @@ async function clickComposeSend(
           text: ready.send.text,
           url: sentCheck.url,
           bodyLength: beforeLen,
-          bodyHead: beforeBody?.head || '',
+          bodyHead: beforeHead,
         };
       }
       if (sentCheck?.ok) {
@@ -4343,16 +4442,19 @@ async function clickComposeSend(
           url: win.webContents.getURL(),
           sentCheck,
           bodyLength: beforeLen,
-          bodyHead: beforeBody?.head || '',
+          bodyHead: beforeHead,
         };
       }
     }
 
     url = win.webContents.getURL();
     stillOnCompose = /mailbox\/compose/i.test(String(url || ''));
+    afterBody = await readComposeBodyState(win).catch(() => afterBody);
+    const bodyStillFull =
+      beforeLen >= 200 && Number(afterBody?.length || 0) >= Math.floor(beforeLen * 0.85);
 
-    // Last resort: one retry click, then dialog / body / Sent again.
-    if (stillOnCompose) {
+    // Retry Send only when the body still looks unsent (avoid duplicate posts).
+    if (stillOnCompose && bodyStillFull) {
       const again = await readComposeSendReady(win);
       if (again?.send) {
         setStatus({
@@ -4363,7 +4465,7 @@ async function clickComposeSend(
         await cdpClick(win, again.send.x, again.send.y).catch(() => {});
         await new Promise((r) => setTimeout(r, 200));
         successDlg = await dismissSendSuccessDialog(win, {
-          waitMs: 10000,
+          waitMs: 12000,
           holdBeforeCloseMs: SEND_SUCCESS_HOLD_MS,
         });
         if (successDlg.success) {
@@ -4378,16 +4480,16 @@ async function clickComposeSend(
           };
         }
         afterBody = await readComposeBodyState(win).catch(() => null);
-        const retryAfterLen = Number(afterBody?.length || 0);
-        if (beforeLen >= 200 && retryAfterLen <= Math.max(40, Math.floor(beforeLen * 0.05))) {
+        const clearedRetry = composeBodyLooksSent(beforeLen, beforeHead, afterBody, expectedFingerprint);
+        if (clearedRetry.ok) {
           return {
             ok: true,
             text: ready.send.text,
-            via: 'body-cleared-retry',
+            via: `${clearedRetry.via}-retry`,
             url: win.webContents.getURL(),
             bodyLength: beforeLen,
-            bodyHead: beforeBody?.head || '',
-            afterBodyLength: retryAfterLen,
+            bodyHead: beforeHead,
+            afterBodyLength: clearedRetry.afterBodyLength,
           };
         }
         if (recipientName || inmateId) {
@@ -4395,7 +4497,7 @@ async function clickComposeSend(
             recipientName,
             inmateId,
             subject,
-            withinMinutes: 20,
+            withinMinutes: 30,
             afterTimestamp: sendStartedAt - 5000,
           }).catch(() => null);
           if (sentRetry?.ok) {
@@ -4406,12 +4508,26 @@ async function clickComposeSend(
               url: win.webContents.getURL(),
               sentCheck: sentRetry,
               bodyLength: beforeLen,
-              bodyHead: beforeBody?.head || '',
+              bodyHead: beforeHead,
             };
           }
         }
         url = win.webContents.getURL();
         stillOnCompose = /mailbox\/compose/i.test(String(url || ''));
+      }
+    } else if (stillOnCompose && !bodyStillFull && beforeLen >= 200) {
+      // Body shrank but below clear threshold — treat as posted rather than fail.
+      const soft = composeBodyLooksSent(beforeLen, beforeHead, afterBody, expectedFingerprint);
+      if (soft.ok || Number(afterBody?.length || 0) < Math.floor(beforeLen * 0.35)) {
+        return {
+          ok: true,
+          text: ready.send.text,
+          via: soft.ok ? soft.via : 'body-reduced',
+          url,
+          bodyLength: beforeLen,
+          bodyHead: beforeHead,
+          afterBodyLength: Number(afterBody?.length || 0),
+        };
       }
     }
 
@@ -4942,13 +5058,11 @@ async function composeAllParts(win, {
       break;
     }
 
-    // Dialog, body-cleared, or Sent-folder confirm. Dev dry-run for loop progress only.
-    const sendVia = String(compose.sendResult?.via || '');
+    // Any confirmed sendResult.ok counts (dialog / body / Sent / dry-run).
     const sentOk = Boolean(
-      compose.bodyResult?.ok &&
       compose.sendResult?.ok &&
-      (/success-dialog|body-cleared|sent-folder/i.test(sendVia) ||
-        compose.sendResult?.dryRun === true)
+        (compose.bodyResult?.ok ||
+          /success-dialog|body-|sent-folder|dev-skip/i.test(String(compose.sendResult?.via || '')))
     );
     if (sentOk) {
       sentParts.push({

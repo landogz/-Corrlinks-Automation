@@ -80,5 +80,19 @@ const stale = matchRecentSentRows(rows, {
 });
 assert(!stale.ok, 'stale Sent row must not match');
 
+// Lenient: id-only still matches when subject differs
+const lenient = matchRecentSentRows(
+  [{ cells: ['EDWARD HAROLD JR SAUNDERS (11022058)', 'fri & sat', '11/21/2026 7:13:22 AM'] }],
+  {
+    inmateId: '11022058',
+    subject: 'sat',
+    withinMinutes: 20,
+    afterTimestamp: eastern - 5000,
+    now,
+    lenient: true,
+  }
+);
+assert(lenient.ok, 'lenient match should ignore subject mismatch');
+
 console.log('smoke-sent-verify: ok');
 process.exit(0);
