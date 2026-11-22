@@ -1,6 +1,9 @@
 /**
  * Local Exchange history — TXT parts archived after auto-send slots
  * with Save file locally enabled. No SportsData history list.
+ *
+ * One file per NY date + part only (not per recipient).
+ * Disk name: MMDDYYYY_part.txt (e.g. 11212026_1.txt).
  */
 const fs = require('fs');
 const path = require('path');
@@ -12,8 +15,12 @@ const MAX_ROWS = 200;
 function getArchiveRoot() {
   try {
     const { app } = require('electron');
-    if (app?.isReady?.() && typeof app.getPath === 'function') {
-      return path.join(app.getPath('userData'), 'exchange-history');
+    if (app && typeof app.getPath === 'function') {
+      try {
+        return path.join(app.getPath('userData'), 'exchange-history');
+      } catch (_) {
+        /* app not ready yet */
+      }
     }
   } catch (_) {}
   return path.join(__dirname, '..', 'exchange-history');
@@ -49,21 +56,52 @@ function normalizePartNumber(part, fallback = 1) {
   return Math.max(1, Math.floor(Number(fallback) || 1));
 }
 
+/** inmate_…_part2.txt or 11212026_2.txt → 2 */
+function extractPartFromFilename(name) {
+  const s = String(name || '');
+  const m = s.match(/_part(\d+)\.txt$/i) || s.match(/^(\d{8})_(\d+)\.txt$/i);
+  if (m) return normalizePartNumber(m[m.length - 1]);
+  return null;
+}
+
 /** One archive name per day + part: 11202026_1.txt */
 function archivePartFilename(nyDate, part) {
   const p = normalizePartNumber(part);
   return `${archiveDateStamp(nyDate)}_${p}.txt`;
 }
 
+function canonicalLocalPath(nyDate, part) {
+  return path.join(getArchiveRoot(), nyDate, safeFilename(archivePartFilename(nyDate, part)));
+}
+
+function isCanonicalArchiveName(name, nyDate, part) {
+  return String(name || '') === archivePartFilename(nyDate, part);
+}
+
+function isLegacyRecipientFilename(name) {
+  return /_part\d+\.txt$/i.test(String(name || '')) && !/^\d{8}_\d+\.txt$/i.test(String(name || ''));
+}
+
 function normalizeArchiveRow(raw = {}) {
   const src = raw && typeof raw === 'object' ? raw : {};
   const nyDate = normalizeNyDate(src.nyDate || src.date);
   const sendTime = normalizeSendTime(src.sendTime, null);
-  const part = src.part != null ? normalizePartNumber(src.part) : null;
+  let part =
+    src.part != null
+      ? normalizePartNumber(src.part)
+      : extractPartFromFilename(src.filename || src.file);
+  if (part == null && src.filename) part = extractPartFromFilename(src.filename);
   const filename =
-    String(src.filename || src.file || '').trim() ||
-    (nyDate && part ? archivePartFilename(nyDate, part) : 'part.txt');
-  const localPath = String(src.localPath || '').trim() || null;
+    nyDate && part
+      ? archivePartFilename(nyDate, part)
+      : String(src.filename || src.file || '').trim() || 'part.txt';
+  let localPath = String(src.localPath || '').trim() || null;
+  if (nyDate && part) {
+    const canonical = canonicalLocalPath(nyDate, part);
+    if (!localPath || isLegacyRecipientFilename(path.basename(localPath))) {
+      localPath = canonical;
+    }
+  }
   if (!nyDate || !localPath) return null;
   const characters =
     src.characters != null && Number.isFinite(Number(src.characters))
@@ -97,13 +135,127 @@ function capRows(rows, max = MAX_ROWS) {
   return list.slice(0, Math.max(1, Number(max) || MAX_ROWS));
 }
 
+/**
+ * Collapse legacy per-recipient rows into one row per date|part.
+ * Copies the first readable body onto MMDDYYYY_N.txt and drops extra inmate copies from the index.
+ */
+function consolidateArchiveRows(rows) {
+  const byKey = new Map();
+  const legacyPaths = [];
+
+  for (const raw of rows || []) {
+    const nyDate = normalizeNyDate(raw?.nyDate || raw?.date);
+    if (!nyDate) continue;
+    const part =
+      raw?.part != null
+        ? normalizePartNumber(raw.part)
+        : extractPartFromFilename(raw?.filename || raw?.file || raw?.localPath);
+    if (!part) continue;
+
+    const key = `${nyDate}|${part}`;
+    const canonicalName = archivePartFilename(nyDate, part);
+    const canonicalPath = canonicalLocalPath(nyDate, part);
+    const oldPath = String(raw.localPath || '').trim();
+
+    try {
+      fs.mkdirSync(path.dirname(canonicalPath), { recursive: true });
+      if (!fs.existsSync(canonicalPath)) {
+        if (oldPath && fs.existsSync(oldPath)) {
+          fs.copyFileSync(oldPath, canonicalPath);
+        } else {
+          // Search day folder for any *_partN.txt for this part.
+          const dayDir = path.join(getArchiveRoot(), nyDate);
+          if (fs.existsSync(dayDir)) {
+            for (const name of fs.readdirSync(dayDir)) {
+              if (extractPartFromFilename(name) !== part) continue;
+              const candidate = path.join(dayDir, name);
+              if (fs.existsSync(candidate)) {
+                fs.copyFileSync(candidate, canonicalPath);
+                break;
+              }
+            }
+          }
+        }
+      }
+      if (oldPath && oldPath !== canonicalPath && fs.existsSync(oldPath) && isLegacyRecipientFilename(path.basename(oldPath))) {
+        legacyPaths.push(oldPath);
+      }
+    } catch (_) {
+      /* keep going */
+    }
+
+    const localPath = fs.existsSync(canonicalPath)
+      ? canonicalPath
+      : oldPath && fs.existsSync(oldPath)
+        ? oldPath
+        : canonicalPath;
+
+    let characters = raw.characters;
+    if ((characters == null || !Number.isFinite(Number(characters))) && fs.existsSync(localPath)) {
+      try {
+        characters = fs.readFileSync(localPath, 'utf8').length;
+      } catch (_) {}
+    }
+
+    const prev = byKey.get(key);
+    const row = normalizeArchiveRow({
+      id: prev?.id || raw.id || newRowId(),
+      nyDate,
+      sendTime: raw.sendTime || prev?.sendTime,
+      part,
+      filename: canonicalName,
+      characters: characters ?? prev?.characters,
+      localPath: fs.existsSync(canonicalPath) ? canonicalPath : localPath,
+      sourceUrl: prev?.sourceUrl || raw.sourceUrl,
+      archivedAt: prev?.archivedAt || raw.archivedAt,
+    });
+    if (!row) continue;
+    // Keep the first row we saw for this date|part (one “recipient” body).
+    if (!prev) byKey.set(key, row);
+  }
+
+  const root = getArchiveRoot();
+  for (const p of legacyPaths) {
+    try {
+      if (!p.startsWith(root)) continue;
+      if (!isLegacyRecipientFilename(path.basename(p))) continue;
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    } catch (_) {}
+  }
+
+  return [...byKey.values()];
+}
+
+function rowsNeedConsolidate(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return false;
+  const keys = new Set();
+  for (const row of list) {
+    const part =
+      row.part != null
+        ? normalizePartNumber(row.part)
+        : extractPartFromFilename(row.filename || row.file);
+    if (!part || !row.nyDate) return true;
+    const key = `${row.nyDate}|${part}`;
+    if (keys.has(key)) return true;
+    keys.add(key);
+    if (!isCanonicalArchiveName(row.filename || row.file, row.nyDate, part)) return true;
+  }
+  return false;
+}
+
 function loadIndex() {
   try {
     const filePath = getIndexPath();
     if (!fs.existsSync(filePath)) return [];
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
     const rows = Array.isArray(raw?.rows) ? raw.rows : Array.isArray(raw) ? raw : [];
-    return capRows(rows.map(normalizeArchiveRow).filter(Boolean));
+    const normalized = rows.map(normalizeArchiveRow).filter(Boolean);
+    if (!rowsNeedConsolidate(normalized)) {
+      return capRows(normalized);
+    }
+    const consolidated = consolidateArchiveRows(normalized);
+    return saveIndex(consolidated);
   } catch (_) {
     return [];
   }
@@ -132,15 +284,42 @@ function getArchiveRow(id) {
 function readArchivedText(idOrPath) {
   const key = String(idOrPath || '').trim();
   if (!key) throw new Error('Archive id or path is required');
-  let localPath = key;
-  if (!path.isAbsolute(key) || !fs.existsSync(key)) {
-    const row = getArchiveRow(key);
-    if (!row?.localPath) throw new Error('Archived file not found');
-    localPath = row.localPath;
+
+  const tryRead = (localPath) => {
+    if (!localPath || !fs.existsSync(localPath)) return null;
+    const text = fs.readFileSync(localPath, 'utf8');
+    return { text, characters: text.length, localPath };
+  };
+
+  if (path.isAbsolute(key)) {
+    const direct = tryRead(key);
+    if (direct) return direct;
   }
-  if (!fs.existsSync(localPath)) throw new Error('Archived file missing on disk');
-  const text = fs.readFileSync(localPath, 'utf8');
-  return { text, characters: text.length, localPath };
+
+  const row = getArchiveRow(key);
+  if (row) {
+    const candidates = [row.localPath];
+    if (row.nyDate && row.part != null) {
+      candidates.push(canonicalLocalPath(row.nyDate, row.part));
+    }
+    for (const p of candidates) {
+      const hit = tryRead(p);
+      if (hit) return hit;
+    }
+    if (row.nyDate && row.part != null) {
+      const dayDir = path.join(getArchiveRoot(), row.nyDate);
+      if (fs.existsSync(dayDir)) {
+        const want = normalizePartNumber(row.part);
+        for (const name of fs.readdirSync(dayDir)) {
+          if (extractPartFromFilename(name) !== want) continue;
+          const hit = tryRead(path.join(dayDir, name));
+          if (hit) return hit;
+        }
+      }
+    }
+  }
+
+  throw new Error('Archived file not found');
 }
 
 /**
@@ -168,14 +347,14 @@ async function archiveSentFiles(payload = {}, opts = {}) {
       ? opts.resolveText
       : async () => null;
 
+  // Start from consolidated index so legacy recipient rows collapse first.
   const existing = loadIndex();
-  // One row per date+part — never one copy per inmate filename.
   const byKey = new Map(
     existing.map((row) => {
       const part =
         row.part != null
           ? normalizePartNumber(row.part)
-          : normalizePartNumber(String(row.filename || '').match(/_(\d+)\.txt$/i)?.[1]);
+          : normalizePartNumber(extractPartFromFilename(row.filename));
       return [`${row.nyDate}|${part}`, row];
     })
   );
@@ -183,7 +362,10 @@ async function archiveSentFiles(payload = {}, opts = {}) {
   const seen = new Set();
 
   for (const file of files) {
-    const part = normalizePartNumber(file?.part, seen.size + 1);
+    const part = normalizePartNumber(
+      file?.part != null ? file.part : extractPartFromFilename(file?.filename),
+      seen.size + 1
+    );
     const dedupeKey = `${nyDate}|${part}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
@@ -234,8 +416,10 @@ module.exports = {
   readArchivedText,
   archiveSentFiles,
   normalizeArchiveRow,
+  consolidateArchiveRows,
   safeFilename,
   archiveDateStamp,
   archivePartFilename,
   normalizePartNumber,
+  extractPartFromFilename,
 };

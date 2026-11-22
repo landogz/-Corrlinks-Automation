@@ -5073,7 +5073,10 @@ async function startInmateLoop(options = {}) {
   loopRunStartedAt = null;
 }
 
-/** One TXT per part for local Exchange history (not per recipient). */
+/**
+ * One TXT per part for local Exchange history — never one copy per recipient.
+ * Disk names are rewritten to MMDDYYYY_N.txt in main/exchangeHistoryArchive.
+ */
 function collectUniqueLoopArchiveFiles(groups) {
   const byPart = new Map();
   const add = (file, index = 0) => {
@@ -5096,7 +5099,7 @@ function collectUniqueLoopArchiveFiles(groups) {
       .sort((a, b) => a[0] - b[0])
       .map(([, file]) => file);
   }
-  // Prefer the selected inmate’s parts (same part # across recipients).
+  // Exactly one inmate’s parts (content is the same across recipients for a slot).
   const selected = selectedInmate();
   if (selected) {
     filesFromSnapshot(selected, loopFileSnapshot).forEach((file, index) => add(file, index));
@@ -5109,6 +5112,7 @@ function collectUniqueLoopArchiveFiles(groups) {
     if (!inmates.length) {
       (accounts || []).forEach((inmate) => inmates.push(inmate));
     }
+    // First inmate with sendable parts only — do not walk the whole roster.
     for (const inmate of inmates) {
       filesFromSnapshot(inmate, loopFileSnapshot).forEach((file, index) => add(file, index));
       if (byPart.size) break;
