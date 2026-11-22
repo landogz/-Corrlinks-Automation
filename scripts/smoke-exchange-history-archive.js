@@ -12,9 +12,10 @@ const {
   getArchiveRoot,
   getIndexPath,
   archiveDateStamp,
-  archivePartFilename,
+  archiveDayFilename,
   consolidateArchiveRows,
   extractPartFromFilename,
+  joinPartTexts,
 } = require('../main/exchangeHistoryArchive');
 
 function assert(cond, msg) {
@@ -25,10 +26,10 @@ function assert(cond, msg) {
 }
 
 assert(archiveDateStamp('2026-11-20') === '11202026', 'MMDDYYYY stamp');
-assert(archivePartFilename('2026-11-20', 1) === '11202026_1.txt', 'part 1 name');
-assert(archivePartFilename('2026-11-20', 3) === '11202026_3.txt', 'part 3 name');
+assert(archiveDayFilename('2026-11-20') === '11202026.txt', 'day file name');
 assert(extractPartFromFilename('00860111_chen_jia_wu_part1.txt') === 1, 'legacy part');
-assert(extractPartFromFilename('11212026_2.txt') === 2, 'canonical part');
+assert(extractPartFromFilename('11212026_2.txt') === 2, 'split part');
+assert(joinPartTexts(['a', 'b']) === 'a\n\nb', 'join parts');
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'exh-archive-'));
 const archiveDir = getArchiveRoot();
@@ -60,63 +61,74 @@ async function main() {
       ],
     });
     assert(first.ok === true, 'archive ok');
-    assert(first.count === 2, `wrote 2 parts, got ${first.count}`);
+    assert(first.count === 1, `wrote 1 combined file, got ${first.count}`);
 
     const listed = listArchive();
     const rows = listed.filter((r) => r.nyDate === '2026-11-21');
-    const part1 = rows.find((r) => r.part === 1 || r.filename === '11212026_1.txt');
-    const part2 = rows.find((r) => r.part === 2 || r.filename === '11212026_2.txt');
-    assert(part1 && part1.filename === '11212026_1.txt', 'date_part filename');
-    assert(part1.characters === 9, 'part-1 chars');
-    assert(part2 && part2.filename === '11212026_2.txt', 'part-2 filename');
-    assert(fs.existsSync(part1.localPath), 'part-1 on disk');
-    assert(path.basename(part1.localPath) === '11212026_1.txt', 'disk basename');
+    assert(rows.length === 1, `one row per day, got ${rows.length}`);
+    const day = rows[0];
+    assert(day.filename === '11212026.txt', 'day filename');
+    assert(day.characters === 'hello one\n\nhello two'.length, 'combined chars');
+    assert(fs.existsSync(day.localPath), 'day file on disk');
+    assert(path.basename(day.localPath) === '11212026.txt', 'disk basename');
 
-    const read = readArchivedText(part1.id);
-    assert(read.text === 'hello one', 'read by id');
+    const read = readArchivedText(day.id);
+    assert(read.text === 'hello one\n\nhello two', 'read combined by id');
 
     const again = await archiveSentFiles({
       nyDate: '2026-11-21',
       sendTime: '02:00',
-      files: [{ part: 1, filename: 'other_inmate_part1.txt', text: 'hello one updated' }],
+      files: [
+        { part: 1, text: 'alpha' },
+        { part: 2, text: 'beta' },
+      ],
     });
-    assert(again.count === 1, 'overwrite same date+part');
-    const reread = readArchivedText(part1.id);
-    assert(reread.text === 'hello one updated', 'overwrite content');
-    assert(reread.characters === 17, 'overwrite chars');
+    assert(again.count === 1, 'overwrite same day');
+    const reread = readArchivedText(day.id);
+    assert(reread.text === 'alpha\n\nbeta', 'overwrite combined content');
 
-    // Legacy per-recipient index collapses to one row per date|part.
+    // Legacy split part files collapse into one day file.
     const dayDir22 = path.join(archiveDir, '2026-11-22');
     fs.mkdirSync(dayDir22, { recursive: true });
-    const legacyA = path.join(dayDir22, '00860111_chen_jia_wu_part1.txt');
-    const legacyB = path.join(dayDir22, '05408509_david_william_skinner_part1.txt');
-    fs.writeFileSync(legacyA, 'body-a', 'utf8');
-    fs.writeFileSync(legacyB, 'body-b', 'utf8');
+    const p1 = path.join(dayDir22, '11222026_1.txt');
+    const p2 = path.join(dayDir22, '11222026_2.txt');
+    const p3 = path.join(dayDir22, '11222026_3.txt');
+    fs.writeFileSync(p1, 'part-one', 'utf8');
+    fs.writeFileSync(p2, 'part-two', 'utf8');
+    fs.writeFileSync(p3, 'part-three', 'utf8');
     const collapsed = consolidateArchiveRows([
       {
         id: 'a',
         nyDate: '2026-11-22',
         sendTime: '02:00',
         part: 1,
-        filename: '00860111_chen_jia_wu_part1.txt',
-        localPath: legacyA,
-        characters: 6,
+        filename: '11222026_1.txt',
+        localPath: p1,
       },
       {
         id: 'b',
         nyDate: '2026-11-22',
         sendTime: '02:00',
-        part: 1,
-        filename: '05408509_david_william_skinner_part1.txt',
-        localPath: legacyB,
-        characters: 6,
+        part: 2,
+        filename: '11222026_2.txt',
+        localPath: p2,
+      },
+      {
+        id: 'c',
+        nyDate: '2026-11-22',
+        sendTime: '02:00',
+        part: 3,
+        filename: '11222026_3.txt',
+        localPath: p3,
       },
     ]);
     assert(collapsed.length === 1, `collapse to 1 row, got ${collapsed.length}`);
-    assert(collapsed[0].filename === '11222026_1.txt', 'canonical name after collapse');
-    assert(fs.existsSync(collapsed[0].localPath), 'canonical file exists');
-    assert(path.basename(collapsed[0].localPath) === '11222026_1.txt', 'canonical basename');
-    assert(!fs.existsSync(legacyA) && !fs.existsSync(legacyB), 'legacy recipient copies removed');
+    assert(collapsed[0].filename === '11222026.txt', 'combined day name');
+    assert(fs.existsSync(collapsed[0].localPath), 'combined file exists');
+    assert(path.basename(collapsed[0].localPath) === '11222026.txt', 'combined basename');
+    const combinedText = fs.readFileSync(collapsed[0].localPath, 'utf8');
+    assert(combinedText === 'part-one\n\npart-two\n\npart-three', 'joined parts');
+    assert(!fs.existsSync(p1) && !fs.existsSync(p2) && !fs.existsSync(p3), 'split files removed');
 
     console.log('smoke-exchange-history-archive: ok');
   } finally {
@@ -124,17 +136,17 @@ async function main() {
       if (backupIndex != null) fs.writeFileSync(indexPath, backupIndex, 'utf8');
       else if (fs.existsSync(indexPath)) fs.unlinkSync(indexPath);
       for (const day of ['2026-11-21', '2026-11-22']) {
-        const dayDir = path.join(archiveDir, day);
-        if (!fs.existsSync(dayDir)) continue;
-        for (const name of fs.readdirSync(dayDir)) {
-          fs.unlinkSync(path.join(dayDir, name));
+        const dir = path.join(archiveDir, day);
+        if (!fs.existsSync(dir)) continue;
+        for (const name of fs.readdirSync(dir)) {
+          fs.unlinkSync(path.join(dir, name));
         }
         if (day === '2026-11-21') {
           for (const file of backupFiles) {
-            fs.writeFileSync(path.join(dayDir, file.name), file.content, 'utf8');
+            fs.writeFileSync(path.join(dir, file.name), file.content, 'utf8');
           }
         }
-        if (!fs.readdirSync(dayDir).length) fs.rmdirSync(dayDir);
+        if (!fs.readdirSync(dir).length) fs.rmdirSync(dir);
       }
     } catch (_) {}
     try {

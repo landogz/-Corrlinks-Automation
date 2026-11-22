@@ -1,9 +1,9 @@
 /**
- * Local Exchange history — TXT parts archived after auto-send slots
+ * Local Exchange history — TXT archived after auto-send slots
  * with Save file locally enabled. No SportsData history list.
  *
- * One file per NY date + part only (not per recipient).
- * Disk name: MMDDYYYY_part.txt (e.g. 11212026_1.txt).
+ * One combined file per NY date (all parts joined) — not per recipient / part.
+ * Disk name: MMDDYYYY.txt (e.g. 11222026.txt).
  */
 const fs = require('fs');
 const path = require('path');
@@ -64,41 +64,48 @@ function extractPartFromFilename(name) {
   return null;
 }
 
-/** One archive name per day + part: 11202026_1.txt */
-function archivePartFilename(nyDate, part) {
-  const p = normalizePartNumber(part);
-  return `${archiveDateStamp(nyDate)}_${p}.txt`;
+/** One archive name per day: 11222026.txt */
+function archiveDayFilename(nyDate) {
+  return `${archiveDateStamp(nyDate)}.txt`;
 }
 
-function canonicalLocalPath(nyDate, part) {
-  return path.join(getArchiveRoot(), nyDate, safeFilename(archivePartFilename(nyDate, part)));
+/** @deprecated alias — kept for older callers/smokes */
+function archivePartFilename(nyDate, _part) {
+  return archiveDayFilename(nyDate);
 }
 
-function isCanonicalArchiveName(name, nyDate, part) {
-  return String(name || '') === archivePartFilename(nyDate, part);
+function canonicalLocalPath(nyDate) {
+  return path.join(getArchiveRoot(), nyDate, safeFilename(archiveDayFilename(nyDate)));
 }
 
-function isLegacyRecipientFilename(name) {
-  return /_part\d+\.txt$/i.test(String(name || '')) && !/^\d{8}_\d+\.txt$/i.test(String(name || ''));
+function isCanonicalDayName(name, nyDate) {
+  return String(name || '') === archiveDayFilename(nyDate);
+}
+
+function isLegacySplitFilename(name) {
+  const s = String(name || '');
+  if (isCanonicalDayName(s, '2000-01-01')) return false;
+  return /_part\d+\.txt$/i.test(s) || /^\d{8}_\d+\.txt$/i.test(s);
+}
+
+function joinPartTexts(parts) {
+  return parts
+    .map((t) => String(t || '').replace(/\s+$/u, ''))
+    .filter((t) => t.length > 0)
+    .join('\n\n');
 }
 
 function normalizeArchiveRow(raw = {}) {
   const src = raw && typeof raw === 'object' ? raw : {};
   const nyDate = normalizeNyDate(src.nyDate || src.date);
   const sendTime = normalizeSendTime(src.sendTime, null);
-  let part =
-    src.part != null
-      ? normalizePartNumber(src.part)
-      : extractPartFromFilename(src.filename || src.file);
-  if (part == null && src.filename) part = extractPartFromFilename(src.filename);
-  const filename =
-    nyDate && part
-      ? archivePartFilename(nyDate, part)
-      : String(src.filename || src.file || '').trim() || 'part.txt';
+  const filename = nyDate
+    ? archiveDayFilename(nyDate)
+    : String(src.filename || src.file || '').trim() || 'part.txt';
   let localPath = String(src.localPath || '').trim() || null;
-  if (nyDate && part) {
-    const canonical = canonicalLocalPath(nyDate, part);
-    if (!localPath || isLegacyRecipientFilename(path.basename(localPath))) {
+  if (nyDate) {
+    const canonical = canonicalLocalPath(nyDate);
+    if (!localPath || isLegacySplitFilename(path.basename(localPath))) {
       localPath = canonical;
     }
   }
@@ -112,7 +119,7 @@ function normalizeArchiveRow(raw = {}) {
     nyDate,
     date: nyDate,
     sendTime: sendTime || null,
-    part,
+    part: null,
     filename,
     file: filename,
     characters,
@@ -127,121 +134,130 @@ function capRows(rows, max = MAX_ROWS) {
   list.sort((a, b) => {
     const d = String(b.nyDate || '').localeCompare(String(a.nyDate || ''));
     if (d) return d;
-    const pa = Number(a.part) || 0;
-    const pb = Number(b.part) || 0;
-    if (pa !== pb) return pa - pb;
     return String(b.archivedAt || '').localeCompare(String(a.archivedAt || ''));
   });
   return list.slice(0, Math.max(1, Number(max) || MAX_ROWS));
 }
 
+function readTextIfExists(filePath) {
+  try {
+    if (filePath && fs.existsSync(filePath)) return fs.readFileSync(filePath, 'utf8');
+  } catch (_) {}
+  return '';
+}
+
 /**
- * Collapse legacy per-recipient rows into one row per date|part.
- * Copies the first readable body onto MMDDYYYY_N.txt and drops extra inmate copies from the index.
+ * Collapse legacy per-recipient / per-part rows into one combined file per NY date.
  */
 function consolidateArchiveRows(rows) {
-  const byKey = new Map();
+  const byDate = new Map();
   const legacyPaths = [];
 
   for (const raw of rows || []) {
     const nyDate = normalizeNyDate(raw?.nyDate || raw?.date);
     if (!nyDate) continue;
-    const part =
-      raw?.part != null
-        ? normalizePartNumber(raw.part)
-        : extractPartFromFilename(raw?.filename || raw?.file || raw?.localPath);
-    if (!part) continue;
-
-    const key = `${nyDate}|${part}`;
-    const canonicalName = archivePartFilename(nyDate, part);
-    const canonicalPath = canonicalLocalPath(nyDate, part);
+    const list = byDate.get(nyDate) || [];
+    list.push(raw);
+    byDate.set(nyDate, list);
     const oldPath = String(raw.localPath || '').trim();
+    if (oldPath && isLegacySplitFilename(path.basename(oldPath))) {
+      legacyPaths.push(oldPath);
+    }
+  }
+
+  const out = [];
+  for (const [nyDate, list] of byDate.entries()) {
+    const canonicalPath = canonicalLocalPath(nyDate);
+    const dayDir = path.join(getArchiveRoot(), nyDate);
+    const partBodies = new Map(); // part → text
+
+    const absorb = (filePath, hintPart = null) => {
+      const text = readTextIfExists(filePath);
+      if (!text) return;
+      const base = path.basename(filePath);
+      if (isCanonicalDayName(base, nyDate)) {
+        // Already combined — prefer as whole body if we have nothing else yet.
+        if (!partBodies.size) partBodies.set(0, text);
+        return;
+      }
+      const part = hintPart != null ? normalizePartNumber(hintPart) : extractPartFromFilename(base);
+      if (part != null && !partBodies.has(part)) partBodies.set(part, text);
+      else if (part == null && !partBodies.has(0)) partBodies.set(0, text);
+    };
+
+    for (const raw of list) {
+      const oldPath = String(raw.localPath || '').trim();
+      const hintPart =
+        raw.part != null
+          ? normalizePartNumber(raw.part)
+          : extractPartFromFilename(raw.filename || raw.file || oldPath);
+      if (oldPath) absorb(oldPath, hintPart);
+    }
+
+    try {
+      if (fs.existsSync(dayDir)) {
+        for (const name of fs.readdirSync(dayDir)) {
+          absorb(path.join(dayDir, name), extractPartFromFilename(name));
+        }
+      }
+    } catch (_) {}
+
+    let combined = '';
+    if (partBodies.has(0) && partBodies.size === 1) {
+      combined = partBodies.get(0);
+    } else {
+      const ordered = [...partBodies.entries()]
+        .filter(([p]) => p > 0)
+        .sort((a, b) => a[0] - b[0])
+        .map(([, t]) => t);
+      if (ordered.length) combined = joinPartTexts(ordered);
+      else if (partBodies.has(0)) combined = partBodies.get(0);
+    }
 
     try {
       fs.mkdirSync(path.dirname(canonicalPath), { recursive: true });
-      if (!fs.existsSync(canonicalPath)) {
-        if (oldPath && fs.existsSync(oldPath)) {
-          fs.copyFileSync(oldPath, canonicalPath);
-        } else {
-          // Search day folder for any *_partN.txt for this part.
-          const dayDir = path.join(getArchiveRoot(), nyDate);
-          if (fs.existsSync(dayDir)) {
-            for (const name of fs.readdirSync(dayDir)) {
-              if (extractPartFromFilename(name) !== part) continue;
-              const candidate = path.join(dayDir, name);
-              if (fs.existsSync(candidate)) {
-                fs.copyFileSync(candidate, canonicalPath);
-                break;
-              }
-            }
-          }
-        }
-      }
-      if (oldPath && oldPath !== canonicalPath && fs.existsSync(oldPath) && isLegacyRecipientFilename(path.basename(oldPath))) {
-        legacyPaths.push(oldPath);
-      }
-    } catch (_) {
-      /* keep going */
-    }
+      if (combined) fs.writeFileSync(canonicalPath, combined, 'utf8');
+    } catch (_) {}
 
-    const localPath = fs.existsSync(canonicalPath)
-      ? canonicalPath
-      : oldPath && fs.existsSync(oldPath)
-        ? oldPath
-        : canonicalPath;
+    if (!fs.existsSync(canonicalPath) && !combined) continue;
 
-    let characters = raw.characters;
-    if ((characters == null || !Number.isFinite(Number(characters))) && fs.existsSync(localPath)) {
-      try {
-        characters = fs.readFileSync(localPath, 'utf8').length;
-      } catch (_) {}
-    }
-
-    const prev = byKey.get(key);
+    const first = list[0] || {};
     const row = normalizeArchiveRow({
-      id: prev?.id || raw.id || newRowId(),
+      id: first.id || newRowId(),
       nyDate,
-      sendTime: raw.sendTime || prev?.sendTime,
-      part,
-      filename: canonicalName,
-      characters: characters ?? prev?.characters,
-      localPath: fs.existsSync(canonicalPath) ? canonicalPath : localPath,
-      sourceUrl: prev?.sourceUrl || raw.sourceUrl,
-      archivedAt: prev?.archivedAt || raw.archivedAt,
+      sendTime: first.sendTime,
+      filename: archiveDayFilename(nyDate),
+      characters: combined ? combined.length : null,
+      localPath: canonicalPath,
+      sourceUrl: first.sourceUrl,
+      archivedAt: first.archivedAt,
     });
-    if (!row) continue;
-    // Keep the first row we saw for this date|part (one “recipient” body).
-    if (!prev) byKey.set(key, row);
+    if (row) out.push(row);
   }
 
   const root = getArchiveRoot();
   for (const p of legacyPaths) {
     try {
       if (!p.startsWith(root)) continue;
-      if (!isLegacyRecipientFilename(path.basename(p))) continue;
+      if (!isLegacySplitFilename(path.basename(p))) continue;
       if (fs.existsSync(p)) fs.unlinkSync(p);
     } catch (_) {}
   }
 
-  return [...byKey.values()];
-}
-
-function rowsNeedConsolidate(rows) {
-  const list = Array.isArray(rows) ? rows : [];
-  if (!list.length) return false;
-  const keys = new Set();
-  for (const row of list) {
-    const part =
-      row.part != null
-        ? normalizePartNumber(row.part)
-        : extractPartFromFilename(row.filename || row.file);
-    if (!part || !row.nyDate) return true;
-    const key = `${row.nyDate}|${part}`;
-    if (keys.has(key)) return true;
-    keys.add(key);
-    if (!isCanonicalArchiveName(row.filename || row.file, row.nyDate, part)) return true;
+  // Also delete leftover split files under each day dir once combined exists.
+  for (const nyDate of byDate.keys()) {
+    const dayDir = path.join(getArchiveRoot(), nyDate);
+    const canonicalPath = canonicalLocalPath(nyDate);
+    if (!fs.existsSync(canonicalPath) || !fs.existsSync(dayDir)) continue;
+    try {
+      for (const name of fs.readdirSync(dayDir)) {
+        if (!isLegacySplitFilename(name)) continue;
+        fs.unlinkSync(path.join(dayDir, name));
+      }
+    } catch (_) {}
   }
-  return false;
+
+  return out;
 }
 
 function loadIndex() {
@@ -250,12 +266,21 @@ function loadIndex() {
     if (!fs.existsSync(filePath)) return [];
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
     const rows = Array.isArray(raw?.rows) ? raw.rows : Array.isArray(raw) ? raw : [];
-    const normalized = rows.map(normalizeArchiveRow).filter(Boolean);
-    if (!rowsNeedConsolidate(normalized)) {
-      return capRows(normalized);
+    const rawLooksSplit = rows.some((r) => {
+      const name = String(r?.filename || r?.file || path.basename(String(r?.localPath || '')));
+      return isLegacySplitFilename(name) || (r?.part != null && Number(r.part) > 0);
+    });
+    const dateCounts = new Map();
+    for (const r of rows) {
+      const d = normalizeNyDate(r?.nyDate || r?.date);
+      if (!d) continue;
+      dateCounts.set(d, (dateCounts.get(d) || 0) + 1);
     }
-    const consolidated = consolidateArchiveRows(normalized);
-    return saveIndex(consolidated);
+    const hasDupDates = [...dateCounts.values()].some((n) => n > 1);
+    if (!rawLooksSplit && !hasDupDates) {
+      return capRows(rows.map(normalizeArchiveRow).filter(Boolean));
+    }
+    return saveIndex(consolidateArchiveRows(rows));
   } catch (_) {
     return [];
   }
@@ -299,21 +324,28 @@ function readArchivedText(idOrPath) {
   const row = getArchiveRow(key);
   if (row) {
     const candidates = [row.localPath];
-    if (row.nyDate && row.part != null) {
-      candidates.push(canonicalLocalPath(row.nyDate, row.part));
-    }
+    if (row.nyDate) candidates.push(canonicalLocalPath(row.nyDate));
     for (const p of candidates) {
       const hit = tryRead(p);
       if (hit) return hit;
     }
-    if (row.nyDate && row.part != null) {
+    if (row.nyDate) {
       const dayDir = path.join(getArchiveRoot(), row.nyDate);
       if (fs.existsSync(dayDir)) {
-        const want = normalizePartNumber(row.part);
+        // Prefer combined day file; else join leftover parts in order.
+        const combined = tryRead(canonicalLocalPath(row.nyDate));
+        if (combined) return combined;
+        const parts = [];
         for (const name of fs.readdirSync(dayDir)) {
-          if (extractPartFromFilename(name) !== want) continue;
-          const hit = tryRead(path.join(dayDir, name));
-          if (hit) return hit;
+          const part = extractPartFromFilename(name);
+          if (part == null) continue;
+          const text = readTextIfExists(path.join(dayDir, name));
+          if (text) parts.push([part, text]);
+        }
+        if (parts.length) {
+          parts.sort((a, b) => a[0] - b[0]);
+          const text = joinPartTexts(parts.map(([, t]) => t));
+          return { text, characters: text.length, localPath: canonicalLocalPath(row.nyDate) };
         }
       }
     }
@@ -323,10 +355,8 @@ function readArchivedText(idOrPath) {
 }
 
 /**
- * Write one TXT per NY date + part (not per recipient).
- * Disk name: MMDDYYYY_part.txt (e.g. 11202026_1.txt).
- * @param {{ nyDate: string, sendTime: string, files: Array<{ part?: number, filename?: string, url?: string, text?: string }> }} payload
- * @param {{ resolveText?: (url: string) => Promise<{ text: string, characters?: number }|null> }} [opts]
+ * Write one combined TXT per NY date (all parts joined, not per recipient).
+ * Disk name: MMDDYYYY.txt (e.g. 11222026.txt).
  */
 async function archiveSentFiles(payload = {}, opts = {}) {
   const nyDate = normalizeNyDate(payload.nyDate);
@@ -347,64 +377,74 @@ async function archiveSentFiles(payload = {}, opts = {}) {
       ? opts.resolveText
       : async () => null;
 
-  // Start from consolidated index so legacy recipient rows collapse first.
   const existing = loadIndex();
-  const byKey = new Map(
-    existing.map((row) => {
-      const part =
-        row.part != null
-          ? normalizePartNumber(row.part)
-          : normalizePartNumber(extractPartFromFilename(row.filename));
-      return [`${row.nyDate}|${part}`, row];
-    })
-  );
-  const written = [];
-  const seen = new Set();
+  const byDate = new Map(existing.map((row) => [row.nyDate, row]));
 
-  for (const file of files) {
-    const part = normalizePartNumber(
-      file?.part != null ? file.part : extractPartFromFilename(file?.filename),
-      seen.size + 1
-    );
-    const dedupeKey = `${nyDate}|${part}`;
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
+  const seenParts = new Set();
+  const ordered = [];
+  let sourceUrl = null;
+
+  const sorted = files
+    .map((file, index) => ({
+      file,
+      part: normalizePartNumber(
+        file?.part != null ? file.part : extractPartFromFilename(file?.filename),
+        index + 1
+      ),
+    }))
+    .sort((a, b) => a.part - b.part);
+
+  for (const { file, part } of sorted) {
+    if (seenParts.has(part)) continue;
+    seenParts.add(part);
 
     let text = file?.text != null ? String(file.text) : '';
-    const sourceUrl = file?.url ? String(file.url) : null;
-    if (!text && sourceUrl) {
+    const url = file?.url ? String(file.url) : null;
+    if (!text && url) {
       try {
-        const resolved = await resolveText(sourceUrl);
+        const resolved = await resolveText(url);
         if (resolved?.text != null) text = String(resolved.text);
       } catch (_) {
-        /* skip this file if body cannot be resolved */
+        /* skip */
       }
     }
     if (!text) continue;
-
-    const filename = archivePartFilename(nyDate, part);
-    const localPath = path.join(dayDir, safeFilename(filename));
-    fs.writeFileSync(localPath, text, 'utf8');
-    const characters = text.length;
-    const prev = byKey.get(dedupeKey);
-    const row = normalizeArchiveRow({
-      id: prev?.id || newRowId(),
-      nyDate,
-      sendTime,
-      part,
-      filename,
-      characters,
-      localPath,
-      sourceUrl: sourceUrl || prev?.sourceUrl || null,
-      archivedAt: new Date().toISOString(),
-    });
-    byKey.set(dedupeKey, row);
-    written.push(row);
+    if (!sourceUrl && url) sourceUrl = url;
+    ordered.push(text);
   }
 
-  const next = capRows([...byKey.values()]);
+  const combined = joinPartTexts(ordered);
+  if (!combined) {
+    return { ok: true, count: 0, rows: [] };
+  }
+
+  const filename = archiveDayFilename(nyDate);
+  const localPath = path.join(dayDir, safeFilename(filename));
+  fs.writeFileSync(localPath, combined, 'utf8');
+
+  // Remove leftover split part files for this day.
+  try {
+    for (const name of fs.readdirSync(dayDir)) {
+      if (isLegacySplitFilename(name)) fs.unlinkSync(path.join(dayDir, name));
+    }
+  } catch (_) {}
+
+  const prev = byDate.get(nyDate);
+  const row = normalizeArchiveRow({
+    id: prev?.id || newRowId(),
+    nyDate,
+    sendTime,
+    filename,
+    characters: combined.length,
+    localPath,
+    sourceUrl: sourceUrl || prev?.sourceUrl || null,
+    archivedAt: new Date().toISOString(),
+  });
+  byDate.set(nyDate, row);
+
+  const next = capRows([...byDate.values()]);
   saveIndex(next);
-  return { ok: true, count: written.length, rows: written };
+  return { ok: true, count: 1, rows: [row] };
 }
 
 module.exports = {
@@ -419,7 +459,9 @@ module.exports = {
   consolidateArchiveRows,
   safeFilename,
   archiveDateStamp,
+  archiveDayFilename,
   archivePartFilename,
   normalizePartNumber,
   extractPartFromFilename,
+  joinPartTexts,
 };
