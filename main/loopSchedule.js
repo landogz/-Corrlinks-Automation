@@ -8,11 +8,11 @@ const MAX_SEND_TIMES = 12;
 
 const DEFAULTS = Object.freeze({
   enabled: false,
-  sendTime: '02:00',
-  sendTimes: Object.freeze(['02:00', '08:05', '09:30', '10:05', '11:30', '12:05']),
+  sendTime: '02:05',
+  sendTimes: Object.freeze(['02:05', '08:05', '09:30', '10:05', '11:30', '12:05']),
   sendKind: 'daily',
   sendKindByTime: Object.freeze({
-    '02:00': 'daily',
+    '02:05': 'daily',
     '08:05': 'daily',
     '09:30': 'weekly_cfb',
     '10:05': 'daily',
@@ -20,7 +20,7 @@ const DEFAULTS = Object.freeze({
     '12:05': 'daily',
   }),
   saveLocalByTime: Object.freeze({
-    '02:00': true,
+    '02:05': true,
     '08:05': false,
     '09:30': false,
     '10:05': false,
@@ -108,8 +108,8 @@ function normalizeSaveLocalByTime(raw, sendTimes = []) {
       out[time] = Boolean(src[time]);
       continue;
     }
-    // Migrate: 2:00 AM Daily archives by default when the flag was never set.
-    out[time] = time === '02:00';
+    // Migrate: early-morning Daily archives by default when the flag was never set.
+    out[time] = time === '02:05' || time === '02:00';
   }
   return out;
 }
@@ -356,7 +356,7 @@ function saveLoopSchedule(partial = {}) {
           ? Boolean(partial.addSaveLocal)
           : partial.saveLocal != null
             ? Boolean(partial.saveLocal)
-            : time === '02:00';
+            : time === '02:05' || time === '02:00';
       merged.sendKindByTime = {
         ...(merged.sendKindByTime || {}),
         [time]: kind,

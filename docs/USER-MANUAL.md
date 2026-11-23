@@ -190,7 +190,7 @@ If CorrLinks fails to load, use **Retry** or **View log**. Complete CAPTCHA or u
 ### Exchange files
 
 1. Open **History** → **Exchange files**.
-2. Browse the **local archive** of TXT parts saved after Auto-send slots with **Save file locally** (default: 2:00 AM Daily).
+2. Browse the **local archive** of TXT parts saved after Auto-send slots with **Save file locally** (default: 2:05 AM Daily).
 3. Browse the table (Date · time, File, Characters).
 4. Select a row to **Preview**.
 5. **Copy**, **Download**, or **Export CSV** for filtered rows.

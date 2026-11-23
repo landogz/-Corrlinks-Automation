@@ -48,11 +48,11 @@ assert(
 
 const fresh = normalizeLoopSchedule({ ...DEFAULTS, enabled: true });
 assert(
-  fresh.sendTimes.join(',') === '02:00,08:05,09:30,10:05,11:30,12:05',
+  fresh.sendTimes.join(',') === '02:05,08:05,09:30,10:05,11:30,12:05',
   'default sendTimes list'
 );
-assert(fresh.sendKindByTime['02:00'] === 'daily', 'default 2:00 daily');
-assert(fresh.saveLocalByTime['02:00'] === true, 'default 2:00 save local on');
+assert(fresh.sendKindByTime['02:05'] === 'daily', 'default 2:05 daily');
+assert(fresh.saveLocalByTime['02:05'] === true, 'default 2:05 save local on');
 assert(fresh.saveLocalByTime['08:05'] === false, 'default 8:05 save local off');
 assert(fresh.sendKindByTime['08:05'] === 'daily', 'default 8:05 daily');
 assert(fresh.sendKindByTime['09:30'] === 'weekly_cfb', 'default 9:30 weekly cfb');
@@ -62,10 +62,10 @@ assert(fresh.sendKindByTime['12:05'] === 'daily', 'default 12:05 daily');
 
 const migratedLocal = normalizeLoopSchedule({
   enabled: true,
-  sendTimes: ['02:00', '08:05'],
-  sendKindByTime: { '02:00': 'daily', '08:05': 'daily' },
+  sendTimes: ['02:05', '08:05'],
+  sendKindByTime: { '02:05': 'daily', '08:05': 'daily' },
 });
-assert(migratedLocal.saveLocalByTime['02:00'] === true, 'migrate 02:00 saveLocal');
+assert(migratedLocal.saveLocalByTime['02:05'] === true, 'migrate 02:05 saveLocal');
 assert(migratedLocal.saveLocalByTime['08:05'] === false, 'migrate other saveLocal off');
 
 const base = normalizeLoopSchedule({

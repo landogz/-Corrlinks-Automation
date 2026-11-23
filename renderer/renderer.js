@@ -594,11 +594,11 @@ let sendHistorySelectedId = null;
 /** @type {{ enabled: boolean, sendTime: string, sendTimes: string[], sendKind: string, sendKindByTime: Record<string, string>, saveLocalByTime: Record<string, boolean>, lastFiredNyDate: string|null, lastFiredByTime: Record<string, string> }} */
 let loopScheduleState = {
   enabled: false,
-  sendTime: '02:00',
-  sendTimes: ['02:00', '08:05', '09:30', '10:05', '11:30', '12:05'],
+  sendTime: '02:05',
+  sendTimes: ['02:05', '08:05', '09:30', '10:05', '11:30', '12:05'],
   sendKind: 'daily',
   sendKindByTime: {
-    '02:00': 'daily',
+    '02:05': 'daily',
     '08:05': 'daily',
     '09:30': 'weekly_cfb',
     '10:05': 'daily',
@@ -606,7 +606,7 @@ let loopScheduleState = {
     '12:05': 'daily',
   },
   saveLocalByTime: {
-    '02:00': true,
+    '02:05': true,
     '08:05': false,
     '09:30': false,
     '10:05': false,
@@ -6512,7 +6512,7 @@ document.getElementById('btnSettingsAddTime')?.addEventListener('click', () => {
 });
 document.getElementById('btnSettingsCancelEdit')?.addEventListener('click', () => {
   setSettingsTimeEditMode(null);
-  fillSettingsTimeEditor('02:00', 'daily', true);
+  fillSettingsTimeEditor('02:05', 'daily', true);
 });
 ['settingsSendHourInput', 'settingsSendMinuteInput', 'settingsSendAmPmInput'].forEach((id) => {
   document.getElementById(id)?.addEventListener('change', () => paintSettingsTimePreview());
