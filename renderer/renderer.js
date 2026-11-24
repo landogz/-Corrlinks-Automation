@@ -1541,9 +1541,34 @@ function withContinuationPrefix(text, order = 1) {
   return `CONT..\n\n${raw}`;
 }
 
+/**
+ * Re-fetch corrlinks-accounts so daily file URLs match SportsData now.
+ * Weekly mode keeps its own weekly endpoint.
+ */
+async function refreshDailyFilesFromCorrlinksAccounts() {
+  if (templateMode !== 'daily') return selectedInmate();
+  await syncCorrlinksAccountsQuiet({ reason: 'preflight', force: true });
+  return selectedInmate();
+}
+
+function matchSendableFile(inmate, file, order = 1) {
+  const sendable = inmate?.inmate_exchange?.sendable || [];
+  const partNum = Number(file?.part) > 0 ? Number(file.part) : order;
+  const filename = String(file?.filename || '');
+  return (
+    sendable.find(
+      (f) =>
+        (filename && f.filename === filename) ||
+        (Number(f.part) > 0 && Number(f.part) === partNum)
+    ) || file
+  );
+}
+
 async function copySendableFile(file, { order = 1 } = {}) {
-  const filename = file?.filename || `part-${order}.txt`;
-  if (!file?.url) {
+  const inmate = await refreshDailyFilesFromCorrlinksAccounts();
+  const live = matchSendableFile(inmate, file, order);
+  const filename = live?.filename || file?.filename || `part-${order}.txt`;
+  if (!live?.url) {
     toast(`No copy URL for ${filename}`, 'error');
     return;
   }
@@ -1551,11 +1576,11 @@ async function copySendableFile(file, { order = 1 } = {}) {
     toast('Copy is unavailable in this build', 'error');
     return;
   }
-  const partNum = Number(file?.part) > 0 ? Number(file.part) : order;
+  const partNum = Number(live?.part) > 0 ? Number(live.part) : order;
   setStatusHint(`Copying File ${order}…`);
   try {
     const result = await window.api.previewExchangeFile({
-      url: file.url,
+      url: live.url,
       filename,
     });
     if (!result?.ok) throw new Error(result?.message || 'Copy failed');
@@ -1572,19 +1597,20 @@ async function copySendableFile(file, { order = 1 } = {}) {
 }
 
 async function downloadSendableFile(file, { order = 1 } = {}) {
-  const filename = file?.filename || `part-${order}.txt`;
-  if (!file?.url) {
+  const inmate = await refreshDailyFilesFromCorrlinksAccounts();
+  const live = matchSendableFile(inmate, file, order);
+  const filename = live?.filename || file?.filename || `part-${order}.txt`;
+  if (!live?.url) {
     toast(`No download URL for ${filename}`, 'error');
     return;
   }
-  const inmate = selectedInmate();
   const inmateId = inmate?.inmate_id || inmate?.id || 'inmate';
   const suggestedName = `${inmateId}-${filename}`.replace(/[^\w.\-]+/g, '_');
-  const partNum = Number(file?.part) > 0 ? Number(file.part) : order;
+  const partNum = Number(live?.part) > 0 ? Number(live.part) : order;
   setStatusHint(`Downloading ${filename}…`);
   try {
     const result = await window.api.downloadExchangeFile({
-      url: file.url,
+      url: live.url,
       suggestedName,
       part: partNum,
       continuation: partNum > 1,
@@ -3074,12 +3100,12 @@ function corrlinksOpStillActive(generation) {
 
 async function startCorrlinksLogin(options = {}) {
   const { quietToast = false, send = false } = options;
-  const inmate = selectedInmate();
+  let inmate = selectedInmate();
   if (!inmate) {
     log('Select an inmate first', 'error');
     return null;
   }
-  const assignment = resolveInmateLoginAssignment(inmate);
+  let assignment = resolveInmateLoginAssignment(inmate);
   if (!assignment?.ready) {
     const message = assignment?.reason || 'Selected inmate has no usable CorrLinks account';
     log(message, 'error');
@@ -3087,6 +3113,21 @@ async function startCorrlinksLogin(options = {}) {
     return null;
   }
   if (corrlinksLoginBusy) return null;
+
+  // Daily send/login: file list + URLs only from latest corrlinks-accounts.
+  if (templateMode === 'daily') {
+    inmate =
+      (await refreshDailyFilesFromCorrlinksAccounts()) || selectedInmate() || inmate;
+    assignment = resolveInmateLoginAssignment(inmate);
+    if (!assignment?.ready) {
+      const message = assignment?.reason || 'Selected inmate has no usable CorrLinks account';
+      log(message, 'error');
+      if (!quietToast) toast(message, 'error');
+      return null;
+    }
+  } else {
+    void syncCorrlinksAccountsQuiet({ reason: 'background' });
+  }
 
   // Prefetch TXT in parallel — never blocks opening the CorrLinks pane.
   if (send && window.api?.prefetchExchangeFiles) {
@@ -3101,8 +3142,6 @@ async function startCorrlinksLogin(options = {}) {
         .catch(() => {});
     }
   }
-  // Keep roster fresh in the background (never blocks CorrLinks open).
-  void syncCorrlinksAccountsQuiet({ reason: 'background' });
 
   // Await reveal so the website is painted before login/send IPC runs.
   // (Fire-and-forget left the pane on the empty placeholder until late.)

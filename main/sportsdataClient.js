@@ -363,6 +363,10 @@ class SportsDataClient {
       }
 
       const accounts = normalizeInmateAccounts(response.data);
+      // Daily TXT URLs come only from this payload; drop cached bodies so same
+      // storage URL is re-fetched after SportsData regenerates the file.
+      this.exchangeFileCache.clear();
+      this.exchangeFileInflight.clear();
       return {
         ok: true,
         message: response.data.message || 'Corrlinks accounts loaded.',

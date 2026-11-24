@@ -1,5 +1,6 @@
 /**
  * Inmate Exchange TXT files from SportsData API inmate_exchange.files[]
+ * (daily list source: GET /api/v1/insidescore/corrlinks-accounts only).
  */
 
 function isEmptyExchangeFilename(filename) {
